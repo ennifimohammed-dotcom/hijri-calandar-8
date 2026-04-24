@@ -1,0 +1,86 @@
+name: Build Flutter APK
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  build-apk:
+    name: Build Release APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Create base Flutter project
+        run: |
+          flutter create \
+            --org com.hijricalendar \
+            --project-name hijri_calendar \
+            --platforms android \
+            /tmp/base_project
+
+      - name: Inject source code
+        run: |
+          rm -rf /tmp/base_project/lib
+          cp -r $GITHUB_WORKSPACE/lib /tmp/base_project/
+          cp $GITHUB_WORKSPACE/pubspec.yaml /tmp/base_project/pubspec.yaml
+          rm -rf /tmp/base_project/test
+
+      - name: Replace Android build.gradle
+        run: |
+          if [ -f /tmp/base_project/android/app/build.gradle.kts ]; then
+            echo "Replacing build.gradle.kts"
+            cp $GITHUB_WORKSPACE/android_patches/build.gradle.kts /tmp/base_project/android/app/build.gradle.kts
+            cat /tmp/base_project/android/app/build.gradle.kts
+          elif [ -f /tmp/base_project/android/app/build.gradle ]; then
+            echo "Replacing build.gradle"
+            cp $GITHUB_WORKSPACE/android_patches/build.gradle /tmp/base_project/android/app/build.gradle
+            cat /tmp/base_project/android/app/build.gradle
+          else
+            echo "ERROR: no gradle file"
+            exit 1
+          fi
+
+      - name: Patch AndroidManifest
+        run: |
+          MANIFEST=/tmp/base_project/android/app/src/main/AndroidManifest.xml
+          if ! grep -q "RECEIVE_BOOT_COMPLETED" "$MANIFEST"; then
+            sed -i 's|<application|<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <uses-permission android:name="android.permission.VIBRATE"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>\n    <application|' "$MANIFEST"
+          fi
+
+      - name: Install dependencies
+        working-directory: /tmp/base_project
+        run: flutter pub get
+
+      - name: Analyze code
+        working-directory: /tmp/base_project
+        run: flutter analyze --no-fatal-infos
+        continue-on-error: true
+
+      - name: Build release APK
+        working-directory: /tmp/base_project
+        run: flutter build apk --release
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hijri-Calendar-APK
+          path: /tmp/base_project/build/app/outputs/flutter-apk/app-release.apk
+          retention-days: 30
