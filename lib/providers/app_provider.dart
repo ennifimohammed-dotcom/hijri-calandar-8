@@ -2,10 +2,12 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/event_model.dart';
+import '../models/notification_settings.dart';
 import '../data/islamic_events.dart';
 import '../repositories/event_repository.dart';
 import '../services/recurrence_engine.dart';
 import '../services/notification_service.dart';
+import '../services/notification_settings_service.dart';
 import '../utils/hijri_utils.dart';
 
 enum CalendarViewMode { monthly, weekly, agenda }
@@ -15,14 +17,17 @@ class AppProvider extends ChangeNotifier {
   final EventRepository _repo;
   final RecurrenceEngine _engine;
   final NotificationService _notifs;
+  final NotificationSettingsService _notifSettings;
 
   AppProvider({
     EventRepository? repository,
     RecurrenceEngine? engine,
     NotificationService? notifs,
+    NotificationSettingsService? notifSettings,
   })  : _repo = repository ?? EventRepository(),
         _engine = engine ?? RecurrenceEngine(),
-        _notifs = notifs ?? NotificationService();
+        _notifs = notifs ?? NotificationService(),
+        _notifSettings = notifSettings ?? NotificationSettingsService();
 
   // ── Calendar state ────────────────────────────────────────
   late HijriDate _currentMonth;
@@ -35,6 +40,7 @@ class AppProvider extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.light;
   String _locale = 'ar';
   Map<String, bool> _islamicEventsEnabled = {};
+  NotificationSettings _notificationSettings = const NotificationSettings();
 
   // ── Getters ───────────────────────────────────────────────
   HijriDate get currentMonth => _currentMonth;
@@ -47,6 +53,7 @@ class AppProvider extends ChangeNotifier {
   List<AppEvent> get userEvents => _repo.getCached();
   Map<String, bool> get islamicEventsEnabled =>
       Map.unmodifiable(_islamicEventsEnabled);
+  NotificationSettings get notificationSettings => _notificationSettings;
 
   bool get allIslamicEventsEnabled =>
       _islamicEventsEnabled.isNotEmpty &&
@@ -65,8 +72,11 @@ class AppProvider extends ChangeNotifier {
       }
 
       await _loadPrefs();
+      _notificationSettings = await _notifSettings.load();
+      await _notifs.requestPermissions();
       await _repo.loadAll();
       await _repo.rescheduleAllNotifications();
+      await _notifs.scheduleMidnightReschedule();
     } catch (e) {
       debugPrint('AppProvider.init error: $e');
     }
@@ -264,6 +274,22 @@ class AppProvider extends ChangeNotifier {
     _locale = loc;
     _savePrefs();
     notifyListeners();
+  }
+
+  // ── Notification settings ────────────────────────────────
+  Future<void> updateNotificationSettings(
+    NotificationSettings Function(NotificationSettings) updater, {
+    bool previewSound = false,
+  }) async {
+    final next = updater(_notificationSettings);
+    _notificationSettings = next;
+    await _notifs.applySettings(next);
+    notifyListeners();
+    // Re-apply scheduling whenever the user changes notification behavior.
+    await _repo.rescheduleAllNotifications();
+    if (previewSound) {
+      await _notifs.previewSound();
+    }
   }
 
   // ── Hijri helpers ─────────────────────────────────────────

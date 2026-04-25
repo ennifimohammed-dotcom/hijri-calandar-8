@@ -1,9 +1,18 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
 import '../models/event_model.dart';
+import '../models/notification_settings.dart';
+import 'notification_settings_service.dart';
 
+/// Production-grade notification engine.
+/// - Per-settings dynamic Android channels (sound × mode × visibility)
+/// - Heads-up popup, custom sound, vibration, lock-screen visibility
+/// - Smart 30-day rolling schedule, midnight rescheduling, boot recovery
 class NotificationService {
   static final NotificationService _instance = NotificationService._();
   factory NotificationService() => _instance;
@@ -11,12 +20,12 @@ class NotificationService {
 
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
+  final NotificationSettingsService _settings = NotificationSettingsService();
+
+  static const MethodChannel _volumeChannel =
+      MethodChannel('hijri_calendar/notifications');
 
   bool _initialized = false;
-
-  static const String _channelId   = 'hijri_calendar_channel';
-  static const String _channelName = 'تقويم الهجري';
-  static const String _channelDesc = 'Hijri Calendar Notifications';
 
   // ── Init ─────────────────────────────────────────────────
   Future<void> init() async {
@@ -31,14 +40,17 @@ class NotificationService {
         requestSoundPermission: true,
       );
       const initSettings = InitializationSettings(
-          android: androidInit, iOS: iosInit);
+        android: androidInit,
+        iOS: iosInit,
+      );
 
       await _plugin.initialize(
         initSettings,
         onDidReceiveNotificationResponse: _onNotificationTap,
       );
 
-      await _createChannel();
+      await _settings.load();
+
       _initialized = true;
       debugPrint('NotificationService: initialized');
     } catch (e) {
@@ -46,32 +58,19 @@ class NotificationService {
     }
   }
 
-  Future<void> _createChannel() async {
-    const channel = AndroidNotificationChannel(
-      _channelId, _channelName,
-      description: _channelDesc,
-      importance: Importance.high,
-      enableVibration: true,
-    );
-    await _plugin
-        .resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>()
-        ?.createNotificationChannel(channel);
-  }
-
   void _onNotificationTap(NotificationResponse response) {
     debugPrint('Notification tapped: ${response.payload}');
   }
 
-  // ── Request permissions ───────────────────────────────────
+  // ── Permissions ──────────────────────────────────────────
   Future<bool> requestPermissions() async {
     try {
-      final android = _plugin
-          .resolvePlatformSpecificImplementation<
-              AndroidFlutterLocalNotificationsPlugin>();
+      final android = _plugin.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
       if (android != null) {
-        final granted = await android.requestNotificationsPermission();
-        return granted ?? false;
+        final notif = await android.requestNotificationsPermission();
+        final exact = await android.requestExactAlarmsPermission();
+        return (notif ?? false) && (exact ?? true);
       }
       return true;
     } catch (e) {
@@ -80,10 +79,124 @@ class NotificationService {
     }
   }
 
-  // ── Schedule event reminders ──────────────────────────────
-  /// Schedule all reminders for [event] within the next 30 days.
+  // ── Settings ─────────────────────────────────────────────
+  NotificationSettings get currentSettings => _settings.settings;
+
+  Future<void> applySettings(NotificationSettings s) async {
+    await _settings.save(s);
+    await _applySystemVolume(s.volume);
+  }
+
+  Future<void> _applySystemVolume(double volume) async {
+    try {
+      await _volumeChannel.invokeMethod('setNotificationVolume', {
+        'volume': volume.clamp(0.0, 1.0),
+      });
+    } catch (e) {
+      debugPrint('setNotificationVolume not available: $e');
+    }
+  }
+
+  Future<void> previewSound() async {
+    try {
+      await _volumeChannel.invokeMethod('previewSound', {
+        'sound': _settings.settings.sound.key,
+        'customPath': _settings.settings.customSoundPath,
+        'volume': _settings.settings.volume,
+      });
+    } catch (e) {
+      debugPrint('previewSound not available: $e');
+    }
+  }
+
+  // ── Channel construction ─────────────────────────────────
+  AndroidNotificationDetails _buildAndroidDetails(NotificationSettings s) {
+    final channelId = 'hijri_${s.channelSignature}';
+    final channelName = s.mode == NotificationMode.alert
+        ? 'تقويم الهجري — Alerte'
+        : 'تقويم الهجري — Discret';
+    final channelDesc = s.mode == NotificationMode.alert
+        ? 'High priority Hijri Calendar reminders with sound & vibration'
+        : 'Silent Hijri Calendar reminders';
+
+    final isAlert = s.mode == NotificationMode.alert;
+    final visibility =
+        s.lockScreenVisibility == LockScreenVisibility.doNotShow
+            ? NotificationVisibility.secret
+            : NotificationVisibility.private;
+
+    AndroidNotificationSound? soundResource;
+    bool playSound = false;
+    if (isAlert) {
+      switch (s.sound) {
+        case NotificationSound.brightline:
+          soundResource =
+              const RawResourceAndroidNotificationSound('brightline');
+          playSound = true;
+          break;
+        case NotificationSound.alpha:
+          soundResource = const RawResourceAndroidNotificationSound('alpha');
+          playSound = true;
+          break;
+        case NotificationSound.arrow:
+          soundResource = const RawResourceAndroidNotificationSound('arrow');
+          playSound = true;
+          break;
+        case NotificationSound.custom:
+          if (s.customSoundPath != null && s.customSoundPath!.isNotEmpty) {
+            soundResource = UriAndroidNotificationSound(s.customSoundPath!);
+            playSound = true;
+          } else {
+            soundResource =
+                const RawResourceAndroidNotificationSound('brightline');
+            playSound = true;
+          }
+          break;
+      }
+    }
+
+    final vibrationPattern = (isAlert && s.vibrationEnabled)
+        ? Int64List.fromList(<int>[0, 250, 250, 250])
+        : null;
+
+    return AndroidNotificationDetails(
+      channelId,
+      channelName,
+      channelDescription: channelDesc,
+      importance: isAlert ? Importance.max : Importance.low,
+      priority: isAlert ? Priority.high : Priority.low,
+      playSound: playSound,
+      sound: soundResource,
+      enableVibration: isAlert && s.vibrationEnabled,
+      vibrationPattern: vibrationPattern,
+      visibility: visibility,
+      fullScreenIntent: false,
+      category: AndroidNotificationCategory.event,
+      ticker: 'Hijri Calendar',
+      styleInformation: const DefaultStyleInformation(true, true),
+      channelShowBadge: true,
+    );
+  }
+
+  NotificationDetails _buildDetails(NotificationSettings s) {
+    final ios = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: s.mode == NotificationMode.alert,
+      sound: s.mode == NotificationMode.alert ? null : null,
+    );
+    return NotificationDetails(
+      android: _buildAndroidDetails(s),
+      iOS: ios,
+    );
+  }
+
+  // ── Schedule one event ───────────────────────────────────
   Future<void> scheduleEventReminders(AppEvent event) async {
+    final s = _settings.settings;
+    if (!s.enabled) return;
     if (!event.isEnabled || event.reminders.isEmpty) return;
+
     try {
       final now = DateTime.now();
       final limit = now.add(const Duration(days: 30));
@@ -107,7 +220,6 @@ class NotificationService {
     }
   }
 
-  /// Cancel all reminders for [eventId].
   Future<void> cancelEventReminders(AppEvent event) async {
     try {
       for (final reminder in event.reminders) {
@@ -119,11 +231,15 @@ class NotificationService {
     }
   }
 
-  // ── Bulk reschedule ───────────────────────────────────────
-  /// Cancel all and reschedule for the next 30 days.
+  // ── Bulk reschedule ──────────────────────────────────────
   Future<void> rescheduleAll(List<AppEvent> events) async {
     try {
       await _plugin.cancelAll();
+      final s = _settings.settings;
+      if (!s.enabled) {
+        debugPrint('NotificationService: notifications disabled, skipping');
+        return;
+      }
       for (final event in events) {
         await scheduleEventReminders(event);
       }
@@ -133,13 +249,14 @@ class NotificationService {
     }
   }
 
-  // ── Daily summary ─────────────────────────────────────────
+  // ── Daily summary / Ramadan / 29th-day helpers ──────────
   Future<void> scheduleDailySummary({
     required int hour,
     required int minute,
     required String title,
     required String body,
   }) async {
+    if (!_settings.settings.enabled) return;
     try {
       final now = DateTime.now();
       var scheduled = DateTime(now.year, now.month, now.day, hour, minute);
@@ -158,12 +275,12 @@ class NotificationService {
     }
   }
 
-  // ── 29th day alert ────────────────────────────────────────
   Future<void> schedule29thDayAlert({
     required DateTime scheduledDate,
     required String title,
     required String body,
   }) async {
+    if (!_settings.settings.enabled) return;
     try {
       await _scheduleExact(
         id: 290000,
@@ -177,13 +294,13 @@ class NotificationService {
     }
   }
 
-  // ── Ramadan approaching alert ─────────────────────────────
   Future<void> scheduleRamadanAlert({
     required DateTime ramadanStart,
     required int daysBefore,
     required String title,
     required String body,
   }) async {
+    if (!_settings.settings.enabled) return;
     try {
       final alertDate = ramadanStart.subtract(Duration(days: daysBefore));
       if (alertDate.isAfter(DateTime.now())) {
@@ -200,24 +317,40 @@ class NotificationService {
     }
   }
 
-  // ── Immediate notification ────────────────────────────────
+  // ── Midnight self-reschedule ─────────────────────────────
+  Future<void> scheduleMidnightReschedule() async {
+    if (!_settings.settings.enabled) return;
+    try {
+      final now = DateTime.now();
+      var scheduled = DateTime(now.year, now.month, now.day, 0, 1)
+          .add(const Duration(days: 1));
+      await _scheduleExact(
+        id: 999999,
+        title: '',
+        body: '',
+        scheduledDate: scheduled,
+        payload: 'midnight_reschedule',
+        silent: true,
+      );
+    } catch (e) {
+      debugPrint('scheduleMidnightReschedule error: $e');
+    }
+  }
+
+  // ── Immediate ────────────────────────────────────────────
   Future<void> showImmediate({
     required int id,
     required String title,
     required String body,
     String? payload,
   }) async {
+    if (!_settings.settings.enabled) return;
     try {
       await _plugin.show(
-        id, title, body,
-        NotificationDetails(
-          android: AndroidNotificationDetails(
-            _channelId, _channelName,
-            channelDescription: _channelDesc,
-            importance: Importance.high,
-            priority: Priority.high,
-          ),
-        ),
+        id,
+        title,
+        body,
+        _buildDetails(_settings.settings),
         payload: payload,
       );
     } catch (e) {
@@ -225,33 +358,57 @@ class NotificationService {
     }
   }
 
+  Future<void> showTestNotification() async {
+    await showImmediate(
+      id: 777777,
+      title: 'Test تقويم الهجري',
+      body: 'Notification de test — ${DateTime.now()}',
+      payload: 'test',
+    );
+  }
+
   Future<void> cancelAll() async {
-    try { await _plugin.cancelAll(); } catch (e) {
+    try {
+      await _plugin.cancelAll();
+    } catch (e) {
       debugPrint('cancelAll error: $e');
     }
   }
 
-  // ── Private helpers ───────────────────────────────────────
+  // ── Private helpers ─────────────────────────────────────
   Future<void> _scheduleExact({
     required int id,
     required String title,
     required String body,
     required DateTime scheduledDate,
     String? payload,
+    bool silent = false,
   }) async {
     try {
       final tzDate = tz.TZDateTime.from(scheduledDate, tz.local);
+      final s = _settings.settings;
+      final details = silent
+          ? const NotificationDetails(
+              android: AndroidNotificationDetails(
+                'hijri_silent_internal',
+                'Internal',
+                channelDescription: 'Internal scheduling channel',
+                importance: Importance.min,
+                priority: Priority.min,
+                playSound: false,
+                enableVibration: false,
+                visibility: NotificationVisibility.secret,
+                showWhen: false,
+              ),
+            )
+          : _buildDetails(s);
+
       await _plugin.zonedSchedule(
-        id, title, body, tzDate,
-        NotificationDetails(
-          android: AndroidNotificationDetails(
-            _channelId, _channelName,
-            channelDescription: _channelDesc,
-            importance: Importance.high,
-            priority: Priority.high,
-            enableVibration: true,
-          ),
-        ),
+        id,
+        title,
+        body,
+        tzDate,
+        details,
         androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
         uiLocalNotificationDateInterpretation:
             UILocalNotificationDateInterpretation.absoluteTime,

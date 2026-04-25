@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'providers/app_provider.dart';
 import 'screens/home_screen.dart';
 import 'screens/onboarding_screen.dart';
+import 'services/notification_service.dart';
 import 'theme.dart';
 
 void main() async {
@@ -29,9 +30,36 @@ void main() async {
   );
 }
 
-class HijriCalendarApp extends StatelessWidget {
+class HijriCalendarApp extends StatefulWidget {
   final bool showOnboarding;
   const HijriCalendarApp({super.key, required this.showOnboarding});
+
+  @override
+  State<HijriCalendarApp> createState() => _HijriCalendarAppState();
+}
+
+class _HijriCalendarAppState extends State<HijriCalendarApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      // Refresh the rolling 30-day window whenever the app
+      // returns to foreground (covers post-midnight transitions).
+      NotificationService().scheduleMidnightReschedule();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -45,7 +73,10 @@ class HijriCalendarApp extends StatelessWidget {
       themeMode: provider.themeMode,
       locale: Locale(provider.locale),
       supportedLocales: const [
-        Locale('ar'), Locale('fr'), Locale('en'), Locale('es'),
+        Locale('ar'),
+        Locale('fr'),
+        Locale('en'),
+        Locale('es'),
       ],
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -56,7 +87,9 @@ class HijriCalendarApp extends StatelessWidget {
         textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
         child: child!,
       ),
-      home: showOnboarding ? const OnboardingScreen() : const HomeScreen(),
+      home: widget.showOnboarding
+          ? const OnboardingScreen()
+          : const HomeScreen(),
     );
   }
 }

@@ -2,7 +2,7 @@ name: Build Flutter APK
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, "claude/**"]
   pull_request:
     branches: [main, master]
   workflow_dispatch:
@@ -28,6 +28,9 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Install ffmpeg (for notification sounds)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Create base Flutter project
         run: |
           flutter create \
@@ -36,7 +39,7 @@ jobs:
             --platforms android \
             /tmp/base_project
 
-      - name: Inject source code
+      - name: Inject Dart source code
         run: |
           rm -rf /tmp/base_project/lib
           cp -r $GITHUB_WORKSPACE/lib /tmp/base_project/
@@ -58,12 +61,52 @@ jobs:
             exit 1
           fi
 
-      - name: Patch AndroidManifest
+      - name: Replace AndroidManifest.xml
         run: |
-          MANIFEST=/tmp/base_project/android/app/src/main/AndroidManifest.xml
-          if ! grep -q "RECEIVE_BOOT_COMPLETED" "$MANIFEST"; then
-            sed -i 's|<application|<uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>\n    <uses-permission android:name="android.permission.VIBRATE"/>\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>\n    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>\n    <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>\n    <application|' "$MANIFEST"
-          fi
+          MANIFEST_DEST=/tmp/base_project/android/app/src/main/AndroidManifest.xml
+          cp $GITHUB_WORKSPACE/android_patches/AndroidManifest.xml "$MANIFEST_DEST"
+          echo "----- AndroidManifest.xml -----"
+          cat "$MANIFEST_DEST"
+
+      - name: Inject Kotlin sources (MainActivity, BootReceiver)
+        run: |
+          KOTLIN_DIR=/tmp/base_project/android/app/src/main/kotlin/com/hijricalendar/hijri_calendar
+          mkdir -p "$KOTLIN_DIR"
+          # Replace generated MainActivity.kt with our custom one
+          rm -f "$KOTLIN_DIR/MainActivity.kt"
+          cp $GITHUB_WORKSPACE/android_patches/kotlin/MainActivity.kt "$KOTLIN_DIR/MainActivity.kt"
+          cp $GITHUB_WORKSPACE/android_patches/kotlin/BootReceiver.kt "$KOTLIN_DIR/BootReceiver.kt"
+          echo "----- Kotlin files -----"
+          ls -la "$KOTLIN_DIR"
+
+      - name: Generate notification sound resources
+        run: |
+          RAW_DIR=/tmp/base_project/android/app/src/main/res/raw
+          mkdir -p "$RAW_DIR"
+
+          # Generate three short, distinct notification tones via ffmpeg.
+          # These ship inside the APK and are referenced as
+          # RawResourceAndroidNotificationSound('brightline'|'alpha'|'arrow').
+
+          # Brightline: bright two-note chime (C6 -> E6)
+          ffmpeg -y -f lavfi -i "sine=frequency=1047:duration=0.18" \
+            -f lavfi -i "sine=frequency=1319:duration=0.32" \
+            -filter_complex "[0:a][1:a]concat=n=2:v=0:a=1,afade=t=out:st=0.45:d=0.05" \
+            -ar 44100 -ac 1 "$RAW_DIR/brightline.ogg"
+
+          # Alpha: soft single tone with quick decay
+          ffmpeg -y -f lavfi -i "sine=frequency=880:duration=0.55" \
+            -af "afade=t=in:st=0:d=0.02,afade=t=out:st=0.4:d=0.15" \
+            -ar 44100 -ac 1 "$RAW_DIR/alpha.ogg"
+
+          # Arrow: rising 3-tone arpeggio
+          ffmpeg -y -f lavfi -i "sine=frequency=659:duration=0.12" \
+            -f lavfi -i "sine=frequency=784:duration=0.12" \
+            -f lavfi -i "sine=frequency=988:duration=0.20" \
+            -filter_complex "[0:a][1:a][2:a]concat=n=3:v=0:a=1,afade=t=out:st=0.4:d=0.04" \
+            -ar 44100 -ac 1 "$RAW_DIR/arrow.ogg"
+
+          ls -la "$RAW_DIR"
 
       - name: Install dependencies
         working-directory: /tmp/base_project

@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import '../models/notification_settings.dart';
 import '../providers/app_provider.dart';
 import '../utils/hijri_utils.dart';
 import '../theme.dart';
+import 'notification_settings_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
   const SettingsScreen({super.key});
@@ -529,24 +531,21 @@ class _NotificationsSection extends StatefulWidget {
 }
 
 class _NotificationsSectionState extends State<_NotificationsSection> {
-  bool _notifsEnabled = true, _day29 = true, _dailySummary = false;
-  int _day29Hour = 21, _day29Min = 0;
-  int _summaryHour = 7, _summaryMin = 0;
-  int _ramadanDays = 7;
+  String _modeLabel(NotificationMode m, String loc) {
+    if (m == NotificationMode.alert) {
+      return loc == 'ar' ? 'تنبيه' : 'Alerte';
+    }
+    return loc == 'ar' ? 'صامت' : 'Discret';
+  }
 
-  String _fmt(int h, int m) =>
-      '${h.toString().padLeft(2,'0')}:${m.toString().padLeft(2,'0')}';
-
-  Future<void> _pickTime(bool is29, BuildContext context) async {
-    final t = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay(
-          hour: is29 ? _day29Hour : _summaryHour,
-          minute: is29 ? _day29Min : _summaryMin));
-    if (t != null) setState(() {
-      if (is29) { _day29Hour = t.hour; _day29Min = t.minute; }
-      else { _summaryHour = t.hour; _summaryMin = t.minute; }
-    });
+  String _soundLabel(NotificationSettings s) {
+    if (s.sound == NotificationSound.custom &&
+        (s.customSoundPath?.isNotEmpty ?? false)) {
+      final path = s.customSoundPath!;
+      final i = path.lastIndexOf('/');
+      return i < 0 ? path : path.substring(i + 1);
+    }
+    return s.sound.displayName;
   }
 
   @override
@@ -554,85 +553,85 @@ class _NotificationsSectionState extends State<_NotificationsSection> {
     final p = widget.p;
     final isDark = widget.isDark;
     final loc = p.locale;
+    final settings = p.notificationSettings;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _SectionTitle(
-          text: loc == 'ar' ? 'الإشعارات'
-              : loc == 'fr' ? 'NOTIFICATIONS' : 'NOTIFICATIONS',
-          isDark: isDark),
+          text: loc == 'ar'
+              ? 'الإشعارات'
+              : loc == 'fr'
+                  ? 'NOTIFICATIONS'
+                  : 'NOTIFICATIONS',
+          isDark: isDark,
+        ),
         _Card(
           isDark: isDark,
           child: Column(children: [
-            // Enable all
             _SettRow(
-              emoji: '🔔', bg: AppColors.greenPale,
-              title: loc == 'ar' ? 'تفعيل الإشعارات' : 'Activer les notifications',
-              sub: '',
-              trailing: _SmToggle(value: _notifsEnabled,
-                  onChanged: (v) => setState(() => _notifsEnabled = v)),
-              isDark: isDark),
-            // 29th day
-            _SettRow(
-              emoji: '🌙', bg: AppColors.goldPale,
-              title: loc == 'ar' ? 'تذكير اليوم ٢٩' : 'Rappel du 29e jour',
-              sub: _fmt(_day29Hour, _day29Min),
-              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                GestureDetector(
-                  onTap: () => _pickTime(true, context),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(color: AppColors.goldPale,
-                        borderRadius: BorderRadius.circular(8)),
-                    child: Text(_fmt(_day29Hour, _day29Min),
-                      style: GoogleFonts.cairo(fontSize: 11, fontWeight: FontWeight.w700,
-                          color: AppColors.gold))),
+              emoji: '🔔',
+              bg: AppColors.greenPale,
+              title: loc == 'ar'
+                  ? 'إشعارات الأجندة'
+                  : 'Notifications d\'Agenda',
+              sub: settings.enabled
+                  ? '${_modeLabel(settings.mode, loc)} · ${_soundLabel(settings)}'
+                  : (loc == 'ar' ? 'معطّلة' : 'Désactivées'),
+              trailing: _SmToggle(
+                value: settings.enabled,
+                onChanged: (v) => p.updateNotificationSettings(
+                  (cur) => cur.copyWith(enabled: v),
                 ),
-                const SizedBox(width: 8),
-                _SmToggle(value: _day29, onChanged: (v) => setState(() => _day29 = v)),
-              ]),
-              isDark: isDark),
-            // Daily summary
-            _SettRow(
-              emoji: '📋', bg: AppColors.bluePale,
-              title: loc == 'ar' ? 'ملخص يومي' : 'Résumé quotidien',
-              sub: _fmt(_summaryHour, _summaryMin),
-              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                GestureDetector(
-                  onTap: () => _pickTime(false, context),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(color: AppColors.bluePale,
-                        borderRadius: BorderRadius.circular(8)),
-                    child: Text(_fmt(_summaryHour, _summaryMin),
-                      style: GoogleFonts.cairo(fontSize: 11, fontWeight: FontWeight.w700,
-                          color: AppColors.blue))),
+              ),
+              isDark: isDark,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const NotificationSettingsScreen(),
                 ),
-                const SizedBox(width: 8),
-                _SmToggle(value: _dailySummary,
-                    onChanged: (v) => setState(() => _dailySummary = v)),
-              ]),
-              isDark: isDark),
-            // Ramadan reminder
+              ),
+            ),
             _SettRow(
-              emoji: '🌙', bg: AppColors.greenPale,
-              title: loc == 'ar' ? 'تذكير قبل رمضان' : 'Rappel avant Ramadan',
-              sub: '$_ramadanDays ${loc == "ar" ? "أيام" : "jours"} avant',
-              trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                GestureDetector(
-                  onTap: () => setState(() => _ramadanDays = (_ramadanDays - 1).clamp(1, 30)),
-                  child: const Icon(Icons.remove_rounded, size: 16, color: AppColors.text3)),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  child: Text('$_ramadanDays', style: GoogleFonts.cairo(
-                      fontSize: 13, fontWeight: FontWeight.w700,
-                      color: isDark ? AppColors.darkText : AppColors.text))),
-                GestureDetector(
-                  onTap: () => setState(() => _ramadanDays = (_ramadanDays + 1).clamp(1, 30)),
-                  child: const Icon(Icons.add_rounded, size: 16, color: AppColors.text3)),
-              ]),
-              isDark: isDark, last: true),
+              emoji: '🎚',
+              bg: AppColors.bluePale,
+              title: loc == 'ar' ? 'مستوى الصوت' : 'Volume',
+              sub: '${(settings.volume * 100).round()} %',
+              trailing: const Icon(
+                Icons.tune_rounded,
+                size: 16,
+                color: AppColors.text3,
+              ),
+              isDark: isDark,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const NotificationSettingsScreen(),
+                ),
+              ),
+            ),
+            _SettRow(
+              emoji: '🔒',
+              bg: AppColors.goldPale,
+              title: loc == 'ar'
+                  ? 'إعدادات شاشة القفل'
+                  : 'Écran de verrouillage',
+              sub: settings.lockScreenVisibility ==
+                      LockScreenVisibility.doNotShow
+                  ? (loc == 'ar'
+                      ? 'لا تُظهر الإشعارات'
+                      : 'Ne pas afficher les notifications')
+                  : (loc == 'ar' ? 'إخفاء المحتوى' : 'Masquer le contenu'),
+              trailing: const SizedBox.shrink(),
+              isDark: isDark,
+              last: true,
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const NotificationSettingsScreen(),
+                ),
+              ),
+            ),
           ]),
         ),
       ],
