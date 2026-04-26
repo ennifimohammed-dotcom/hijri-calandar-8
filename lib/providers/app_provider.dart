@@ -312,17 +312,37 @@ class AppProvider extends ChangeNotifier {
   // ── Localization ──────────────────────────────────────────
   String getHijriMonthName(int month, String loc) {
     if (month < 1 || month > 12) return '';
-    const ar = ['','محرم','صفر','ربيع الأول','ربيع الآخر','جمادى الأولى',
-        'جمادى الآخرة','رجب','شعبان','رمضان','شوال','ذو القعدة','ذو الحجة'];
-    const fr = ['','Mouharram','Safar',"Rabi'I","Rabi'II",'Joumada I',
-        'Joumada II','Rajab',"Cha'ban",'Ramadan','Chawwal',"Dhou Al-Qi'da",'Dhou Al-Hijja'];
-    const en = ['','Muharram','Safar',"Rabi' al-Awwal","Rabi' al-Thani",
-        'Jumada I','Jumada II','Rajab',"Sha'ban",'Ramadan','Shawwal',
-        "Dhu al-Qi'dah",'Dhu al-Hijjah'];
+    // Canonical Arabic Hijri month names with diacritics, in the
+    // strict order required by the calendar (1: المُحَرَّم … 12: ذو الحِجَّة).
+    const ar = [
+      '',
+      'المُحَرَّم',
+      'صَفَر',
+      'شهْرُ رَبِيعٍ الأولُ',
+      'شهْرُ رَبِيعٍ الآخِرُ',
+      'جُمَادىٰ الأولىٰ',
+      'جُمادىٰ الآخِرة',
+      'رَجَب',
+      'شَعبان',
+      'شهْرُ رَمَضانَ',
+      'شَوَّال',
+      'ذو القَعدة',
+      'ذو الحِجَّة',
+    ];
+    const fr = ['','Mouharram','Safar',"Rabi' al-Awwal","Rabi' al-Akhir",
+        'Joumada al-Oula','Joumada al-Akhira','Rajab','Chaabane',
+        'Ramadan','Chawwal',"Dhou al-Qi'da","Dhou al-Hijja"];
+    const en = ['','Muharram','Safar',"Rabi' al-Awwal","Rabi' al-Akhir",
+        'Jumada al-Ula','Jumada al-Akhira','Rajab',"Sha'ban",
+        'Ramadan','Shawwal',"Dhu al-Qi'dah",'Dhu al-Hijjah'];
+    const es = ['','Muharram','Safar',"Rabi' al-Awwal","Rabi' al-Ajir",
+        'Yumada al-Ula','Yumada al-Ajira','Rayab',"Sha'ban",
+        'Ramadán','Shawwal',"Du al-Qa'da",'Du al-Hiyya'];
     switch (loc) {
       case 'fr': return fr[month];
-      case 'en': case 'es': return en[month];
-      default: return ar[month];
+      case 'en': return en[month];
+      case 'es': return es[month];
+      default:   return ar[month];
     }
   }
 

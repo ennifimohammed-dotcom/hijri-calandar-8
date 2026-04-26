@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import '../models/event_model.dart';
+import '../providers/app_provider.dart';
+import '../utils/text_format.dart';
 import '../theme.dart';
 
 /// Add / Edit Event screen — Time + Recurrence + Notifications input.
@@ -145,6 +147,7 @@ class _AddEventScreenState extends State<AddEventScreen> {
             const SizedBox(height: 12),
             _TimeSection(
               draft: _draft,
+              locale: context.watch<AppProvider>().locale,
               onAllDayChanged: (v) =>
                   setState(() => _draft.toggleAllDay(v)),
               onStartTap: _pickStart,
@@ -493,20 +496,23 @@ class _KindSelector extends StatelessWidget {
 
 class _TimeSection extends StatelessWidget {
   final _EventDraft draft;
+  final String locale;
   final ValueChanged<bool> onAllDayChanged;
   final VoidCallback onStartTap;
   final VoidCallback onEndTap;
   const _TimeSection({
     required this.draft,
+    required this.locale,
     required this.onAllDayChanged,
     required this.onStartTap,
     required this.onEndTap,
   });
 
   String _format(DateTime d) {
-    return draft.isAllDay
-        ? DateFormat.yMMMd().format(d)
-        : DateFormat.yMMMd().add_Hm().format(d);
+    // Locale-aware date string with strict Western digits.
+    return TextFormat.toWesternDigits(
+      TextFormat.formatEventDateTime(d, locale, allDay: draft.isAllDay),
+    );
   }
 
   @override

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/event_model.dart';
 import '../providers/app_provider.dart';
 import '../utils/hijri_utils.dart';
+import '../utils/text_format.dart';
 import '../theme.dart';
 import 'add_event_screen.dart';
 import 'search_screen.dart';
@@ -53,19 +54,45 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final surf = isDark ? AppColors.darkSurface : AppColors.white;
     final m = p.currentMonth;
     final monthName = '${p.getHijriMonthName(m.hMonth, p.locale)} ${m.hYear}';
+    // Bridge to Gregorian so we can show the corresponding month/year
+    // beneath the Hijri header (small font, Western digits enforced).
+    DateTime gregFirst;
+    try {
+      gregFirst = HijriDate.hijriToGregorian(m.hYear, m.hMonth, 1);
+    } catch (_) {
+      gregFirst = DateTime.now();
+    }
+    final gregLabel = TextFormat.toWesternDigits(
+      TextFormat.formatGregorianMonthYear(gregFirst, p.locale),
+    );
     return Container(
       color: surf,
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
       child: Row(
         children: [
           Expanded(
-            child: Text(
-              monthName,
-              style: GoogleFonts.amiri(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
-                color: isDark ? AppColors.darkText : AppColors.navy,
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  TextFormat.toWesternDigits(monthName),
+                  style: GoogleFonts.amiri(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                    color: isDark ? AppColors.darkText : AppColors.navy,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  gregLabel,
+                  style: GoogleFonts.cairo(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: isDark ? AppColors.darkText3 : AppColors.text3,
+                  ),
+                ),
+              ],
             ),
           ),
           _TodayButton(p: p, isDark: isDark, onTap: () {

@@ -368,22 +368,29 @@ class _EventRow extends StatelessWidget {
           : 'Every Mon & Thu';
     }
     if (cfg.isMonthly) {
+      // Per spec: numbers must always be Western digits (0-9) in
+      // every locale, including Arabic.
       if (cfg.id == 'ayyam_albid') {
-        return loc == 'ar' ? '١٣ · ١٤ · ١٥ كل شهر'
-            : '13 · 14 · 15 chaque mois';
+        return loc == 'ar' ? '13 · 14 · 15 كل شهر'
+            : loc == 'fr' ? '13 · 14 · 15 chaque mois'
+            : loc == 'es' ? '13 · 14 · 15 cada mes'
+            : '13 · 14 · 15 each month';
       }
       if (cfg.id == 'hijama') {
-        return loc == 'ar' ? '١٧ · ١٩ · ٢١ كل شهر'
-            : '17 · 19 · 21 chaque mois';
+        return loc == 'ar' ? '17 · 19 · 21 كل شهر'
+            : loc == 'fr' ? '17 · 19 · 21 chaque mois'
+            : loc == 'es' ? '17 · 19 · 21 cada mes'
+            : '17 · 19 · 21 each month';
       }
-      return loc == 'ar' ? 'كل شهر' : 'Mensuel';
+      return loc == 'ar' ? 'كل شهر'
+          : loc == 'fr' ? 'Mensuel'
+          : loc == 'es' ? 'Mensual'
+          : 'Monthly';
     }
-    // Annual
-    final months = loc == 'ar'
-        ? ['','محرم','صفر','ربيع الأول','ربيع الآخر','جمادى الأولى','جمادى الآخرة','رجب','شعبان','رمضان','شوال','ذو القعدة','ذو الحجة']
-        : ['','Mouharram','Safar',"Rabi'I","Rabi'II",'Joumada I','Joumada II','Rajab',"Cha'ban",'Ramadan','Chawwal',"Dhou Al-Qi'da",'Dhou Al-Hijja'];
+    // Annual: reuse the canonical month list from the provider so
+    // spellings stay consistent across the whole app.
     if (cfg.month > 0 && cfg.month <= 12) {
-      return '${cfg.day} ${months[cfg.month]}';
+      return '${cfg.day} ${p.getHijriMonthName(cfg.month, loc)}';
     }
     return '';
   }

@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../models/notification_settings.dart';
 import '../providers/app_provider.dart';
 import '../utils/hijri_utils.dart';
+import '../utils/text_format.dart';
 import '../theme.dart';
 import 'notification_settings_screen.dart';
 
@@ -150,11 +151,17 @@ class _ProfileCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final today = HijriDate.now();
-    DateTime greg = DateTime.now();
-    String gregStr = '${greg.day}/${greg.month}/${greg.year}';
+    final greg = DateTime.now();
+    final loc = p.locale;
     final enabled = p.islamicEventsEnabled.values.where((v) => v).length;
-    const months = ['','Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
-    gregStr = '${greg.day} ${months[greg.month]} ${greg.year}';
+    final appTitle = loc == 'ar' ? 'تقويم الهجري'
+        : loc == 'fr' ? 'Calendrier Hégirien'
+        : loc == 'es' ? 'Calendario Hijri'
+        : 'Hijri Calendar';
+    final hijriLine = TextFormat.toWesternDigits(
+        '${today.hDay} ${p.getHijriMonthName(today.hMonth, loc)} ${today.hYear}');
+    final gregStr = TextFormat.toWesternDigits(
+        TextFormat.formatGregorianFull(greg, loc));
 
     return _Card(
       isDark: isDark,
@@ -175,10 +182,10 @@ class _ProfileCard extends StatelessWidget {
               Expanded(child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('تقويم الهجري', style: GoogleFonts.amiri(
+                  Text(appTitle, style: GoogleFonts.amiri(
                       fontSize: 18, fontWeight: FontWeight.bold,
                       color: isDark ? AppColors.darkText : AppColors.navy)),
-                  Text('${today.hDay} ${p.getHijriMonthName(today.hMonth, p.locale)} ${today.hYear}',
+                  Text(hijriLine,
                     style: GoogleFonts.cairo(fontSize: 11, color: AppColors.green,
                         fontWeight: FontWeight.w700)),
                   Text(gregStr, style: GoogleFonts.cairo(fontSize: 10, color: AppColors.text3)),
@@ -199,13 +206,22 @@ class _ProfileCard extends StatelessWidget {
           const SizedBox(height: 14),
           Row(children: [
             _StatBox(value: '${p.userEvents.length}',
-              label: p.locale == 'ar' ? 'أحداث' : 'Events', isDark: isDark),
+              label: loc == 'ar' ? 'أحداث'
+                  : loc == 'fr' ? 'Événements'
+                  : loc == 'es' ? 'Eventos'
+                  : 'Events', isDark: isDark),
             const SizedBox(width: 8),
             _StatBox(value: '$enabled',
-              label: p.locale == 'ar' ? 'إسلامية' : 'Islamiques', isDark: isDark),
+              label: loc == 'ar' ? 'إسلامية'
+                  : loc == 'fr' ? 'Islamiques'
+                  : loc == 'es' ? 'Islámicos'
+                  : 'Islamic', isDark: isDark),
             const SizedBox(width: 8),
             _StatBox(value: '${today.hYear}',
-              label: p.locale == 'ar' ? 'السنة' : 'Année', isDark: isDark),
+              label: loc == 'ar' ? 'السنة'
+                  : loc == 'fr' ? 'Année'
+                  : loc == 'es' ? 'Año'
+                  : 'Year', isDark: isDark),
           ]),
         ],
       ),
@@ -763,8 +779,14 @@ class _AboutSection extends StatelessWidget {
           child: Column(children: [
             _SettRow(
               emoji: 'ℹ️', bg: AppColors.bluePale,
-              title: loc == 'ar' ? 'الإصدار' : 'Version',
-              sub: 'تقويم الهجري',
+              title: loc == 'ar' ? 'الإصدار'
+                  : loc == 'fr' ? 'Version'
+                  : loc == 'es' ? 'Versión'
+                  : 'Version',
+              sub: loc == 'ar' ? 'تقويم الهجري'
+                  : loc == 'fr' ? 'Calendrier Hégirien'
+                  : loc == 'es' ? 'Calendario Hijri'
+                  : 'Hijri Calendar',
               trailing: Text('1.0.0', style: GoogleFonts.cairo(
                   fontSize: 11, color: AppColors.text3)),
               isDark: isDark),
