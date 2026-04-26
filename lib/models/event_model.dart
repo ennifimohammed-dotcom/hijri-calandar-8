@@ -5,9 +5,16 @@ import 'package:flutter/material.dart';
 // ENUMS
 // ─────────────────────────────────────────────
 enum EventType { islamic, personal, system }
+enum EventKind { event, task, birthday }
 enum RecurrenceFrequency { daily, weekly, monthly, yearly }
 enum EventPriority { low, medium, high }
 enum ReminderType { notification }
+
+/// How a reminder's trigger time is derived from the event start.
+/// - [relative] (Google Calendar timed events): trigger = start - minutesBefore.
+/// - [fixedTime] (Google Calendar all-day events): trigger = (start.date -
+///   daysBefore) at fixedHour:fixedMinute, regardless of start time.
+enum ReminderTriggerKind { relative, fixedTime }
 
 // ─────────────────────────────────────────────
 // RECURRENCE RULE
@@ -61,18 +68,94 @@ class RecurrenceRule {
 // ─────────────────────────────────────────────
 class EventReminder {
   final String id;
-  final int minutesBefore;
   final ReminderType type;
+
+  /// Trigger type. Defaults to [ReminderTriggerKind.relative] for
+  /// backward compatibility with stored events.
+  final ReminderTriggerKind kind;
+
+  /// Used when [kind] == [ReminderTriggerKind.relative].
+  /// Number of minutes before the event start.
+  final int minutesBefore;
+
+  /// Used when [kind] == [ReminderTriggerKind.fixedTime].
+  /// 0 = same day, 1 = the day before, 2, 7, …
+  final int daysBefore;
+
+  /// Hour-of-day for fixed-time triggers (0–23). Default 9.
+  final int fixedHour;
+
+  /// Minute-of-hour for fixed-time triggers (0–59). Default 0.
+  final int fixedMinute;
 
   const EventReminder({
     required this.id,
-    required this.minutesBefore,
     this.type = ReminderType.notification,
+    this.kind = ReminderTriggerKind.relative,
+    this.minutesBefore = 0,
+    this.daysBefore = 0,
+    this.fixedHour = 9,
+    this.fixedMinute = 0,
   });
 
+  /// Convenience constructor for timed-event reminders.
+  factory EventReminder.relative({
+    required String id,
+    required int minutesBefore,
+    ReminderType type = ReminderType.notification,
+  }) =>
+      EventReminder(
+        id: id,
+        type: type,
+        kind: ReminderTriggerKind.relative,
+        minutesBefore: minutesBefore,
+      );
+
+  /// Convenience constructor for all-day-event reminders.
+  factory EventReminder.fixed({
+    required String id,
+    required int daysBefore,
+    int hour = 9,
+    int minute = 0,
+    ReminderType type = ReminderType.notification,
+  }) =>
+      EventReminder(
+        id: id,
+        type: type,
+        kind: ReminderTriggerKind.fixedTime,
+        daysBefore: daysBefore,
+        fixedHour: hour,
+        fixedMinute: minute,
+      );
+
+  String _two(int n) => n.toString().padLeft(2, '0');
+  String get _hhmm => '${_two(fixedHour)}:${_two(fixedMinute)}';
+
   String label(String locale) {
+    if (kind == ReminderTriggerKind.fixedTime) {
+      if (daysBefore == 0) {
+        if (locale == 'ar') return 'اليوم نفسه عند $_hhmm';
+        if (locale == 'fr') return 'Le jour même à $_hhmm';
+        return 'Same day at $_hhmm';
+      }
+      if (daysBefore == 1) {
+        if (locale == 'ar') return 'الأمس عند $_hhmm';
+        if (locale == 'fr') return 'La veille à $_hhmm';
+        return 'The day before at $_hhmm';
+      }
+      if (daysBefore == 7) {
+        if (locale == 'ar') return 'قبل أسبوع عند $_hhmm';
+        if (locale == 'fr') return '1 semaine avant à $_hhmm';
+        return '1 week before at $_hhmm';
+      }
+      if (locale == 'ar') return 'قبل $daysBefore أيام عند $_hhmm';
+      if (locale == 'fr') return '$daysBefore jours avant à $_hhmm';
+      return '$daysBefore days before at $_hhmm';
+    }
+    // relative
     if (minutesBefore == 0) {
-      return locale == 'ar' ? 'عند الحدث' : locale == 'fr' ? 'Au moment' : 'At time';
+      return locale == 'ar' ? 'عند الحدث'
+          : locale == 'fr' ? 'Au moment' : 'At time';
     }
     if (minutesBefore < 60) {
       return locale == 'ar' ? '$minutesBefore دقيقة قبل'
@@ -81,27 +164,39 @@ class EventReminder {
     }
     if (minutesBefore < 1440) {
       final h = minutesBefore ~/ 60;
-      return locale == 'ar' ? '${h == 1 ? "ساعة" : "$h ساعات"} قبل'
+      return locale == 'ar'
+          ? '${h == 1 ? "ساعة" : "$h ساعات"} قبل'
           : locale == 'fr' ? '${h}h avant' : '${h}h before';
     }
     final d = minutesBefore ~/ 1440;
-    return locale == 'ar' ? '${d == 1 ? "يوم" : "$d أيام"} قبل'
+    return locale == 'ar'
+        ? '${d == 1 ? "يوم" : "$d أيام"} قبل'
         : locale == 'fr' ? '${d}j avant' : '${d}d before';
   }
 
   Map<String, dynamic> toJson() => {
-    'id': id,
-    'minutesBefore': minutesBefore,
-    'type': type.name,
-  };
+        'id': id,
+        'type': type.name,
+        'kind': kind.name,
+        'minutesBefore': minutesBefore,
+        'daysBefore': daysBefore,
+        'fixedHour': fixedHour,
+        'fixedMinute': fixedMinute,
+      };
 
   factory EventReminder.fromJson(Map<String, dynamic> j) => EventReminder(
-    id: j['id'] as String,
-    minutesBefore: (j['minutesBefore'] as num).toInt(),
-    type: ReminderType.values.firstWhere(
-        (e) => e.name == (j['type'] ?? 'notification'),
-        orElse: () => ReminderType.notification),
-  );
+        id: j['id'] as String,
+        type: ReminderType.values.firstWhere(
+            (e) => e.name == (j['type'] ?? 'notification'),
+            orElse: () => ReminderType.notification),
+        kind: ReminderTriggerKind.values.firstWhere(
+            (e) => e.name == (j['kind'] ?? 'relative'),
+            orElse: () => ReminderTriggerKind.relative),
+        minutesBefore: (j['minutesBefore'] as num?)?.toInt() ?? 0,
+        daysBefore: (j['daysBefore'] as num?)?.toInt() ?? 0,
+        fixedHour: (j['fixedHour'] as num?)?.toInt() ?? 9,
+        fixedMinute: (j['fixedMinute'] as num?)?.toInt() ?? 0,
+      );
 }
 
 // ─────────────────────────────────────────────
@@ -132,6 +227,14 @@ class AppEvent {
   final int? hijriYear;
   final bool isIslamic;
 
+  /// Google Calendar-style event kind (event / task / birthday).
+  /// Only meaningful for user-created events.
+  final EventKind kind;
+
+  /// IANA / OS time-zone name attached to timed events.
+  /// Null for all-day events (date-only semantics).
+  final String? timeZone;
+
   const AppEvent({
     required this.id,
     required this.titles,
@@ -155,7 +258,20 @@ class AppEvent {
     this.hijriMonth,
     this.hijriYear,
     this.isIslamic = false,
+    this.kind = EventKind.event,
+    this.timeZone,
   });
+
+  /// Inclusive end-day for all-day events.
+  /// Storage uses end-exclusive (Google Calendar convention) so a single-day
+  /// event has end = start + 1 day. The inclusive day shown to the user is
+  /// therefore endDate - 1 day.
+  DateTime get inclusiveEndDate {
+    if (!isAllDay) return endDate;
+    final inclusive = endDate.subtract(const Duration(days: 1));
+    if (inclusive.isBefore(startDate)) return startDate;
+    return inclusive;
+  }
 
   String title(String locale) =>
       titles[locale] ?? titles['ar'] ?? titles.values.firstOrNull ?? '';
@@ -186,6 +302,8 @@ class AppEvent {
     DateTime? updatedAt,
     int? hijriDay, int? hijriMonth, int? hijriYear,
     bool? isIslamic,
+    EventKind? kind,
+    String? timeZone,
   }) => AppEvent(
     id: id ?? this.id,
     titles: titles ?? this.titles,
@@ -209,6 +327,8 @@ class AppEvent {
     hijriMonth: hijriMonth ?? this.hijriMonth,
     hijriYear: hijriYear ?? this.hijriYear,
     isIslamic: isIslamic ?? this.isIslamic,
+    kind: kind ?? this.kind,
+    timeZone: timeZone ?? this.timeZone,
   );
 
   Map<String, dynamic> toJson() => {
@@ -234,6 +354,8 @@ class AppEvent {
     'hijriMonth': hijriMonth,
     'hijriYear': hijriYear,
     'isIslamic': isIslamic,
+    'kind': kind.name,
+    'timeZone': timeZone,
   };
 
   factory AppEvent.fromJson(Map<String, dynamic> j) {
@@ -281,6 +403,10 @@ class AppEvent {
       hijriMonth: (j['hijriMonth'] as num?)?.toInt(),
       hijriYear: (j['hijriYear'] as num?)?.toInt(),
       isIslamic: (j['isIslamic'] as bool?) ?? false,
+      kind: EventKind.values.firstWhere(
+          (e) => e.name == (j['kind'] ?? 'event'),
+          orElse: () => EventKind.event),
+      timeZone: j['timeZone'] as String?,
     );
   }
 

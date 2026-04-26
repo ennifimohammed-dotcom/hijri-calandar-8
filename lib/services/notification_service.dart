@@ -202,8 +202,8 @@ class NotificationService {
       final limit = now.add(const Duration(days: 30));
 
       for (final reminder in event.reminders) {
-        final notifTime =
-            event.startDate.subtract(Duration(minutes: reminder.minutesBefore));
+        final notifTime = _computeTriggerTime(event, reminder);
+        if (notifTime == null) continue;
         if (notifTime.isBefore(now) || notifTime.isAfter(limit)) continue;
 
         final id = _notifId(event.id, reminder.id);
@@ -218,6 +218,32 @@ class NotificationService {
     } catch (e) {
       debugPrint('scheduleEventReminders error: $e');
     }
+  }
+
+  /// Computes the absolute trigger time for a reminder given its kind.
+  ///
+  /// For all-day events the canonical reference is the start *date* (midnight
+  /// local), so a fixed-time reminder (Google Agenda all-day rule) lands at
+  /// (start.date - daysBefore) at fixedHour:fixedMinute regardless of the
+  /// stored start hour. For timed events we keep the relative offset rule.
+  DateTime? _computeTriggerTime(AppEvent event, EventReminder reminder) {
+    if (reminder.kind == ReminderTriggerKind.fixedTime) {
+      final startDay = DateTime(
+        event.startDate.year,
+        event.startDate.month,
+        event.startDate.day,
+      );
+      final triggerDay = startDay.subtract(Duration(days: reminder.daysBefore));
+      return DateTime(
+        triggerDay.year,
+        triggerDay.month,
+        triggerDay.day,
+        reminder.fixedHour,
+        reminder.fixedMinute,
+      );
+    }
+    // relative
+    return event.startDate.subtract(Duration(minutes: reminder.minutesBefore));
   }
 
   Future<void> cancelEventReminders(AppEvent event) async {
@@ -424,23 +450,7 @@ class NotificationService {
   }
 
   String _reminderBody(EventReminder reminder, String locale) {
-    if (reminder.minutesBefore == 0) {
-      return locale == 'ar' ? 'يبدأ الآن' : 'Starting now';
-    }
-    if (reminder.minutesBefore < 60) {
-      return locale == 'ar'
-          ? 'يبدأ خلال ${reminder.minutesBefore} دقيقة'
-          : 'Starts in ${reminder.minutesBefore} minutes';
-    }
-    if (reminder.minutesBefore < 1440) {
-      final h = reminder.minutesBefore ~/ 60;
-      return locale == 'ar'
-          ? 'يبدأ خلال $h ${h == 1 ? "ساعة" : "ساعات"}'
-          : 'Starts in $h hour${h > 1 ? "s" : ""}';
-    }
-    final d = reminder.minutesBefore ~/ 1440;
-    return locale == 'ar'
-        ? 'يبدأ خلال $d ${d == 1 ? "يوم" : "أيام"}'
-        : 'Starts in $d day${d > 1 ? "s" : ""}';
+    // Use the locale-aware label which already covers both reminder kinds.
+    return reminder.label(locale);
   }
 }
