@@ -4,16 +4,21 @@ import 'package:intl/intl.dart';
 import '../models/event_model.dart';
 import '../theme.dart';
 
-/// Add / Edit Event screen — structural layout + Time + Recurrence input.
+/// Add / Edit Event screen — Time + Recurrence + Notifications input.
 ///
-/// Step 3 of the staged Google-Agenda-style rewrite. Adds the
-/// Recurrence section bound to the temporary [_EventDraft]:
-///   * Recurrence selector (None / Daily / Weekly / Monthly / Yearly)
-///   * Editing-scope selector (this / this and following / all),
-///     surfaced only when editing an existing recurring event
+/// Step 4 of the staged Google-Agenda-style rewrite. Adds the
+/// Notifications section bound to the temporary [_EventDraft]:
+///   * Per-event notifications enable/disable Switch
+///   * Reminder list bound to [EventReminder] objects
+///   * Preset picker that adapts to the all-day flag:
+///       - timed events  -> relative presets (Reminder.relative)
+///       - all-day events -> fixed-time presets (Reminder.fixed)
+///   * Reminder list capped at 5 (per docs/event_notifications.md R-N-5)
+///   * Conversion of existing reminders when the user toggles all-day
+///     (per R-N-3)
 ///
-/// Notifications remain a placeholder. No recurrence computation,
-/// no services, no validation beyond ordering.
+/// No service or scheduling code. UI only — choices map directly to
+/// the [EventReminder] model.
 class AddEventScreen extends StatefulWidget {
   final AppEvent? existingEvent;
   const AddEventScreen({super.key, this.existingEvent});
@@ -102,6 +107,24 @@ class _AddEventScreenState extends State<AddEventScreen> {
     setState(() => _draft.setEditScope(picked));
   }
 
+  // ── Notifications sheet ─────────────────────────────────────────
+  Future<void> _openAddReminderSheet() async {
+    if (!_draft.canAddReminder) return;
+    final picked = await showModalBottomSheet<EventReminder>(
+      context: context,
+      backgroundColor: AppColors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (_) => _AddReminderSheet(
+        isAllDay: _draft.isAllDay,
+        idGenerator: _EventDraft._newReminderId,
+      ),
+    );
+    if (picked == null) return;
+    setState(() => _draft.addReminder(picked));
+  }
+
   // ── Build ───────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -135,9 +158,13 @@ class _AddEventScreenState extends State<AddEventScreen> {
               onEditScopeTap: _openEditScopeSheet,
             ),
             const SizedBox(height: 12),
-            const _SectionPlaceholder(
-              icon: Icons.notifications_outlined,
-              title: 'Notifications',
+            _NotificationsSection(
+              draft: _draft,
+              onEnabledChanged: (v) =>
+                  setState(() => _draft.setNotificationsEnabled(v)),
+              onAddReminder: _openAddReminderSheet,
+              onRemoveReminder: (id) =>
+                  setState(() => _draft.removeReminder(id)),
             ),
           ],
         ),
@@ -228,13 +255,24 @@ class _EventDraft {
   _RecurrenceChoice recurrence;
   _EditScope editScope;
 
+  /// Per-event notifications switch. Independent of the global
+  /// notifications setting and of [AppEvent.isEnabled]. See
+  /// docs/event_notifications.md §10.
+  bool notificationsEnabled;
+
+  /// Reminders attached to this event. Capped at 5 (R-N-5). Each entry
+  /// is a real [EventReminder]; UI choices map 1:1 to the model.
+  List<EventReminder> reminders;
+
   _EventDraft({
     required this.isAllDay,
     required this.start,
     required this.end,
     this.recurrence = _RecurrenceChoice.none,
     this.editScope = _EditScope.thisOccurrence,
-  });
+    this.notificationsEnabled = true,
+    List<EventReminder>? reminders,
+  }) : reminders = reminders ?? <EventReminder>[];
 
   factory _EventDraft.now() {
     final now = DateTime.now();
@@ -242,7 +280,21 @@ class _EventDraft {
       isAllDay: false,
       start: DateTime(now.year, now.month, now.day, 9, 0),
       end: DateTime(now.year, now.month, now.day, 10, 0),
+      reminders: [
+        // Default for a freshly created timed event:
+        // a single 30-minutes-before reminder (notifications spec §4.1).
+        EventReminder.relative(
+          id: _newReminderId(),
+          minutesBefore: 30,
+        ),
+      ],
     );
+  }
+
+  static int _reminderSeq = 0;
+  static String _newReminderId() {
+    _reminderSeq++;
+    return 'r_${DateTime.now().microsecondsSinceEpoch}_$_reminderSeq';
   }
 
   void setRecurrence(_RecurrenceChoice value) {
@@ -253,6 +305,21 @@ class _EventDraft {
     editScope = value;
   }
 
+  void setNotificationsEnabled(bool value) {
+    notificationsEnabled = value;
+  }
+
+  bool get canAddReminder => reminders.length < 5;
+
+  void addReminder(EventReminder reminder) {
+    if (!canAddReminder) return;
+    reminders.add(reminder);
+  }
+
+  void removeReminder(String id) {
+    reminders.removeWhere((r) => r.id == id);
+  }
+
   void toggleAllDay(bool value) {
     if (value == isAllDay) return;
     if (value) {
@@ -261,6 +328,7 @@ class _EventDraft {
       isAllDay = true;
       start = s;
       end = s;
+      _convertRemindersForAllDay();
     } else {
       // all-day → timed: assign default times (09:00 / 10:00) on the
       // existing date.
@@ -268,6 +336,47 @@ class _EventDraft {
       isAllDay = false;
       start = s;
       end = DateTime(s.year, s.month, s.day, 10, 0);
+      _convertRemindersForTimed();
+    }
+  }
+
+  /// docs/event_notifications.md §3 R-N-3 (timed → all-day).
+  /// Best-effort mapping; reminders that cannot be expressed as a
+  /// fixed-time preset are dropped silently in this UI step.
+  void _convertRemindersForAllDay() {
+    final converted = <EventReminder>[];
+    for (final r in reminders) {
+      if (r.kind == ReminderTriggerKind.fixedTime) {
+        converted.add(r);
+        continue;
+      }
+      final m = r.minutesBefore;
+      if (m <= 1440) {
+        converted.add(EventReminder.fixed(
+            id: r.id, daysBefore: 0, hour: 9, minute: 0));
+      } else if (m <= 2 * 1440) {
+        converted.add(EventReminder.fixed(
+            id: r.id, daysBefore: 1, hour: 9, minute: 0));
+      } else if (m <= 7 * 1440) {
+        converted.add(EventReminder.fixed(
+            id: r.id, daysBefore: 7, hour: 9, minute: 0));
+      }
+      // else: drop
+    }
+    reminders = converted;
+  }
+
+  /// docs/event_notifications.md §3 R-N-3 (all-day → timed).
+  /// Fixed-time reminders are dropped; if nothing remains a single
+  /// default 30-min relative reminder is inserted.
+  void _convertRemindersForTimed() {
+    reminders = reminders
+        .where((r) => r.kind == ReminderTriggerKind.relative)
+        .toList();
+    if (reminders.isEmpty) {
+      reminders = [
+        EventReminder.relative(id: _newReminderId(), minutesBefore: 30),
+      ];
     }
   }
 
@@ -766,40 +875,318 @@ class _OptionsSheet<T> extends StatelessWidget {
   }
 }
 
-class _SectionPlaceholder extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  const _SectionPlaceholder({required this.icon, required this.title});
+// ─── Notifications ──────────────────────────────────────────────────
+
+/// Standard relative-reminder presets (timed events).
+/// Source: docs/event_notifications.md §4.1.
+const List<(int, String)> _kRelativePresets = [
+  (0, 'At time'),
+  (5, '5 minutes before'),
+  (10, '10 minutes before'),
+  (15, '15 minutes before'),
+  (30, '30 minutes before'),
+  (60, '1 hour before'),
+  (120, '2 hours before'),
+  (1440, '1 day before'),
+  (2880, '2 days before'),
+  (10080, '1 week before'),
+];
+
+/// Standard fixed-time-reminder presets (all-day events).
+/// Source: docs/event_notifications.md §4.2. Tuple = (daysBefore, hour, minute, label).
+const List<(int, int, int, String)> _kFixedPresets = [
+  (0, 9, 0, 'Same day at 09:00'),
+  (1, 9, 0, 'The day before at 09:00'),
+  (1, 11, 0, 'The day before at 11:00'),
+  (1, 17, 0, 'The day before at 17:00'),
+  (2, 9, 0, '2 days before at 09:00'),
+  (7, 9, 0, '1 week before at 09:00'),
+];
+
+class _NotificationsSection extends StatelessWidget {
+  final _EventDraft draft;
+  final ValueChanged<bool> onEnabledChanged;
+  final VoidCallback onAddReminder;
+  final ValueChanged<String> onRemoveReminder;
+  const _NotificationsSection({
+    required this.draft,
+    required this.onEnabledChanged,
+    required this.onAddReminder,
+    required this.onRemoveReminder,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final enabled = draft.notificationsEnabled;
+    final canAdd = draft.canAddReminder;
     return _Card(
+      padding: EdgeInsets.zero,
+      child: Column(
+        children: [
+          // Header
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+            child: Row(
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: AppColors.greenPale,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(
+                    Icons.notifications_outlined,
+                    size: 18,
+                    color: AppColors.green,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Notifications',
+                    style: GoogleFonts.cairo(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.text,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          // Enable / disable
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Enable notifications',
+                    style: GoogleFonts.cairo(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.text,
+                    ),
+                  ),
+                ),
+                Switch.adaptive(
+                  value: enabled,
+                  onChanged: onEnabledChanged,
+                  activeColor: AppColors.green,
+                ),
+              ],
+            ),
+          ),
+          if (enabled) ...[
+            const Divider(height: 1, color: AppColors.border, indent: 14),
+            // Reminder list
+            for (final r in draft.reminders) ...[
+              _ReminderRow(
+                reminder: r,
+                onRemove: () => onRemoveReminder(r.id),
+              ),
+              const Divider(height: 1, color: AppColors.border, indent: 14),
+            ],
+            // Add reminder
+            InkWell(
+              onTap: canAdd ? onAddReminder : null,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+                child: Row(
+                  children: [
+                    Icon(
+                      Icons.add_alert_outlined,
+                      size: 18,
+                      color: canAdd ? AppColors.green : AppColors.text3,
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        canAdd
+                            ? 'Add reminder'
+                            : 'Reminder limit reached (5)',
+                        style: GoogleFonts.cairo(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w700,
+                          color:
+                              canAdd ? AppColors.green : AppColors.text3,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ] else
+            const SizedBox(height: 4),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReminderRow extends StatelessWidget {
+  final EventReminder reminder;
+  final VoidCallback onRemove;
+  const _ReminderRow({required this.reminder, required this.onRemove});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 10, 8, 10),
       child: Row(
         children: [
-          Container(
-            width: 36,
-            height: 36,
-            decoration: BoxDecoration(
-              color: AppColors.greenPale,
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, size: 18, color: AppColors.green),
+          const Icon(
+            Icons.notifications_active_outlined,
+            size: 16,
+            color: AppColors.gold,
           ),
-          const SizedBox(width: 12),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
-              title,
+              reminder.label('en'),
               style: GoogleFonts.cairo(
-                fontSize: 14,
-                fontWeight: FontWeight.w700,
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
                 color: AppColors.text,
               ),
             ),
           ),
-          const Icon(
-            Icons.chevron_right_rounded,
-            color: AppColors.text3,
+          IconButton(
+            tooltip: 'Remove',
+            icon: const Icon(
+              Icons.close_rounded,
+              size: 18,
+              color: AppColors.text3,
+            ),
+            onPressed: onRemove,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AddReminderSheet extends StatelessWidget {
+  final bool isAllDay;
+  final String Function() idGenerator;
+  const _AddReminderSheet({
+    required this.isAllDay,
+    required this.idGenerator,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final title = isAllDay ? 'Add reminder' : 'Add reminder';
+    final entries = isAllDay
+        ? _kFixedPresets
+            .map((p) => (
+                  EventReminder.fixed(
+                    id: idGenerator(),
+                    daysBefore: p.$1,
+                    hour: p.$2,
+                    minute: p.$3,
+                  ),
+                  p.$4,
+                ))
+            .toList()
+        : _kRelativePresets
+            .map((p) => (
+                  EventReminder.relative(
+                    id: idGenerator(),
+                    minutesBefore: p.$1,
+                  ),
+                  p.$2,
+                ))
+            .toList();
+
+    return SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(height: 10),
+          Container(
+            width: 40,
+            height: 4,
+            decoration: BoxDecoration(
+              color: AppColors.border,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 14, 20, 8),
+            child: Row(
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.cairo(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.text,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: AppColors.greenPale,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    isAllDay ? 'All-day presets' : 'Timed presets',
+                    style: GoogleFonts.cairo(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.green,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.border),
+          Flexible(
+            child: ListView.separated(
+              shrinkWrap: true,
+              padding: EdgeInsets.zero,
+              itemCount: entries.length,
+              separatorBuilder: (_, __) =>
+                  const Divider(height: 1, color: AppColors.border),
+              itemBuilder: (_, i) {
+                final entry = entries[i];
+                return InkWell(
+                  onTap: () => Navigator.of(context).pop(entry.$1),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 20, vertical: 14),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            entry.$2,
+                            style: GoogleFonts.cairo(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w600,
+                              color: AppColors.text,
+                            ),
+                          ),
+                        ),
+                        const Icon(
+                          Icons.add_rounded,
+                          color: AppColors.green,
+                          size: 20,
+                        ),
+                      ],
+                    ),
+                  ),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
         ],
       ),
     );
