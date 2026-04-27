@@ -321,28 +321,45 @@ class _LanguageSection extends StatelessWidget {
                 }).toList(),
               ),
               const SizedBox(height: 14),
-              Text(loc == 'ar' ? 'المنطقة' : 'Région',
+              Text(loc == 'ar' ? 'المنطقة'
+                  : loc == 'fr' ? 'Région'
+                  : loc == 'es' ? 'Región'
+                  : 'Region',
                 style: GoogleFonts.cairo(fontSize: 10, fontWeight: FontWeight.w700,
                     color: AppColors.text3, letterSpacing: 2)),
               const SizedBox(height: 8),
               Wrap(
                 spacing: 6, runSpacing: 6,
                 children: regions.map((r) {
-                  return Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                    decoration: BoxDecoration(
-                      color: isDark ? AppColors.darkBg : AppColors.bg,
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(color: AppColors.border)),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Text(r.$2, style: const TextStyle(fontSize: 12)),
-                      const SizedBox(width: 5),
-                      Text(r.$3, style: GoogleFonts.cairo(
-                          fontSize: 10, color: isDark ? AppColors.darkText2 : AppColors.text2)),
-                    ]),
+                  final active = p.region == r.$1;
+                  return GestureDetector(
+                    onTap: () => p.setRegion(r.$1),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: active
+                            ? AppColors.green
+                            : (isDark ? AppColors.darkBg : AppColors.bg),
+                        borderRadius: BorderRadius.circular(20),
+                        border: Border.all(
+                            color: active ? AppColors.green : AppColors.border)),
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Text(r.$2, style: const TextStyle(fontSize: 12)),
+                        const SizedBox(width: 5),
+                        Text(r.$3, style: GoogleFonts.cairo(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w700,
+                            color: active
+                                ? Colors.white
+                                : (isDark ? AppColors.darkText2 : AppColors.text2))),
+                      ]),
+                    ),
                   );
                 }).toList(),
               ),
+              const SizedBox(height: 12),
+              _HijriAdjustRow(p: p, isDark: isDark),
             ],
           ),
         ),
@@ -813,6 +830,81 @@ class _AboutSection extends StatelessWidget {
               sub: '', trailing: const SizedBox(),
               isDark: isDark, last: true),
           ]),
+        ),
+      ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// HIJRI ADJUSTMENT ROW (shown under the region picker)
+// ═══════════════════════════════════════════════════════════
+class _HijriAdjustRow extends StatelessWidget {
+  final AppProvider p;
+  final bool isDark;
+  const _HijriAdjustRow({required this.p, required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = p.locale;
+    final adj = p.hijriManualAdjust;
+    final label = loc == 'ar'
+        ? 'تعديل يدوي للتاريخ الهجري'
+        : loc == 'fr'
+            ? 'Ajustement manuel du Hijri'
+            : loc == 'es'
+                ? 'Ajuste manual del Hijri'
+                : 'Hijri manual adjustment';
+    final hint = loc == 'ar'
+        ? 'بالأيام (−2 إلى +2)'
+        : loc == 'fr'
+            ? 'En jours (−2 à +2)'
+            : loc == 'es'
+                ? 'En días (−2 a +2)'
+                : 'In days (−2 to +2)';
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(label,
+                  style: GoogleFonts.cairo(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: isDark ? AppColors.darkText : AppColors.text)),
+              Text(hint,
+                  style: GoogleFonts.cairo(
+                      fontSize: 9, color: AppColors.text3)),
+            ],
+          ),
+        ),
+        GestureDetector(
+          onTap: () => p.setHijriManualAdjust(adj - 1),
+          child: const Icon(Icons.remove_rounded,
+              size: 18, color: AppColors.text3),
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          child: Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+                color: AppColors.greenPale,
+                borderRadius: BorderRadius.circular(10)),
+            child: Text(
+              adj == 0 ? '0' : (adj > 0 ? '+$adj' : '$adj'),
+              style: GoogleFonts.cairo(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w800,
+                  color: AppColors.green),
+            ),
+          ),
+        ),
+        GestureDetector(
+          onTap: () => p.setHijriManualAdjust(adj + 1),
+          child: const Icon(Icons.add_rounded,
+              size: 18, color: AppColors.text3),
         ),
       ],
     );

@@ -42,6 +42,21 @@ class AppProvider extends ChangeNotifier {
   Map<String, bool> _islamicEventsEnabled = {};
   NotificationSettings _notificationSettings = const NotificationSettings();
 
+  /// Region code for Hijri calendar synchronization. Each region has a
+  /// default day-offset relative to the Umm al-Qura baseline (see
+  /// [_regionOffset]). The user MAY further fine-tune via
+  /// [_hijriManualAdjust].
+  ///
+  /// Defaults are sourced from the official calendrical practice in
+  /// each country: Saudi Arabia & global use Umm al-Qura (offset 0);
+  /// Morocco (Ministry of Habous and Islamic Affairs) and Algeria
+  /// (Ministry of Religious Affairs) typically rely on local crescent
+  /// sighting which lags Umm al-Qura by one day, so default offset
+  /// = +1; Tunisia, Türkiye (Diyanet) and Indonesia normally align
+  /// with Umm al-Qura calculation.
+  String _region = 'global';
+  int _hijriManualAdjust = 0;
+
   // ── Getters ───────────────────────────────────────────────
   HijriDate get currentMonth => _currentMonth;
   HijriDate get today => _today;
@@ -50,6 +65,9 @@ class AppProvider extends ChangeNotifier {
   bool get isLoading => _isLoading;
   ThemeMode get themeMode => _themeMode;
   String get locale => _locale;
+  String get region => _region;
+  int get hijriManualAdjust => _hijriManualAdjust;
+  int get hijriDayOffset => _regionOffset(_region) + _hijriManualAdjust;
   List<AppEvent> get userEvents => _repo.getCached();
   Map<String, bool> get islamicEventsEnabled =>
       Map.unmodifiable(_islamicEventsEnabled);
@@ -63,7 +81,7 @@ class AppProvider extends ChangeNotifier {
   Future<void> init() async {
     try {
       await _notifs.init();
-      _today = HijriDate.now();
+      _today = _todayForRegion();
       _currentMonth = HijriDate(_today.hYear, _today.hMonth, 1);
       _selectedDay = _today;
 
@@ -103,11 +121,71 @@ class AppProvider extends ChangeNotifier {
   }
 
   void goToToday() {
-    _today = HijriDate.now();
+    _today = _todayForRegion();
     _currentMonth = HijriDate(_today.hYear, _today.hMonth, 1);
     _selectedDay = _today;
     _engine.invalidate();
     notifyListeners();
+  }
+
+  // ── Region & Hijri offset ────────────────────────────────
+  Future<void> setRegion(String code) async {
+    if (_region == code) return;
+    _region = code;
+    _today = _todayForRegion();
+    _currentMonth = HijriDate(_today.hYear, _today.hMonth, 1);
+    _selectedDay = _today;
+    _engine.invalidate();
+    await _savePrefs();
+    notifyListeners();
+    await _repo.rescheduleAllNotifications();
+  }
+
+  Future<void> setHijriManualAdjust(int days) async {
+    final clamped = days.clamp(-2, 2);
+    if (_hijriManualAdjust == clamped) return;
+    _hijriManualAdjust = clamped;
+    _today = _todayForRegion();
+    _currentMonth = HijriDate(_today.hYear, _today.hMonth, 1);
+    _engine.invalidate();
+    await _savePrefs();
+    notifyListeners();
+    await _repo.rescheduleAllNotifications();
+  }
+
+  /// Region → default day-offset relative to Umm al-Qura.
+  /// Sources:
+  ///   • Saudi Arabia: Umm al-Qura (official)
+  ///   • Morocco: Ministry of Habous and Islamic Affairs (sighting,
+  ///     typically +1 day vs UAQ)
+  ///   • Algeria: Ministry of Religious Affairs (sighting, typically +1)
+  ///   • Tunisia: Ministry of Religious Affairs (calculation, ≈ UAQ)
+  ///   • Türkiye: Diyanet (calculation, aligned with UAQ)
+  ///   • Indonesia: Kementerian Agama (mostly aligned with UAQ)
+  ///   • Global: Umm al-Qura baseline
+  static int _regionOffset(String code) {
+    switch (code) {
+      case 'ma': return 1;
+      case 'dz': return 1;
+      case 'tn': return 0;
+      case 'sa': return 0;
+      case 'tr': return 0;
+      case 'id': return 0;
+      case 'global':
+      default:
+        return 0;
+    }
+  }
+
+  /// Today in the user's regional Hijri calendar.
+  ///
+  /// Convention: `offset = +1` means the regional Hijri month starts
+  /// ONE DAY LATER than Umm al-Qura. The date the user sees today is
+  /// therefore `UAQ.fromGregorian(now − offset)`.
+  HijriDate _todayForRegion() {
+    final now = DateTime.now();
+    final shifted = now.subtract(Duration(days: hijriDayOffset));
+    return HijriDate.fromGregorian(shifted);
   }
 
   void setViewMode(CalendarViewMode mode) {
@@ -149,7 +227,7 @@ class AppProvider extends ChangeNotifier {
   // ── Event queries ─────────────────────────────────────────
   List<AppEvent> getEventsForDay(int day, int month, int year) {
     try {
-      final greg = HijriDate.hijriToGregorian(year, month, day);
+      final greg = hijriToGregorian(year, month, day);
       final from = DateTime(greg.year, greg.month, greg.day);
       final to   = DateTime(greg.year, greg.month, greg.day, 23, 59, 59);
 
@@ -205,7 +283,7 @@ class AppProvider extends ChangeNotifier {
         matches = true;
       } else if (cfg.isWeekly) {
         try {
-          final g = HijriDate.hijriToGregorian(year, month, day);
+          final g = hijriToGregorian(year, month, day);
           if (cfg.weekday != null && g.weekday == cfg.weekday) matches = true;
           if (cfg.id == 'sawm_ithnayn_khamis' &&
               (g.weekday == 1 || g.weekday == 4)) matches = true;
@@ -227,7 +305,7 @@ class AppProvider extends ChangeNotifier {
       IslamicEventConfig cfg, int day, int month, int year) {
     final now = DateTime.now();
     DateTime greg = now;
-    try { greg = HijriDate.hijriToGregorian(year, month, day); } catch (_) {}
+    try { greg = hijriToGregorian(year, month, day); } catch (_) {}
     return AppEvent(
       id: '${cfg.id}_${year}_$month',
       titles: cfg.names,
@@ -294,10 +372,20 @@ class AppProvider extends ChangeNotifier {
 
   // ── Hijri helpers ─────────────────────────────────────────
   int getDaysInMonth(int year, int month) => HijriDate.daysInMonth(year, month);
-  int getFirstWeekdayOfMonth(int year, int month) =>
-      HijriDate.firstWeekdayOfMonth(year, month);
-  DateTime hijriToGregorian(int year, int month, int day) =>
-      HijriDate.hijriToGregorian(year, month, day);
+
+  /// First weekday of a Hijri month, in the user's regional calendar.
+  /// Applies [hijriDayOffset] so the calendar grid lines up with the
+  /// region's actual moon-sighting / calculation practice.
+  int getFirstWeekdayOfMonth(int year, int month) {
+    final base = HijriDate.hijriToGregorian(year, month, 1);
+    return base.add(Duration(days: hijriDayOffset)).weekday;
+  }
+
+  /// Hijri → Gregorian, applying the region offset.
+  DateTime hijriToGregorian(int year, int month, int day) {
+    final base = HijriDate.hijriToGregorian(year, month, day);
+    return base.add(Duration(days: hijriDayOffset));
+  }
 
   bool isToday(int day, int month, int year) =>
       day == _today.hDay && month == _today.hMonth && year == _today.hYear;
@@ -392,6 +480,8 @@ class AppProvider extends ChangeNotifier {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString('theme', _themeMode.name);
       await prefs.setString('locale', _locale);
+      await prefs.setString('region', _region);
+      await prefs.setInt('hijri_manual_adjust', _hijriManualAdjust);
       await prefs.setString('islamic_events', jsonEncode(_islamicEventsEnabled));
     } catch (e) {
       debugPrint('_savePrefs error: $e');
@@ -406,6 +496,10 @@ class AppProvider extends ChangeNotifier {
       if (th == 'light') _themeMode = ThemeMode.light;
       final loc = prefs.getString('locale');
       if (loc != null) _locale = loc;
+      final reg = prefs.getString('region');
+      if (reg != null && reg.isNotEmpty) _region = reg;
+      final adj = prefs.getInt('hijri_manual_adjust');
+      if (adj != null) _hijriManualAdjust = adj.clamp(-2, 2);
       final ieJson = prefs.getString('islamic_events');
       if (ieJson != null && ieJson.isNotEmpty) {
         final saved = Map<String, dynamic>.from(jsonDecode(ieJson) as Map);
