@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/event_model.dart';
 import '../models/notification_settings.dart';
 import '../data/islamic_events.dart';
+import '../data/hijri_months.dart';
 import '../repositories/event_repository.dart';
 import '../services/recurrence_engine.dart';
 import '../services/notification_service.dart';
@@ -80,6 +81,11 @@ class AppProvider extends ChangeNotifier {
   // ── Init ─────────────────────────────────────────────────
   Future<void> init() async {
     try {
+      // Hard invariant: the canonical Hijri month list must remain
+      // in chronological order (1..12). Throws if a future refactor
+      // ever reorders it.
+      assertHijriMonthOrder();
+
       await _notifs.init();
       _today = _todayForRegion();
       _currentMonth = HijriDate(_today.hYear, _today.hMonth, 1);
@@ -398,41 +404,14 @@ class AppProvider extends ChangeNotifier {
   bool isRamadan(int month) => month == 9;
 
   // ── Localization ──────────────────────────────────────────
-  String getHijriMonthName(int month, String loc) {
-    if (month < 1 || month > 12) return '';
-    // Canonical Arabic Hijri month names with diacritics, in the
-    // strict order required by the calendar (1: المُحَرَّم … 12: ذو الحِجَّة).
-    const ar = [
-      '',
-      'المُحَرَّم',
-      'صَفَر',
-      'شهْرُ رَبِيعٍ الأولُ',
-      'شهْرُ رَبِيعٍ الآخِرُ',
-      'جُمَادىٰ الأولىٰ',
-      'جُمادىٰ الآخِرة',
-      'رَجَب',
-      'شَعبان',
-      'شهْرُ رَمَضانَ',
-      'شَوَّال',
-      'ذو القَعدة',
-      'ذو الحِجَّة',
-    ];
-    const fr = ['','Mouharram','Safar',"Rabi' al-Awwal","Rabi' al-Akhir",
-        'Joumada al-Oula','Joumada al-Akhira','Rajab','Chaabane',
-        'Ramadan','Chawwal',"Dhou al-Qi'da","Dhou al-Hijja"];
-    const en = ['','Muharram','Safar',"Rabi' al-Awwal","Rabi' al-Akhir",
-        'Jumada al-Ula','Jumada al-Akhira','Rajab',"Sha'ban",
-        'Ramadan','Shawwal',"Dhu al-Qi'dah",'Dhu al-Hijjah'];
-    const es = ['','Muharram','Safar',"Rabi' al-Awwal","Rabi' al-Ajir",
-        'Yumada al-Ula','Yumada al-Ajira','Rayab',"Sha'ban",
-        'Ramadán','Shawwal',"Du al-Qa'da",'Du al-Hiyya'];
-    switch (loc) {
-      case 'fr': return fr[month];
-      case 'en': return en[month];
-      case 'es': return es[month];
-      default:   return ar[month];
-    }
-  }
+  /// Hijri month name for the chosen UI locale.
+  ///
+  /// Thin delegation to the canonical source of truth in
+  /// [kHijriMonths] (lib/data/hijri_months.dart). Do NOT reintroduce
+  /// month-name arrays anywhere else — the order MUST come from
+  /// [HijriMonth.index] and never from string sorting.
+  String getHijriMonthName(int month, String loc) =>
+      hijriMonthName(month, loc);
 
   String label(String key) {
     final map = <String, Map<String, String>>{
