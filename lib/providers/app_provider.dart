@@ -121,6 +121,18 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Jump the visible month directly. Used by the infinite PageView so
+  /// header and grid stay synchronized after a swipe without iterating
+  /// next/prev (which would drift if pages are skipped).
+  void setCurrentMonth(int year, int monthIndex) {
+    if (_currentMonth.hYear == year && _currentMonth.hMonth == monthIndex) {
+      return;
+    }
+    _currentMonth = HijriDate(year, monthIndex, 1);
+    _engine.invalidate();
+    notifyListeners();
+  }
+
   void selectDay(HijriDate day) {
     _selectedDay = day;
     notifyListeners();

@@ -16,19 +16,74 @@ class CalendarScreen extends StatefulWidget {
 }
 
 class _CalendarScreenState extends State<CalendarScreen> {
-  late PageController _pageCtrl;
-  int _pageIndex = 1000;
+  // ── Infinite PageView state ─────────────────────────────────
+  //
+  // The monthly view is paginated by [PageView.builder] and acts as a
+  // truly infinite horizontal scroll: there is no itemCount, and each
+  // page index maps deterministically to a Hijri (year, month) tuple
+  // via the formula in [_hijriForIndex] using nothing but [monthIndex]
+  // arithmetic — never string sorting, never Gregorian DateTime
+  // arithmetic.
+  //
+  // _baseIndex is placed deep into the page space so the user can
+  // swipe back tens of thousands of months before the controller would
+  // ever clamp.
+  static const int _kBaseIndex = 100000;
+
+  late final PageController _pageCtrl;
+  late final int _baseYear;
+  late final int _baseMonth;
 
   @override
   void initState() {
     super.initState();
-    _pageCtrl = PageController(initialPage: _pageIndex);
+    final today = HijriDate.now();
+    _baseYear = today.hYear;
+    _baseMonth = today.hMonth;
+    _pageCtrl = PageController(initialPage: _kBaseIndex);
   }
 
   @override
   void dispose() {
     _pageCtrl.dispose();
     super.dispose();
+  }
+
+  /// Pure index-based mapping. Given any [pageIndex] return the Hijri
+  /// (year, monthIndex) it represents.
+  ///
+  /// Algorithm (per spec):
+  ///   offset      = pageIndex - baseIndex
+  ///   m0          = baseMonth + offset - 1            // 0-based
+  ///   yearOffset  = floor(m0 / 12)                    // floor div, not trunc
+  ///   year        = baseYear + yearOffset
+  ///   month       = (m0 mod 12) + 1                   // 1..12
+  ///
+  /// Dart's `%` is mathematical (always non-negative when divisor
+  /// is positive) so `(-1) % 12 == 11` — exactly what we want for
+  /// going one month before Muharram.
+  ///
+  /// Dart's `~/` truncates toward zero, which would break negative
+  /// offsets. We deliberately use `(m0 / 12).floor()` instead.
+  ({int year, int month}) _hijriForIndex(int pageIndex) {
+    final offset = pageIndex - _kBaseIndex;
+    final m0 = _baseMonth + offset - 1;
+    final yearOffset = (m0 / 12).floor();
+    final year = _baseYear + yearOffset;
+    final month = (m0 % 12) + 1;
+    return (year: year, month: month);
+  }
+
+  void _onPageChanged(int idx, AppProvider p) {
+    final hm = _hijriForIndex(idx);
+    p.setCurrentMonth(hm.year, hm.month);
+  }
+
+  void _jumpToToday(AppProvider p) {
+    p.goToToday();
+    if (_pageCtrl.hasClients) {
+      _pageCtrl.jumpToPage(_kBaseIndex);
+    }
   }
 
   @override
@@ -95,10 +150,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               ],
             ),
           ),
-          _TodayButton(p: p, isDark: isDark, onTap: () {
-            p.goToToday();
-            _pageCtrl.jumpToPage(_pageIndex);
-          }),
+          _TodayButton(p: p, isDark: isDark, onTap: () => _jumpToToday(p)),
           const SizedBox(width: 8),
           GestureDetector(
             onTap: () => Navigator.push(context,
@@ -166,7 +218,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
   Widget _buildCurrentView(AppProvider p, bool isDark) {
     switch (p.viewMode) {
       case CalendarViewMode.monthly:
-        return _MonthlyView(pageCtrl: _pageCtrl, baseIndex: _pageIndex, p: p, isDark: isDark);
+        return _MonthlyView(
+          pageCtrl: _pageCtrl,
+          hijriForIndex: _hijriForIndex,
+          onPageChanged: (idx) => _onPageChanged(idx, p),
+          p: p,
+          isDark: isDark,
+        );
       case CalendarViewMode.weekly:
         return _WeeklyView(p: p, isDark: isDark);
       case CalendarViewMode.agenda:
@@ -208,11 +266,22 @@ class _TodayButton extends StatelessWidget {
 // ════════════════════════════════════════════════════════════
 class _MonthlyView extends StatelessWidget {
   final PageController pageCtrl;
-  final int baseIndex;
+
+  /// Pure-index → Hijri month mapping. Provided by the parent so the
+  /// PageView itself never has to know about months — it only knows
+  /// about indices.
+  final ({int year, int month}) Function(int pageIndex) hijriForIndex;
+  final ValueChanged<int> onPageChanged;
+
   final AppProvider p;
   final bool isDark;
-  const _MonthlyView({required this.pageCtrl, required this.baseIndex,
-      required this.p, required this.isDark});
+  const _MonthlyView({
+    required this.pageCtrl,
+    required this.hijriForIndex,
+    required this.onPageChanged,
+    required this.p,
+    required this.isDark,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -225,20 +294,23 @@ class _MonthlyView extends StatelessWidget {
           padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
           child: _buildWeekdayHeader(),
         ),
-        // PageView for months
+        // Truly infinite PageView. No itemCount, no fixed list of months.
+        // Each itemBuilder call computes its own (year, month) from the
+        // index via Hijri month-arithmetic — no Gregorian DateTime, no
+        // string sort, no shared mutable provider state on the page
+        // itself.
         Expanded(
           child: PageView.builder(
             controller: pageCtrl,
-            onPageChanged: (idx) {
-              final diff = idx - baseIndex;
-              if (diff > 0) {
-                for (int i = 0; i < diff; i++) p.goToNextMonth();
-              } else {
-                for (int i = 0; i < -diff; i++) p.goToPreviousMonth();
-              }
-            },
+            onPageChanged: onPageChanged,
             itemBuilder: (ctx, idx) {
-              return _MonthPage(p: p, isDark: isDark);
+              final hm = hijriForIndex(idx);
+              return _MonthPage(
+                year: hm.year,
+                month: hm.month,
+                p: p,
+                isDark: isDark,
+              );
             },
           ),
         ),
@@ -271,15 +343,24 @@ class _MonthlyView extends StatelessWidget {
 }
 
 class _MonthPage extends StatelessWidget {
+  /// Hijri month rendered by THIS page. Computed by the parent from
+  /// the page index via index arithmetic — never read from the
+  /// provider's currentMonth, so each page in the infinite PageView
+  /// is self-consistent regardless of swipe order.
+  final int year;
+  final int month;
   final AppProvider p;
   final bool isDark;
-  const _MonthPage({required this.p, required this.isDark});
+  const _MonthPage({
+    required this.year,
+    required this.month,
+    required this.p,
+    required this.isDark,
+  });
 
   @override
   Widget build(BuildContext context) {
     final surf = isDark ? AppColors.darkSurface : AppColors.white;
-    final year = p.currentMonth.hYear;
-    final month = p.currentMonth.hMonth;
     final daysInMonth = p.getDaysInMonth(year, month);
     // firstWeekdayOfMonth returns 1=Mon..7=Sun
     // For Mon-based grid: Mon=0..Sun=6
