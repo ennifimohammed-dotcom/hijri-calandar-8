@@ -120,6 +120,17 @@ class NotificationService {
         : 'Silent Hijri Calendar reminders';
 
     final isAlert = s.mode == NotificationMode.alert;
+    // Heads-up popup: requires Importance.max + Priority.max on the
+    // channel and notification. When the user disables popup but
+    // keeps mode = alert, we still play sound and vibrate but lower
+    // the priority so the OS just posts a regular notification.
+    final wantsHeadsUp = isAlert && s.popupEnabled;
+    final importance = !isAlert
+        ? Importance.low
+        : (wantsHeadsUp ? Importance.max : Importance.defaultImportance);
+    final priority = !isAlert
+        ? Priority.low
+        : (wantsHeadsUp ? Priority.max : Priority.defaultPriority);
     final visibility =
         s.lockScreenVisibility == LockScreenVisibility.doNotShow
             ? NotificationVisibility.secret
@@ -163,8 +174,8 @@ class NotificationService {
       channelId,
       channelName,
       channelDescription: channelDesc,
-      importance: isAlert ? Importance.max : Importance.low,
-      priority: isAlert ? Priority.high : Priority.low,
+      importance: importance,
+      priority: priority,
       playSound: playSound,
       sound: soundResource,
       enableVibration: isAlert && s.vibrationEnabled,
@@ -195,7 +206,13 @@ class NotificationService {
   Future<void> scheduleEventReminders(AppEvent event) async {
     final s = _settings.settings;
     if (!s.enabled) return;
-    if (!event.isEnabled || event.reminders.isEmpty) return;
+    // Per-event gates (notifications spec §10):
+    //   1. event.isEnabled       → calendar visibility
+    //   2. event.notificationsEnabled → reminders fire or not
+    //   3. event.reminders        → must have at least one reminder
+    if (!event.isEnabled) return;
+    if (!event.notificationsEnabled) return;
+    if (event.reminders.isEmpty) return;
 
     try {
       final now = DateTime.now();

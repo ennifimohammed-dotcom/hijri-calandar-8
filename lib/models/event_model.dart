@@ -235,6 +235,14 @@ class AppEvent {
   /// Null for all-day events (date-only semantics).
   final String? timeZone;
 
+  /// Per-event notifications switch. Independent of [isEnabled] (which
+  /// controls calendar visibility) and of the global notifications
+  /// switch. When false, all reminders attached to this event are
+  /// inert: no triggers are computed and no alarms are scheduled, but
+  /// the [reminders] array itself is preserved so flipping the switch
+  /// back on restores them. See docs/event_notifications.md §10.
+  final bool notificationsEnabled;
+
   const AppEvent({
     required this.id,
     required this.titles,
@@ -260,6 +268,7 @@ class AppEvent {
     this.isIslamic = false,
     this.kind = EventKind.event,
     this.timeZone,
+    this.notificationsEnabled = true,
   });
 
   /// Inclusive end-day for all-day events.
@@ -304,6 +313,7 @@ class AppEvent {
     bool? isIslamic,
     EventKind? kind,
     String? timeZone,
+    bool? notificationsEnabled,
   }) => AppEvent(
     id: id ?? this.id,
     titles: titles ?? this.titles,
@@ -329,6 +339,7 @@ class AppEvent {
     isIslamic: isIslamic ?? this.isIslamic,
     kind: kind ?? this.kind,
     timeZone: timeZone ?? this.timeZone,
+    notificationsEnabled: notificationsEnabled ?? this.notificationsEnabled,
   );
 
   Map<String, dynamic> toJson() => {
@@ -356,6 +367,7 @@ class AppEvent {
     'isIslamic': isIslamic,
     'kind': kind.name,
     'timeZone': timeZone,
+    'notificationsEnabled': notificationsEnabled,
   };
 
   factory AppEvent.fromJson(Map<String, dynamic> j) {
@@ -407,6 +419,7 @@ class AppEvent {
           (e) => e.name == (j['kind'] ?? 'event'),
           orElse: () => EventKind.event),
       timeZone: j['timeZone'] as String?,
+      notificationsEnabled: (j['notificationsEnabled'] as bool?) ?? true,
     );
   }
 

@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:uuid/uuid.dart';
+import '../data/hijri_months.dart';
 import '../models/event_model.dart';
 import '../providers/app_provider.dart';
+import '../utils/hijri_utils.dart';
 import '../utils/text_format.dart';
 import '../theme.dart';
 
@@ -31,41 +35,92 @@ class AddEventScreen extends StatefulWidget {
 
 class _AddEventScreenState extends State<AddEventScreen> {
   final TextEditingController _titleCtrl = TextEditingController();
-  EventKind _kind = EventKind.event;
+  final TextEditingController _descCtrl = TextEditingController();
+
+  /// Color shown on the agenda for this event. Defaults to the first
+  /// entry of [_kEventColors].
+  Color _color = _kEventColors.first;
+
+  /// Category id (`personal` / `family` / `social` / `work` /
+  /// `health` / `religious`). Maps to the [AppEvent.category] field.
+  String _category = 'personal';
+
+  /// When `true` the start/end date pickers open the Hijri spinner;
+  /// otherwise the standard Gregorian [showDatePicker] is shown.
+  bool _useHijriPicker = false;
+
   late _EventDraft _draft;
 
   @override
   void initState() {
     super.initState();
-    _draft = _EventDraft.now();
+    final existing = widget.existingEvent;
+    if (existing != null) {
+      _titleCtrl.text = existing.title('ar');
+      _descCtrl.text = existing.description('ar');
+      _color = existing.color;
+      if (_kEventColors.every((c) => c.value != _color.value)) {
+        // Persisted color may have been a custom one from an older
+        // build — snap back to the closest preset to keep the picker
+        // selection coherent.
+        _color = _kEventColors.first;
+      }
+      _category = existing.category.isEmpty ? 'personal' : existing.category;
+      _draft = _EventDraft.fromExisting(existing);
+    } else {
+      _draft = _EventDraft.now();
+    }
   }
 
   @override
   void dispose() {
     _titleCtrl.dispose();
+    _descCtrl.dispose();
     super.dispose();
   }
 
   // ── Pickers ─────────────────────────────────────────────────────
-  Future<void> _pickStart() async {
-    final picked = await _pickDateMaybeTime(initial: _draft.start);
+  Future<void> _pickStart(String locale) async {
+    final picked = await _pickDateMaybeTime(
+      initial: _draft.start,
+      locale: locale,
+    );
     if (picked == null) return;
     setState(() => _draft.setStart(picked));
   }
 
-  Future<void> _pickEnd() async {
-    final picked = await _pickDateMaybeTime(initial: _draft.end);
+  Future<void> _pickEnd(String locale) async {
+    final picked = await _pickDateMaybeTime(
+      initial: _draft.end,
+      locale: locale,
+    );
     if (picked == null) return;
     setState(() => _draft.setEnd(picked));
   }
 
-  Future<DateTime?> _pickDateMaybeTime({required DateTime initial}) async {
-    final date = await showDatePicker(
-      context: context,
-      initialDate: initial,
-      firstDate: DateTime(1970),
-      lastDate: DateTime(2200),
-    );
+  /// Picks a date (Hijri or Gregorian per [_useHijriPicker]). When the
+  /// event is timed, an additional time picker is shown afterwards.
+  Future<DateTime?> _pickDateMaybeTime({
+    required DateTime initial,
+    required String locale,
+  }) async {
+    DateTime? date;
+    if (_useHijriPicker) {
+      final picked = await _showHijriDatePicker(
+        context: context,
+        initial: HijriDate.fromGregorian(initial),
+        locale: locale,
+      );
+      if (picked == null) return null;
+      date = HijriDate.hijriToGregorian(picked.hYear, picked.hMonth, picked.hDay);
+    } else {
+      date = await showDatePicker(
+        context: context,
+        initialDate: initial,
+        firstDate: DateTime(1970),
+        lastDate: DateTime(2200),
+      );
+    }
     if (date == null) return null;
     if (_draft.isAllDay) {
       return DateTime(date.year, date.month, date.day);
@@ -77,6 +132,112 @@ class _AddEventScreenState extends State<AddEventScreen> {
     );
     if (time == null) return null;
     return DateTime(date.year, date.month, date.day, time.hour, time.minute);
+  }
+
+  // ── Save ────────────────────────────────────────────────────────
+  Future<void> _save(AppProvider provider, String locale) async {
+    final title = _titleCtrl.text.trim();
+    if (title.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_Tr.titleRequired.value(locale)),
+          backgroundColor: AppColors.red,
+        ),
+      );
+      return;
+    }
+    if (!_draft.isAllDay && _draft.end.isBefore(_draft.start)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(_Tr.invalidRange.value(locale)),
+          backgroundColor: AppColors.red,
+        ),
+      );
+      return;
+    }
+
+    // End-exclusive storage for all-day (per docs/event_time_behavior.md):
+    // the user picks the inclusive last day, we persist next-day midnight.
+    final startStorage = _draft.isAllDay
+        ? DateTime(_draft.start.year, _draft.start.month, _draft.start.day)
+        : _draft.start;
+    final endStorage = _draft.isAllDay
+        ? DateTime(_draft.end.year, _draft.end.month, _draft.end.day)
+            .add(const Duration(days: 1))
+        : _draft.end;
+
+    // Hijri reference for the start date (used by Hijri-aware queries
+    // and the Islamic events bank).
+    HijriDate? hijri;
+    try {
+      hijri = HijriDate.fromGregorian(startStorage);
+    } catch (_) {}
+
+    final desc = _descCtrl.text.trim();
+    final now = DateTime.now();
+    final id = widget.existingEvent?.id ?? const Uuid().v4();
+    final timeZone = _draft.isAllDay ? null : tz.local.name;
+
+    final event = AppEvent(
+      id: id,
+      titles: {
+        'ar': title,
+        'fr': title,
+        'en': title,
+        'es': title,
+      },
+      descriptions: {
+        'ar': desc,
+        'fr': desc,
+        'en': desc,
+        'es': desc,
+      },
+      startDate: startStorage,
+      endDate: endStorage,
+      isAllDay: _draft.isAllDay,
+      recurrenceRule: _toRecurrenceRule(_draft.recurrence),
+      reminders: _draft.reminders,
+      type: EventType.personal,
+      color: _color,
+      emoji: '',
+      category: _category,
+      location: '',
+      priority: EventPriority.medium,
+      isEnabled: true,
+      isPrivate: false,
+      createdAt: widget.existingEvent?.createdAt ?? now,
+      updatedAt: now,
+      hijriDay: hijri?.hDay,
+      hijriMonth: hijri?.hMonth,
+      hijriYear: hijri?.hYear,
+      isIslamic: false,
+      kind: EventKind.event,
+      timeZone: timeZone,
+      notificationsEnabled: _draft.notificationsEnabled,
+    );
+
+    if (widget.existingEvent != null) {
+      await provider.updateEvent(event);
+    } else {
+      await provider.addEvent(event);
+    }
+    if (!mounted) return;
+    Navigator.pop(context);
+  }
+
+  RecurrenceRule? _toRecurrenceRule(_RecurrenceChoice c) {
+    switch (c) {
+      case _RecurrenceChoice.none:
+        return null;
+      case _RecurrenceChoice.daily:
+        return const RecurrenceRule(frequency: RecurrenceFrequency.daily);
+      case _RecurrenceChoice.weekly:
+        return const RecurrenceRule(frequency: RecurrenceFrequency.weekly);
+      case _RecurrenceChoice.monthly:
+        return const RecurrenceRule(frequency: RecurrenceFrequency.monthly);
+      case _RecurrenceChoice.yearly:
+        return const RecurrenceRule(frequency: RecurrenceFrequency.yearly);
+    }
   }
 
   bool get _isEditingRecurringEvent =>
@@ -133,7 +294,8 @@ class _AddEventScreenState extends State<AddEventScreen> {
   // ── Build ───────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    final locale = context.watch<AppProvider>().locale;
+    final provider = context.watch<AppProvider>();
+    final locale = provider.locale;
     return Scaffold(
       backgroundColor: AppColors.bg,
       appBar: _buildAppBar(locale),
@@ -144,19 +306,18 @@ class _AddEventScreenState extends State<AddEventScreen> {
           children: [
             _TitleField(controller: _titleCtrl, locale: locale),
             const SizedBox(height: 12),
-            _KindSelector(
-              selected: _kind,
-              locale: locale,
-              onChanged: (k) => setState(() => _kind = k),
-            ),
+            _DescriptionField(controller: _descCtrl, locale: locale),
             const SizedBox(height: 12),
             _TimeSection(
               draft: _draft,
               locale: locale,
+              useHijriPicker: _useHijriPicker,
               onAllDayChanged: (v) =>
                   setState(() => _draft.toggleAllDay(v)),
-              onStartTap: _pickStart,
-              onEndTap: _pickEnd,
+              onCalendarSystemChanged: (v) =>
+                  setState(() => _useHijriPicker = v),
+              onStartTap: () => _pickStart(locale),
+              onEndTap: () => _pickEnd(locale),
             ),
             const SizedBox(height: 12),
             _RecurrenceSection(
@@ -165,6 +326,18 @@ class _AddEventScreenState extends State<AddEventScreen> {
               showEditScope: _isEditingRecurringEvent,
               onRecurrenceTap: () => _openRecurrenceSheet(locale),
               onEditScopeTap: () => _openEditScopeSheet(locale),
+            ),
+            const SizedBox(height: 12),
+            _CategoryPicker(
+              selected: _category,
+              locale: locale,
+              onSelected: (c) => setState(() => _category = c),
+            ),
+            const SizedBox(height: 12),
+            _ColorPicker(
+              selected: _color,
+              locale: locale,
+              onSelected: (c) => setState(() => _color = c),
             ),
             const SizedBox(height: 12),
             _NotificationsSection(
@@ -179,7 +352,10 @@ class _AddEventScreenState extends State<AddEventScreen> {
           ],
         ),
       ),
-      bottomNavigationBar: _SaveBar(locale: locale),
+      bottomNavigationBar: _SaveBar(
+        locale: locale,
+        onPressed: () => _save(provider, locale),
+      ),
     );
   }
 
@@ -301,6 +477,41 @@ class _EventDraft {
         ),
       ],
     );
+  }
+
+  /// Hydrates a draft from an existing [AppEvent]. Restores the
+  /// inclusive-end date for all-day events (see
+  /// docs/event_time_behavior.md §1.4).
+  factory _EventDraft.fromExisting(AppEvent e) {
+    final allDay = e.isAllDay;
+    final start = allDay
+        ? DateTime(e.startDate.year, e.startDate.month, e.startDate.day)
+        : e.startDate;
+    final end = allDay
+        ? e.inclusiveEndDate
+        : e.endDate;
+    return _EventDraft(
+      isAllDay: allDay,
+      start: start,
+      end: end,
+      recurrence: _recurrenceFromRule(e.recurrenceRule),
+      notificationsEnabled: e.notificationsEnabled,
+      reminders: List.of(e.reminders),
+    );
+  }
+
+  static _RecurrenceChoice _recurrenceFromRule(RecurrenceRule? rule) {
+    if (rule == null) return _RecurrenceChoice.none;
+    switch (rule.frequency) {
+      case RecurrenceFrequency.daily:
+        return _RecurrenceChoice.daily;
+      case RecurrenceFrequency.weekly:
+        return _RecurrenceChoice.weekly;
+      case RecurrenceFrequency.monthly:
+        return _RecurrenceChoice.monthly;
+      case RecurrenceFrequency.yearly:
+        return _RecurrenceChoice.yearly;
+    }
   }
 
   static int _reminderSeq = 0;
@@ -444,66 +655,212 @@ class _TitleField extends StatelessWidget {
   }
 }
 
-class _KindSelector extends StatelessWidget {
-  final EventKind selected;
-  final String locale;
-  final ValueChanged<EventKind> onChanged;
-  const _KindSelector({
-    required this.selected,
-    required this.locale,
-    required this.onChanged,
-  });
+// ─── Description ────────────────────────────────────────────────────
 
-  static const _options = <(EventKind, _Tr, IconData)>[
-    (EventKind.event, _Tr.kindEvent, Icons.event_rounded),
-    (EventKind.task, _Tr.kindTask, Icons.check_circle_outline_rounded),
-    (EventKind.birthday, _Tr.kindBirthday, Icons.cake_outlined),
-  ];
+class _DescriptionField extends StatelessWidget {
+  final TextEditingController controller;
+  final String locale;
+  const _DescriptionField({required this.controller, required this.locale});
 
   @override
   Widget build(BuildContext context) {
     return _Card(
-      padding: const EdgeInsets.all(8),
-      child: Row(
-        children: _options.map((o) {
-          final isSelected = selected == o.$1;
-          return Expanded(
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () => onChanged(o.$1),
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 150),
-                margin: const EdgeInsets.symmetric(horizontal: 4),
-                padding: const EdgeInsets.symmetric(vertical: 10),
-                decoration: BoxDecoration(
-                  color: isSelected ? AppColors.green : Colors.transparent,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: isSelected ? AppColors.green : AppColors.border,
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    Icon(
-                      o.$3,
-                      size: 18,
-                      color: isSelected ? Colors.white : AppColors.text2,
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      o.$2.value(locale),
-                      style: GoogleFonts.cairo(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                        color: isSelected ? Colors.white : AppColors.text2,
-                      ),
-                    ),
-                  ],
+      child: TextField(
+        controller: controller,
+        maxLines: 3,
+        minLines: 1,
+        textInputAction: TextInputAction.newline,
+        style: GoogleFonts.cairo(
+          fontSize: 14,
+          color: AppColors.text,
+        ),
+        decoration: InputDecoration(
+          border: InputBorder.none,
+          isDense: true,
+          icon: const Icon(
+            Icons.notes_rounded,
+            color: AppColors.text3,
+            size: 20,
+          ),
+          hintText: _Tr.descriptionHint.value(locale),
+          hintStyle: GoogleFonts.cairo(
+            fontSize: 14,
+            color: AppColors.text3,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Color picker (10 Google-Calendar-style colors) ─────────────────
+
+const List<Color> _kEventColors = <Color>[
+  Color(0xFFD50000), // tomato
+  Color(0xFFE67C73), // flamingo
+  Color(0xFFF4511E), // tangerine
+  Color(0xFFF6BF26), // banana
+  Color(0xFF33B679), // sage
+  Color(0xFF0B8043), // basil
+  Color(0xFF039BE5), // peacock
+  Color(0xFF3F51B5), // blueberry
+  Color(0xFF7986CB), // lavender
+  Color(0xFF8E24AA), // grape
+];
+
+class _ColorPicker extends StatelessWidget {
+  final Color selected;
+  final String locale;
+  final ValueChanged<Color> onSelected;
+  const _ColorPicker({
+    required this.selected,
+    required this.locale,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.palette_rounded,
+                  size: 20, color: AppColors.text3),
+              const SizedBox(width: 12),
+              Text(
+                _Tr.color.value(locale),
+                style: GoogleFonts.cairo(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.text,
                 ),
               ),
-            ),
-          );
-        }).toList(),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: _kEventColors.map((c) {
+              final isSelected = c.value == selected.value;
+              return GestureDetector(
+                onTap: () => onSelected(c),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  width: isSelected ? 36 : 30,
+                  height: isSelected ? 36 : 30,
+                  decoration: BoxDecoration(
+                    color: c,
+                    shape: BoxShape.circle,
+                    boxShadow: isSelected
+                        ? [
+                            BoxShadow(
+                              color: c.withValues(alpha: 0.4),
+                              blurRadius: 8,
+                            ),
+                          ]
+                        : null,
+                  ),
+                  child: isSelected
+                      ? const Icon(Icons.check_rounded,
+                          color: Colors.white, size: 18)
+                      : null,
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─── Category picker ────────────────────────────────────────────────
+
+const List<(String, String, _Tr)> _kCategories = <(String, String, _Tr)>[
+  ('personal', '👤', _Tr.catPersonal),
+  ('family', '👨‍👩‍👧', _Tr.catFamily),
+  ('social', '🎉', _Tr.catSocial),
+  ('work', '💼', _Tr.catWork),
+  ('health', '🏥', _Tr.catHealth),
+  ('religious', '🕌', _Tr.catReligious),
+];
+
+class _CategoryPicker extends StatelessWidget {
+  final String selected;
+  final String locale;
+  final ValueChanged<String> onSelected;
+  const _CategoryPicker({
+    required this.selected,
+    required this.locale,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.label_outline_rounded,
+                  size: 20, color: AppColors.text3),
+              const SizedBox(width: 12),
+              Text(
+                _Tr.category.value(locale),
+                style: GoogleFonts.cairo(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.text,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: _kCategories.map((c) {
+              final isSelected = c.$1 == selected;
+              return GestureDetector(
+                onTap: () => onSelected(c.$1),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: isSelected ? AppColors.green : Colors.transparent,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: isSelected
+                            ? AppColors.green
+                            : AppColors.border),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(c.$2, style: const TextStyle(fontSize: 14)),
+                      const SizedBox(width: 6),
+                      Text(
+                        c.$3.value(locale),
+                        style: GoogleFonts.cairo(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: isSelected
+                              ? Colors.white
+                              : AppColors.text2,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ],
       ),
     );
   }
@@ -512,19 +869,36 @@ class _KindSelector extends StatelessWidget {
 class _TimeSection extends StatelessWidget {
   final _EventDraft draft;
   final String locale;
+  final bool useHijriPicker;
   final ValueChanged<bool> onAllDayChanged;
+  final ValueChanged<bool> onCalendarSystemChanged;
   final VoidCallback onStartTap;
   final VoidCallback onEndTap;
   const _TimeSection({
     required this.draft,
     required this.locale,
+    required this.useHijriPicker,
     required this.onAllDayChanged,
+    required this.onCalendarSystemChanged,
     required this.onStartTap,
     required this.onEndTap,
   });
 
   String _format(DateTime d) {
-    // Locale-aware date string with strict Western digits.
+    if (useHijriPicker) {
+      // Hijri rendering — month name from kHijriMonths (canonical),
+      // digits forced Western per the global text-format rule.
+      final h = HijriDate.fromGregorian(d);
+      final hijri = TextFormat.toWesternDigits(
+        '${h.hDay} ${hijriMonthName(h.hMonth, locale)} ${h.hYear}',
+      );
+      if (draft.isAllDay) return hijri;
+      String two(int n) => n.toString().padLeft(2, '0');
+      return TextFormat.toWesternDigits(
+        '$hijri · ${two(d.hour)}:${two(d.minute)}',
+      );
+    }
+    // Gregorian rendering with strict Western digits.
     return TextFormat.toWesternDigits(
       TextFormat.formatEventDateTime(d, locale, allDay: draft.isAllDay),
     );
@@ -588,6 +962,30 @@ class _TimeSection extends StatelessWidget {
                   value: draft.isAllDay,
                   onChanged: onAllDayChanged,
                   activeColor: AppColors.green,
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1, color: AppColors.border, indent: 14),
+          // Calendar system toggle (Hijri ↔ Gregorian for the date pickers)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 8, 14, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _Tr.calendarSystem.value(locale),
+                    style: GoogleFonts.cairo(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: AppColors.text,
+                    ),
+                  ),
+                ),
+                _CalendarSystemToggle(
+                  useHijri: useHijriPicker,
+                  locale: locale,
+                  onChanged: onCalendarSystemChanged,
                 ),
               ],
             ),
@@ -925,6 +1323,273 @@ const List<(int, int, int)> _kFixedPresetSpecs = [
   (7, 9, 0),
 ];
 
+// ─── Calendar system toggle (Hijri ↔ Gregorian) ─────────────────────
+
+class _CalendarSystemToggle extends StatelessWidget {
+  final bool useHijri;
+  final String locale;
+  final ValueChanged<bool> onChanged;
+  const _CalendarSystemToggle({
+    required this.useHijri,
+    required this.locale,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(2),
+      decoration: BoxDecoration(
+        color: AppColors.bg,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _segment(_Tr.gregorian.value(locale), !useHijri, () => onChanged(false)),
+          _segment(_Tr.hijri.value(locale), useHijri, () => onChanged(true)),
+        ],
+      ),
+    );
+  }
+
+  Widget _segment(String label, bool selected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.green : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          label,
+          style: GoogleFonts.cairo(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: selected ? Colors.white : AppColors.text2,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Hijri date picker dialog ───────────────────────────────────────
+
+Future<HijriDate?> _showHijriDatePicker({
+  required BuildContext context,
+  required HijriDate initial,
+  required String locale,
+}) {
+  return showDialog<HijriDate>(
+    context: context,
+    barrierDismissible: true,
+    builder: (_) => _HijriDatePickerDialog(initial: initial, locale: locale),
+  );
+}
+
+class _HijriDatePickerDialog extends StatefulWidget {
+  final HijriDate initial;
+  final String locale;
+  const _HijriDatePickerDialog({required this.initial, required this.locale});
+
+  @override
+  State<_HijriDatePickerDialog> createState() => _HijriDatePickerDialogState();
+}
+
+class _HijriDatePickerDialogState extends State<_HijriDatePickerDialog> {
+  late int _year;
+  late int _month;
+  late int _day;
+
+  @override
+  void initState() {
+    super.initState();
+    _year = widget.initial.hYear;
+    _month = widget.initial.hMonth;
+    _day = widget.initial.hDay;
+  }
+
+  void _setMonth(int m) {
+    setState(() {
+      // wrap year if month rolls over
+      if (m < 1) {
+        _month = 12;
+        _year -= 1;
+      } else if (m > 12) {
+        _month = 1;
+        _year += 1;
+      } else {
+        _month = m;
+      }
+      _day = _day.clamp(1, HijriDate.daysInMonth(_year, _month));
+    });
+  }
+
+  void _setYear(int y) {
+    setState(() {
+      _year = y.clamp(1300, 1700);
+      _day = _day.clamp(1, HijriDate.daysInMonth(_year, _month));
+    });
+  }
+
+  void _setDay(int d) {
+    final max = HijriDate.daysInMonth(_year, _month);
+    setState(() {
+      if (d < 1) {
+        d = max;
+      } else if (d > max) {
+        d = 1;
+      }
+      _day = d;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = widget.locale;
+    return Dialog(
+      backgroundColor: AppColors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _Tr.hijriDateTitle.value(loc),
+              style: GoogleFonts.cairo(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: AppColors.text,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: [
+                _Spinner(
+                  label: _Tr.hijriDay.value(loc),
+                  value: TextFormat.toWesternDigits('$_day'),
+                  onUp: () => _setDay(_day + 1),
+                  onDown: () => _setDay(_day - 1),
+                ),
+                _Spinner(
+                  label: _Tr.hijriMonth.value(loc),
+                  value: hijriMonthName(_month, loc),
+                  big: true,
+                  onUp: () => _setMonth(_month + 1),
+                  onDown: () => _setMonth(_month - 1),
+                ),
+                _Spinner(
+                  label: _Tr.hijriYear.value(loc),
+                  value: TextFormat.toWesternDigits('$_year'),
+                  onUp: () => _setYear(_year + 1),
+                  onDown: () => _setYear(_year - 1),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(
+                    _Tr.cancel.value(loc),
+                    style: GoogleFonts.cairo(
+                      color: AppColors.text2,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.green,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: () => Navigator.pop(
+                    context,
+                    HijriDate(_year, _month, _day),
+                  ),
+                  child: Text(
+                    _Tr.ok.value(loc),
+                    style: GoogleFonts.cairo(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _Spinner extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool big;
+  final VoidCallback onUp;
+  final VoidCallback onDown;
+  const _Spinner({
+    required this.label,
+    required this.value,
+    required this.onUp,
+    required this.onDown,
+    this.big = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: GoogleFonts.cairo(
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+            color: AppColors.text3,
+          ),
+        ),
+        const SizedBox(height: 4),
+        IconButton(
+          icon: const Icon(Icons.keyboard_arrow_up_rounded,
+              color: AppColors.green, size: 26),
+          onPressed: onUp,
+        ),
+        SizedBox(
+          width: big ? 110 : 60,
+          child: Text(
+            value,
+            textAlign: TextAlign.center,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.amiri(
+              fontSize: big ? 16 : 18,
+              fontWeight: FontWeight.bold,
+              color: AppColors.navy,
+            ),
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.keyboard_arrow_down_rounded,
+              color: AppColors.green, size: 26),
+          onPressed: onDown,
+        ),
+      ],
+    );
+  }
+}
+
 class _NotificationsSection extends StatelessWidget {
   final _EventDraft draft;
   final String locale;
@@ -1226,7 +1891,8 @@ class _AddReminderSheet extends StatelessWidget {
 
 class _SaveBar extends StatelessWidget {
   final String locale;
-  const _SaveBar({required this.locale});
+  final VoidCallback onPressed;
+  const _SaveBar({required this.locale, required this.onPressed});
 
   @override
   Widget build(BuildContext context) {
@@ -1238,7 +1904,7 @@ class _SaveBar extends StatelessWidget {
           border: Border(top: BorderSide(color: AppColors.border)),
         ),
         child: ElevatedButton(
-          onPressed: () {},
+          onPressed: onPressed,
           style: ElevatedButton.styleFrom(
             backgroundColor: AppColors.green,
             foregroundColor: Colors.white,
@@ -1302,11 +1968,18 @@ enum _Tr {
   addEvent,
   editEvent,
   titleHint,
-  kindEvent,
-  kindTask,
-  kindBirthday,
+  descriptionHint,
   sectionTime,
   allDay,
+  calendarSystem,
+  hijri,
+  gregorian,
+  hijriDateTitle,
+  hijriDay,
+  hijriMonth,
+  hijriYear,
+  ok,
+  cancel,
   start,
   end,
   sectionRecurrence,
@@ -1321,6 +1994,14 @@ enum _Tr {
   scopeThis,
   scopeThisAndFollowing,
   scopeAll,
+  category,
+  catPersonal,
+  catFamily,
+  catSocial,
+  catWork,
+  catHealth,
+  catReligious,
+  color,
   sectionNotifications,
   enableNotifications,
   addReminder,
@@ -1329,6 +2010,8 @@ enum _Tr {
   allDayPresets,
   timedPresets,
   save,
+  titleRequired,
+  invalidRange,
 }
 
 extension _TrX on _Tr {
@@ -1349,21 +2032,11 @@ extension _TrX on _Tr {
             : loc == 'es' ? 'Título del evento'
             : loc == 'en' ? 'Event title'
             : "Titre de l'événement";
-      case _Tr.kindEvent:
-        return loc == 'ar' ? 'حدث'
-            : loc == 'es' ? 'Evento'
-            : loc == 'en' ? 'Event'
-            : 'Événement';
-      case _Tr.kindTask:
-        return loc == 'ar' ? 'مهمّة'
-            : loc == 'es' ? 'Tarea'
-            : loc == 'en' ? 'Task'
-            : 'Tâche';
-      case _Tr.kindBirthday:
-        return loc == 'ar' ? 'عيد ميلاد'
-            : loc == 'es' ? 'Cumpleaños'
-            : loc == 'en' ? 'Birthday'
-            : 'Anniversaire';
+      case _Tr.descriptionHint:
+        return loc == 'ar' ? 'وصف الحدث'
+            : loc == 'es' ? 'Descripción del evento'
+            : loc == 'en' ? 'Event description'
+            : "Description de l'événement";
       case _Tr.sectionTime:
         return loc == 'ar' ? 'الوقت'
             : loc == 'es' ? 'Hora'
@@ -1374,6 +2047,51 @@ extension _TrX on _Tr {
             : loc == 'es' ? 'Todo el día'
             : loc == 'en' ? 'All day'
             : 'Toute la journée';
+      case _Tr.calendarSystem:
+        return loc == 'ar' ? 'نظام التقويم'
+            : loc == 'es' ? 'Sistema de calendario'
+            : loc == 'en' ? 'Calendar system'
+            : 'Système de calendrier';
+      case _Tr.hijri:
+        return loc == 'ar' ? 'هجري'
+            : loc == 'es' ? 'Hijri'
+            : loc == 'en' ? 'Hijri'
+            : 'Hégirien';
+      case _Tr.gregorian:
+        return loc == 'ar' ? 'ميلادي'
+            : loc == 'es' ? 'Gregoriano'
+            : loc == 'en' ? 'Gregorian'
+            : 'Grégorien';
+      case _Tr.hijriDateTitle:
+        return loc == 'ar' ? 'اختر التاريخ الهجري'
+            : loc == 'es' ? 'Elige fecha Hijri'
+            : loc == 'en' ? 'Pick Hijri date'
+            : 'Choisir la date hégirienne';
+      case _Tr.hijriDay:
+        return loc == 'ar' ? 'اليوم'
+            : loc == 'es' ? 'Día'
+            : loc == 'en' ? 'Day'
+            : 'Jour';
+      case _Tr.hijriMonth:
+        return loc == 'ar' ? 'الشهر'
+            : loc == 'es' ? 'Mes'
+            : loc == 'en' ? 'Month'
+            : 'Mois';
+      case _Tr.hijriYear:
+        return loc == 'ar' ? 'السنة'
+            : loc == 'es' ? 'Año'
+            : loc == 'en' ? 'Year'
+            : 'Année';
+      case _Tr.ok:
+        return loc == 'ar' ? 'موافق'
+            : loc == 'es' ? 'Aceptar'
+            : loc == 'en' ? 'OK'
+            : 'OK';
+      case _Tr.cancel:
+        return loc == 'ar' ? 'إلغاء'
+            : loc == 'es' ? 'Cancelar'
+            : loc == 'en' ? 'Cancel'
+            : 'Annuler';
       case _Tr.start:
         return loc == 'ar' ? 'البداية'
             : loc == 'es' ? 'Inicio'
@@ -1444,6 +2162,46 @@ extension _TrX on _Tr {
             : loc == 'es' ? 'Todos los eventos'
             : loc == 'en' ? 'All events'
             : 'Tous les événements';
+      case _Tr.category:
+        return loc == 'ar' ? 'الفئة'
+            : loc == 'es' ? 'Categoría'
+            : loc == 'en' ? 'Category'
+            : 'Catégorie';
+      case _Tr.catPersonal:
+        return loc == 'ar' ? 'شخصي'
+            : loc == 'es' ? 'Personal'
+            : loc == 'en' ? 'Personal'
+            : 'Personnel';
+      case _Tr.catFamily:
+        return loc == 'ar' ? 'عائلي'
+            : loc == 'es' ? 'Familia'
+            : loc == 'en' ? 'Family'
+            : 'Famille';
+      case _Tr.catSocial:
+        return loc == 'ar' ? 'اجتماعي'
+            : loc == 'es' ? 'Social'
+            : loc == 'en' ? 'Social'
+            : 'Social';
+      case _Tr.catWork:
+        return loc == 'ar' ? 'عمل'
+            : loc == 'es' ? 'Trabajo'
+            : loc == 'en' ? 'Work'
+            : 'Travail';
+      case _Tr.catHealth:
+        return loc == 'ar' ? 'صحة'
+            : loc == 'es' ? 'Salud'
+            : loc == 'en' ? 'Health'
+            : 'Santé';
+      case _Tr.catReligious:
+        return loc == 'ar' ? 'ديني'
+            : loc == 'es' ? 'Religioso'
+            : loc == 'en' ? 'Religious'
+            : 'Religieux';
+      case _Tr.color:
+        return loc == 'ar' ? 'اللون'
+            : loc == 'es' ? 'Color'
+            : loc == 'en' ? 'Color'
+            : 'Couleur';
       case _Tr.sectionNotifications:
         return loc == 'ar' ? 'الإشعارات'
             : loc == 'es' ? 'Notificaciones'
@@ -1484,6 +2242,16 @@ extension _TrX on _Tr {
             : loc == 'es' ? 'Guardar'
             : loc == 'en' ? 'Save'
             : 'Enregistrer';
+      case _Tr.titleRequired:
+        return loc == 'ar' ? 'يرجى إدخال عنوان للحدث'
+            : loc == 'es' ? 'Introduce un título'
+            : loc == 'en' ? 'Please enter a title'
+            : 'Veuillez saisir un titre';
+      case _Tr.invalidRange:
+        return loc == 'ar' ? 'وقت النهاية يجب أن يكون بعد البداية'
+            : loc == 'es' ? 'La hora de fin debe ser posterior al inicio'
+            : loc == 'en' ? 'End time must be after start'
+            : 'L\'heure de fin doit être après le début';
     }
   }
 }
