@@ -688,7 +688,25 @@ class _SelectedDayHeader extends StatelessWidget {
 }
 
 // ════════════════════════════════════════════════════════════
-// WEEKLY VIEW
+// WEEKLY VIEW — Google-Calendar-style time grid.
+//
+//   * Top row: 7 day headers (weekday name + Hijri day big in a
+//     today-circle + Gregorian day small).
+//   * Optional all-day strip just below: 7 cells, each carrying
+//     small colored chips for that day's all-day events.
+//   * Below: vertically-scrollable time grid:
+//       - Left gutter: hour labels 00:00 .. 23:00.
+//       - 7 day columns, each column = 1 hour-tall cells stacked.
+//       - Timed events drawn as positioned colored containers
+//         within their day column at top = startHour * hourHeight,
+//         height = duration in minutes / 60 * hourHeight.
+//   * Horizontal swipe between weeks via a PageView.builder with
+//     pure-index arithmetic (truly infinite, no fixed list of
+//     weeks).
+//   * Tap empty grid cell → AddEventScreen prefilled with that
+//     day + that hour. Tap an event → showEventDetails.
+//   * Each day links Hijri (region-adjusted via
+//     provider.hijriDayOffset) + Gregorian (raw).
 // ════════════════════════════════════════════════════════════
 class _WeeklyView extends StatefulWidget {
   final AppProvider p;
@@ -699,75 +717,312 @@ class _WeeklyView extends StatefulWidget {
 }
 
 class _WeeklyViewState extends State<_WeeklyView> {
-  late DateTime _weekStart; // always Monday in Gregorian terms
+  static const int _kBaseIndex = 100000;
+  static const double _kHourHeight = 56.0;
+  static const double _kGutterWidth = 50.0;
+
+  late final PageController _weekCtrl;
+  late DateTime _baseMonday;
+
+  /// Last vertical scroll offset, kept across week swipes so the
+  /// user doesn't lose their position when navigating.
+  double _vOffset = 8 * _kHourHeight;
 
   @override
   void initState() {
     super.initState();
-    _weekStart = _getMonday(DateTime.now());
+    _baseMonday = _mondayOf(DateTime.now());
+    _weekCtrl = PageController(initialPage: _kBaseIndex);
   }
 
-  DateTime _getMonday(DateTime d) {
+  @override
+  void dispose() {
+    _weekCtrl.dispose();
+    super.dispose();
+  }
+
+  static DateTime _mondayOf(DateTime d) {
     final diff = d.weekday - 1;
     return DateTime(d.year, d.month, d.day).subtract(Duration(days: diff));
   }
 
-  void _shiftWeek(int weeks) {
-    setState(() => _weekStart = _weekStart.add(Duration(days: 7 * weeks)));
+  DateTime _mondayForIndex(int idx) =>
+      _baseMonday.add(Duration(days: 7 * (idx - _kBaseIndex)));
+
+  @override
+  Widget build(BuildContext context) {
+    return PageView.builder(
+      controller: _weekCtrl,
+      itemBuilder: (ctx, idx) {
+        return _WeekPage(
+          monday: _mondayForIndex(idx),
+          p: widget.p,
+          isDark: widget.isDark,
+          hourHeight: _kHourHeight,
+          gutterWidth: _kGutterWidth,
+          initialVOffset: _vOffset,
+          onVScroll: (off) => _vOffset = off,
+        );
+      },
+    );
+  }
+}
+
+class _WeekPage extends StatefulWidget {
+  final DateTime monday;
+  final AppProvider p;
+  final bool isDark;
+  final double hourHeight;
+  final double gutterWidth;
+  final double initialVOffset;
+  final ValueChanged<double> onVScroll;
+  const _WeekPage({
+    required this.monday,
+    required this.p,
+    required this.isDark,
+    required this.hourHeight,
+    required this.gutterWidth,
+    required this.initialVOffset,
+    required this.onVScroll,
+  });
+
+  @override
+  State<_WeekPage> createState() => _WeekPageState();
+}
+
+class _WeekPageState extends State<_WeekPage> {
+  late ScrollController _vCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _vCtrl = ScrollController(initialScrollOffset: widget.initialVOffset);
+    _vCtrl.addListener(() {
+      if (_vCtrl.hasClients) widget.onVScroll(_vCtrl.offset);
+    });
+  }
+
+  @override
+  void dispose() {
+    _vCtrl.dispose();
+    super.dispose();
+  }
+
+  /// Hijri reference for a Gregorian day in the user's region.
+  HijriDate _hijriFor(DateTime greg) {
+    final offset = widget.p.hijriDayOffset;
+    return HijriDate.fromGregorian(greg.subtract(Duration(days: offset)));
+  }
+
+  List<AppEvent> _eventsFor(DateTime greg) {
+    final h = _hijriFor(greg);
+    return widget.p.getEventsForDay(h.hDay, h.hMonth, h.hYear);
   }
 
   @override
   Widget build(BuildContext context) {
     final p = widget.p;
     final isDark = widget.isDark;
+    final surf = isDark ? AppColors.darkSurface : AppColors.white;
+
+    // Pre-compute per-day data once (used by header strip + grid).
+    final days = List.generate(
+        7, (i) => widget.monday.add(Duration(days: i)));
+    final dayEvents = days.map(_eventsFor).toList();
+    final allDayPerDay =
+        dayEvents.map((evs) => evs.where((e) => e.isAllDay).toList()).toList();
+    final timedPerDay =
+        dayEvents.map((evs) => evs.where((e) => !e.isAllDay).toList()).toList();
+
     return Column(
       children: [
-        _WeekStrip(
-          weekStart: _weekStart,
-          p: p,
-          isDark: isDark,
-          onPrev: () => _shiftWeek(-1),
-          onNext: () => _shiftWeek(1),
+        Container(
+          color: surf,
+          child: _DayHeaderStrip(
+            days: days,
+            p: p,
+            isDark: isDark,
+            gutterWidth: widget.gutterWidth,
+            hijriFor: _hijriFor,
+          ),
         ),
+        if (allDayPerDay.any((l) => l.isNotEmpty))
+          Container(
+            color: surf,
+            child: _AllDayStrip(
+              days: days,
+              allDayPerDay: allDayPerDay,
+              p: p,
+              isDark: isDark,
+              gutterWidth: widget.gutterWidth,
+              hijriFor: _hijriFor,
+            ),
+          ),
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.only(top: 6, bottom: 80),
-            itemCount: 7,
-            itemBuilder: (ctx, i) {
-              final greg = _weekStart.add(Duration(days: i));
-              final hijri = HijriDate.fromGregorian(
-                  greg.subtract(Duration(days: p.hijriDayOffset)));
-              final events =
-                  p.getEventsForDay(hijri.hDay, hijri.hMonth, hijri.hYear);
-              return _DaySection(
-                hijri: hijri,
-                gregorian: greg,
-                events: events,
-                p: p,
-                isDark: isDark,
-              );
-            },
+          child: SingleChildScrollView(
+            controller: _vCtrl,
+            child: SizedBox(
+              height: 24 * widget.hourHeight,
+              child: LayoutBuilder(
+                builder: (ctx, constraints) {
+                  final colWidth =
+                      (constraints.maxWidth - widget.gutterWidth) / 7;
+                  return Stack(
+                    children: [
+                      // Hour gutter + horizontal grid lines + tappable cells.
+                      _GridBackground(
+                        hourHeight: widget.hourHeight,
+                        gutterWidth: widget.gutterWidth,
+                        colWidth: colWidth,
+                        days: days,
+                        isDark: isDark,
+                        onCellTap: (dayIdx, hour) async {
+                          final greg = days[dayIdx];
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => AddEventScreen(
+                                initialStart: DateTime(
+                                  greg.year,
+                                  greg.month,
+                                  greg.day,
+                                  hour,
+                                  0,
+                                ),
+                              ),
+                            ),
+                          );
+                          if (mounted) setState(() {});
+                        },
+                      ),
+                      // Timed events as positioned colored boxes.
+                      for (var dayIdx = 0; dayIdx < 7; dayIdx++)
+                        ..._eventBlocks(
+                          context: ctx,
+                          dayIdx: dayIdx,
+                          dayGreg: days[dayIdx],
+                          events: timedPerDay[dayIdx],
+                          colWidth: colWidth,
+                        ),
+                      // Current-time red line.
+                      if (_isThisWeekToday())
+                        _CurrentTimeIndicator(
+                          hourHeight: widget.hourHeight,
+                          gutterWidth: widget.gutterWidth,
+                          colWidth: colWidth,
+                          dayIdx: DateTime.now().weekday - 1,
+                        ),
+                    ],
+                  );
+                },
+              ),
+            ),
           ),
         ),
       ],
     );
   }
+
+  bool _isThisWeekToday() {
+    final monday = _WeeklyViewState._mondayOf(DateTime.now());
+    return monday.year == widget.monday.year &&
+        monday.month == widget.monday.month &&
+        monday.day == widget.monday.day;
+  }
+
+  List<Widget> _eventBlocks({
+    required BuildContext context,
+    required int dayIdx,
+    required DateTime dayGreg,
+    required List<AppEvent> events,
+    required double colWidth,
+  }) {
+    final blocks = <Widget>[];
+    for (final ev in events) {
+      // Confine to the visible day: clip start / end to [00:00, 24:00).
+      final dayStart = DateTime(dayGreg.year, dayGreg.month, dayGreg.day);
+      final dayEnd = dayStart.add(const Duration(days: 1));
+      final s = ev.startDate.isBefore(dayStart) ? dayStart : ev.startDate;
+      final e = ev.endDate.isAfter(dayEnd) ? dayEnd : ev.endDate;
+      if (!e.isAfter(s)) continue;
+
+      final startMinutes =
+          (s.hour * 60 + s.minute).toDouble();
+      final endMinutes = (e.hour * 60 + e.minute).toDouble();
+      final spanMinutes =
+          endMinutes - startMinutes <= 0 ? 60.0 : endMinutes - startMinutes;
+      final top = startMinutes / 60.0 * widget.hourHeight;
+      final height = (spanMinutes / 60.0 * widget.hourHeight).clamp(22.0, 24 * widget.hourHeight);
+
+      blocks.add(Positioned(
+        top: top,
+        left: widget.gutterWidth + dayIdx * colWidth + 2,
+        width: colWidth - 4,
+        height: height,
+        child: GestureDetector(
+          onTap: () => showEventDetails(
+            context: context,
+            event: ev,
+            hijri: _hijriFor(dayGreg),
+            gregorian: dayGreg,
+            p: widget.p,
+          ),
+          child: Container(
+            decoration: BoxDecoration(
+              color: ev.color.withValues(alpha: 0.92),
+              borderRadius: BorderRadius.circular(6),
+              border: Border(
+                left: BorderSide(color: ev.color.withValues(alpha: 1.0), width: 3),
+              ),
+            ),
+            padding: const EdgeInsets.fromLTRB(6, 4, 4, 4),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  ev.title(widget.p.locale),
+                  maxLines: height < 36 ? 1 : 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: GoogleFonts.cairo(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                    height: 1.1,
+                  ),
+                ),
+                if (height >= 38)
+                  Text(
+                    TextFormat.toWesternDigits(
+                      '${s.hour.toString().padLeft(2, '0')}:${s.minute.toString().padLeft(2, '0')}',
+                    ),
+                    style: GoogleFonts.cairo(
+                      fontSize: 9,
+                      color: Colors.white.withValues(alpha: 0.85),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ));
+    }
+    return blocks;
+  }
 }
 
-/// Top mini-strip: 7 day pills with weekday name + Hijri day big +
-/// Gregorian day small. Today's pill is filled green.
-class _WeekStrip extends StatelessWidget {
-  final DateTime weekStart;
+class _DayHeaderStrip extends StatelessWidget {
+  final List<DateTime> days;
   final AppProvider p;
   final bool isDark;
-  final VoidCallback onPrev;
-  final VoidCallback onNext;
-  const _WeekStrip({
-    required this.weekStart,
+  final double gutterWidth;
+  final HijriDate Function(DateTime) hijriFor;
+  const _DayHeaderStrip({
+    required this.days,
     required this.p,
     required this.isDark,
-    required this.onPrev,
-    required this.onNext,
+    required this.gutterWidth,
+    required this.hijriFor,
   });
 
   @override
@@ -780,26 +1035,19 @@ class _WeekStrip extends StatelessWidget {
             : loc == 'es'
                 ? ['Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá', 'Do']
                 : ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
-    final surf = isDark ? AppColors.darkSurface : AppColors.white;
     final now = DateTime.now();
-    return Container(
-      color: surf,
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(0, 6, 4, 6),
       child: Row(
         children: [
-          IconButton(
-            icon: const Icon(Icons.chevron_left_rounded,
-                color: AppColors.text3, size: 20),
-            onPressed: onPrev,
-            visualDensity: VisualDensity.compact,
-          ),
+          SizedBox(width: gutterWidth),
           ...List.generate(7, (i) {
-            final greg = weekStart.add(Duration(days: i));
-            final hijri = HijriDate.fromGregorian(
-                greg.subtract(Duration(days: p.hijriDayOffset)));
+            final greg = days[i];
+            final hijri = hijriFor(greg);
             final isToday = greg.year == now.year &&
                 greg.month == now.month &&
                 greg.day == now.day;
+            final isFri = greg.weekday == 5;
             return Expanded(
               child: Column(
                 children: [
@@ -808,15 +1056,15 @@ class _WeekStrip extends StatelessWidget {
                     style: GoogleFonts.cairo(
                       fontSize: 9,
                       fontWeight: FontWeight.w700,
-                      color: isDark
-                          ? AppColors.darkText3
-                          : AppColors.text3,
+                      color: isFri
+                          ? AppColors.green
+                          : (isDark ? AppColors.darkText3 : AppColors.text3),
                     ),
                   ),
                   const SizedBox(height: 4),
                   Container(
-                    width: 36,
-                    height: 36,
+                    width: 32,
+                    height: 32,
                     decoration: BoxDecoration(
                       color: isToday ? AppColors.green : Colors.transparent,
                       shape: BoxShape.circle,
@@ -825,13 +1073,11 @@ class _WeekStrip extends StatelessWidget {
                       child: Text(
                         TextFormat.toWesternDigits('${hijri.hDay}'),
                         style: GoogleFonts.amiri(
-                          fontSize: 14,
+                          fontSize: 13,
                           fontWeight: FontWeight.bold,
                           color: isToday
                               ? Colors.white
-                              : (isDark
-                                  ? AppColors.darkText
-                                  : AppColors.navy),
+                              : (isDark ? AppColors.darkText : AppColors.navy),
                         ),
                       ),
                     ),
@@ -847,65 +1093,230 @@ class _WeekStrip extends StatelessWidget {
               ),
             );
           }),
-          IconButton(
-            icon: const Icon(Icons.chevron_right_rounded,
-                color: AppColors.text3, size: 20),
-            onPressed: onNext,
-            visualDensity: VisualDensity.compact,
-          ),
         ],
       ),
     );
   }
 }
 
-/// One day section in the weekly list: a green date pill (Hijri ▪
-/// Gregorian) + agenda-style colored event cards.
-class _DaySection extends StatelessWidget {
-  final HijriDate hijri;
-  final DateTime gregorian;
-  final List<AppEvent> events;
+class _AllDayStrip extends StatelessWidget {
+  final List<DateTime> days;
+  final List<List<AppEvent>> allDayPerDay;
   final AppProvider p;
   final bool isDark;
-  const _DaySection({
-    required this.hijri,
-    required this.gregorian,
-    required this.events,
+  final double gutterWidth;
+  final HijriDate Function(DateTime) hijriFor;
+  const _AllDayStrip({
+    required this.days,
+    required this.allDayPerDay,
     required this.p,
     required this.isDark,
+    required this.gutterWidth,
+    required this.hijriFor,
   });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Container(
+      decoration: const BoxDecoration(
+        border: Border(
+          bottom: BorderSide(color: AppColors.border, width: 0.5),
+        ),
+      ),
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _DateBadge(hijri: hijri, gregorian: gregorian, p: p),
-          const SizedBox(height: 8),
-          if (events.isEmpty)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(0, 0, 0, 8),
+          SizedBox(
+            width: gutterWidth,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 6),
               child: Text(
-                p.label('no_events'),
+                p.locale == 'ar'
+                    ? 'كل اليوم'
+                    : p.locale == 'es'
+                        ? 'Todo el día'
+                        : p.locale == 'en'
+                            ? 'All day'
+                            : 'Toute la j.',
+                textAlign: TextAlign.right,
                 style: GoogleFonts.cairo(
-                    fontSize: 11, color: AppColors.text3),
-              ),
-            )
-          else
-            ...events.map(
-              (ev) => Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: _AgendaCard(
-                  event: ev,
-                  hijri: hijri,
-                  gregorian: gregorian,
-                  p: p,
-                  isDark: isDark,
-                ),
+                    fontSize: 9, color: AppColors.text3),
               ),
             ),
+          ),
+          ...List.generate(7, (i) {
+            final evs = allDayPerDay[i];
+            return Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: evs.take(3).map((ev) {
+                  return GestureDetector(
+                    onTap: () => showEventDetails(
+                      context: context,
+                      event: ev,
+                      hijri: hijriFor(days[i]),
+                      gregorian: days[i],
+                      p: p,
+                    ),
+                    child: Container(
+                      margin: const EdgeInsets.symmetric(
+                          horizontal: 2, vertical: 1),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 4, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: ev.color.withValues(alpha: 0.92),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        ev.title(p.locale),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.cairo(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                  );
+                }).toList(),
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+}
+
+class _GridBackground extends StatelessWidget {
+  final double hourHeight;
+  final double gutterWidth;
+  final double colWidth;
+  final List<DateTime> days;
+  final bool isDark;
+  final void Function(int dayIdx, int hour) onCellTap;
+  const _GridBackground({
+    required this.hourHeight,
+    required this.gutterWidth,
+    required this.colWidth,
+    required this.days,
+    required this.isDark,
+    required this.onCellTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final lineColor =
+        isDark ? AppColors.darkBorder : AppColors.border;
+    return Stack(
+      children: [
+        // Hour gutter + horizontal lines under each hour.
+        Column(
+          children: List.generate(24, (h) {
+            return SizedBox(
+              height: hourHeight,
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: gutterWidth,
+                    child: Padding(
+                      padding: const EdgeInsets.only(right: 6, top: 0),
+                      child: Text(
+                        TextFormat.toWesternDigits(
+                          '${h.toString().padLeft(2, '0')}:00',
+                        ),
+                        textAlign: TextAlign.right,
+                        style: GoogleFonts.cairo(
+                          fontSize: 9,
+                          color: AppColors.text3,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border(
+                          top: BorderSide(color: lineColor, width: 0.5),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ),
+        // 7 day columns: vertical separators + tappable cells.
+        Positioned.fill(
+          left: gutterWidth,
+          child: Row(
+            children: List.generate(7, (dayIdx) {
+              return SizedBox(
+                width: colWidth,
+                child: Container(
+                  decoration: BoxDecoration(
+                    border: Border(
+                      left: BorderSide(color: lineColor, width: 0.5),
+                    ),
+                  ),
+                  child: Column(
+                    children: List.generate(24, (h) {
+                      return SizedBox(
+                        height: hourHeight,
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.translucent,
+                          onTap: () => onCellTap(dayIdx, h),
+                        ),
+                      );
+                    }),
+                  ),
+                ),
+              );
+            }),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _CurrentTimeIndicator extends StatelessWidget {
+  final double hourHeight;
+  final double gutterWidth;
+  final double colWidth;
+  final int dayIdx;
+  const _CurrentTimeIndicator({
+    required this.hourHeight,
+    required this.gutterWidth,
+    required this.colWidth,
+    required this.dayIdx,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    final top = (now.hour * 60 + now.minute) / 60.0 * hourHeight;
+    return Positioned(
+      top: top - 1,
+      left: gutterWidth + dayIdx * colWidth,
+      width: colWidth,
+      child: Row(
+        children: [
+          Container(
+            width: 8,
+            height: 8,
+            decoration: const BoxDecoration(
+              color: AppColors.red,
+              shape: BoxShape.circle,
+            ),
+          ),
+          Expanded(
+            child: Container(height: 1.5, color: AppColors.red),
+          ),
         ],
       ),
     );

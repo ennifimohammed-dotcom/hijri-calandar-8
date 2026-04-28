@@ -27,7 +27,19 @@ import '../theme.dart';
 /// the [EventReminder] model.
 class AddEventScreen extends StatefulWidget {
   final AppEvent? existingEvent;
-  const AddEventScreen({super.key, this.existingEvent});
+
+  /// Optional prefilled start time. Set by callers like the weekly
+  /// time-grid that taps an empty cell — the new draft is then
+  /// initialized as a 1-hour timed event starting at that instant
+  /// (instead of the default 09:00–10:00 today). Ignored when
+  /// [existingEvent] is provided.
+  final DateTime? initialStart;
+
+  const AddEventScreen({
+    super.key,
+    this.existingEvent,
+    this.initialStart,
+  });
 
   @override
   State<AddEventScreen> createState() => _AddEventScreenState();
@@ -67,6 +79,8 @@ class _AddEventScreenState extends State<AddEventScreen> {
       }
       _category = existing.category.isEmpty ? 'personal' : existing.category;
       _draft = _EventDraft.fromExisting(existing);
+    } else if (widget.initialStart != null) {
+      _draft = _EventDraft.atHour(widget.initialStart!);
     } else {
       _draft = _EventDraft.now();
     }
@@ -482,6 +496,23 @@ class _EventDraft {
   /// Hydrates a draft from an existing [AppEvent]. Restores the
   /// inclusive-end date for all-day events (see
   /// docs/event_time_behavior.md §1.4).
+  /// Used by the weekly time-grid: tap an empty cell at hour H on
+  /// day D and the new event opens already pinned to that slot,
+  /// with a 1-hour duration and the standard 30-min reminder.
+  factory _EventDraft.atHour(DateTime start) {
+    final s = DateTime(
+        start.year, start.month, start.day, start.hour, start.minute);
+    final e = s.add(const Duration(hours: 1));
+    return _EventDraft(
+      isAllDay: false,
+      start: s,
+      end: e,
+      reminders: [
+        EventReminder.relative(id: _newReminderId(), minutesBefore: 30),
+      ],
+    );
+  }
+
   factory _EventDraft.fromExisting(AppEvent e) {
     final allDay = e.isAllDay;
     final start = allDay
