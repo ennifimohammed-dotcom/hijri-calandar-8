@@ -5,7 +5,6 @@ import '../providers/app_provider.dart';
 import '../theme.dart';
 import 'calendar_screen.dart';
 import 'event_bank_screen.dart';
-import 'add_event_screen.dart';
 import 'settings_screen.dart';
 import 'converter_screen.dart';
 
@@ -34,9 +33,8 @@ class _HomeScreenState extends State<HomeScreen> {
         ],
       ),
       bottomNavigationBar: _buildBottomNav(p, isDark),
-      floatingActionButton: _currentIndex == 0
-          ? _buildFab(context, p) : null,
-      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
+      // FAB removed — the inline "+" button on the monthly view's
+      // events header now opens the new-event screen.
     );
   }
 
@@ -70,17 +68,4 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildFab(BuildContext context, AppProvider p) {
-    return FloatingActionButton.extended(
-      onPressed: () => Navigator.push(context,
-          MaterialPageRoute(builder: (_) => const AddEventScreen())),
-      backgroundColor: AppColors.green,
-      foregroundColor: Colors.white,
-      icon: const Icon(Icons.auto_awesome_rounded, size: 18),
-      label: Text(p.label('add_event'),
-          style: GoogleFonts.cairo(fontWeight: FontWeight.w700, fontSize: 13)),
-      elevation: 4,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
-    );
-  }
 }

@@ -31,16 +31,30 @@ class _CalendarScreenState extends State<CalendarScreen> {
   static const int _kBaseIndex = 100000;
 
   late final PageController _pageCtrl;
-  late final int _baseYear;
-  late final int _baseMonth;
+  late int _baseYear;
+  late int _baseMonth;
+  bool _baseInitialized = false;
 
   @override
   void initState() {
     super.initState();
-    final today = HijriDate.now();
-    _baseYear = today.hYear;
-    _baseMonth = today.hMonth;
     _pageCtrl = PageController(initialPage: _kBaseIndex);
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // Region offset is loaded asynchronously by AppProvider.init(). We
+    // wait until the provider is available, then anchor _baseYear /
+    // _baseMonth to the provider's region-adjusted today so the page
+    // at _kBaseIndex truly represents "today" in the user's region —
+    // including across app restarts.
+    if (!_baseInitialized) {
+      final p = context.read<AppProvider>();
+      _baseYear = p.today.hYear;
+      _baseMonth = p.today.hMonth;
+      _baseInitialized = true;
+    }
   }
 
   @override
@@ -81,6 +95,11 @@ class _CalendarScreenState extends State<CalendarScreen> {
 
   void _jumpToToday(AppProvider p) {
     p.goToToday();
+    // Re-anchor the base in case the region offset moved today's
+    // (year, month) tuple; otherwise the baseIndex page would still
+    // map to the old base and the visible page would be off by N.
+    _baseYear = p.today.hYear;
+    _baseMonth = p.today.hMonth;
     if (_pageCtrl.hasClients) {
       _pageCtrl.jumpToPage(_kBaseIndex);
     }
@@ -244,6 +263,7 @@ class _TodayButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Match the converter screen's pill style: today-icon + label.
     return GestureDetector(
       onTap: onTap,
       child: Container(
@@ -252,9 +272,21 @@ class _TodayButton extends StatelessWidget {
           border: Border.all(color: AppColors.green, width: 1.5),
           borderRadius: BorderRadius.circular(20),
         ),
-        child: Text(
-          p.label('today'),
-          style: GoogleFonts.cairo(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.green),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.today_rounded,
+                size: 14, color: AppColors.green),
+            const SizedBox(width: 5),
+            Text(
+              p.label('today'),
+              style: GoogleFonts.cairo(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: AppColors.green,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -413,7 +445,20 @@ class _DayCell extends StatelessWidget {
     final isSelected = p.isSelected(day, month, year);
     final isAyyam   = p.isAyyamAlBid(day);
     final isRamadan = p.isRamadan(month);
-    final events    = p.getEventsForDay(day, month, year);
+    // Daily adhkar (morning / evening / sleep) appear on every single
+    // day. Showing dots for them would clutter the entire month grid,
+    // so they're hidden from the monthly view's day cells. They still
+    // show up normally in the events list below the grid.
+    final events = p
+        .getEventsForDay(day, month, year)
+        .where((e) =>
+            e.id != 'adhkar_sabah_${year}_$month' &&
+            e.id != 'adhkar_masaa_${year}_$month' &&
+            e.id != 'adhkar_nawm_${year}_$month' &&
+            !e.id.startsWith('adhkar_sabah') &&
+            !e.id.startsWith('adhkar_masaa') &&
+            !e.id.startsWith('adhkar_nawm'))
+        .toList();
 
     int weekday = 1;
     int gregDay = 0;
@@ -514,11 +559,7 @@ class _EventsList extends StatelessWidget {
           if (s != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
-              child: Text(
-                '${s.hDay} ${p.getHijriMonthName(s.hMonth, p.locale)} ${s.hYear}',
-                style: GoogleFonts.cairo(fontSize: 11, fontWeight: FontWeight.w700,
-                    color: AppColors.text3, letterSpacing: 1),
-              ),
+              child: _SelectedDayHeader(p: p, isDark: isDark, day: s),
             ),
           if (events.isEmpty)
             Expanded(
@@ -541,11 +582,27 @@ class _EventsList extends StatelessWidget {
               child: ListView.builder(
                 padding: EdgeInsets.zero,
                 itemCount: events.length,
-                itemBuilder: (ctx, i) => _EventCard(
-                  event: events[i], p: p, isDark: isDark,
-                  onTap: events[i].isIslamic ? null : () => Navigator.push(ctx,
-                    MaterialPageRoute(builder: (_) => AddEventScreen(existingEvent: events[i]))),
-                ),
+                itemBuilder: (ctx, i) {
+                  final ev = events[i];
+                  // Always tap-to-show details. The details sheet hosts
+                  // the Edit button (and shows it only for non-Islamic).
+                  DateTime greg;
+                  try {
+                    greg = p.hijriToGregorian(s.hYear, s.hMonth, s.hDay);
+                  } catch (_) {
+                    greg = DateTime.now();
+                  }
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: _AgendaCard(
+                      event: ev,
+                      hijri: s,
+                      gregorian: greg,
+                      p: p,
+                      isDark: isDark,
+                    ),
+                  );
+                },
               ),
             ),
         ],
@@ -554,78 +611,73 @@ class _EventsList extends StatelessWidget {
   }
 }
 
-class _EventCard extends StatelessWidget {
-  final AppEvent event;
+/// Header shown above the events list in the monthly view.
+/// Layout: "11 ذو القعدة 1447 ▪ 28/4/2026" on the right (RTL-aware), with
+/// a small + button on the far left that opens the new-event screen
+/// (replacing the old global FAB).
+class _SelectedDayHeader extends StatelessWidget {
   final AppProvider p;
   final bool isDark;
-  final VoidCallback? onTap;
-  const _EventCard({required this.event, required this.p,
-      required this.isDark, this.onTap});
+  final HijriDate day;
+  const _SelectedDayHeader({
+    required this.p,
+    required this.isDark,
+    required this.day,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final surf = isDark ? AppColors.darkSurface : AppColors.white;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 8),
-        decoration: BoxDecoration(
-          color: surf,
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05),
-              blurRadius: 6, offset: const Offset(0, 2))],
-        ),
-        child: IntrinsicHeight(
-          child: Row(
-            children: [
-              Container(
-                width: 4,
-                decoration: BoxDecoration(
-                  color: event.color,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(14), bottomLeft: Radius.circular(14)),
-                ),
-              ),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(event.title(p.locale),
-                              style: GoogleFonts.cairo(fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                  color: isDark ? AppColors.darkText : AppColors.text)),
-                            Text(
-                              !event.isAllDay
-                                  ? '${event.startDate.hour.toString().padLeft(2,'0')}:${event.startDate.minute.toString().padLeft(2,'0')}'
-                                  : p.label('all_day'),
-                              style: GoogleFonts.cairo(fontSize: 10, color: AppColors.text3)),
-                          ],
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: event.isIslamic ? AppColors.goldPale : AppColors.greenPale,
-                          borderRadius: BorderRadius.circular(6),
-                        ),
-                        child: Text(
-                          event.isIslamic ? p.label('islamic') : p.label('personal'),
-                          style: GoogleFonts.cairo(fontSize: 8, fontWeight: FontWeight.w700,
-                            color: event.isIslamic ? AppColors.gold : AppColors.green)),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
+    final loc = p.locale;
+    DateTime g;
+    try {
+      g = p.hijriToGregorian(day.hYear, day.hMonth, day.hDay);
+    } catch (_) {
+      g = DateTime.now();
+    }
+    final hijriPart = TextFormat.toWesternDigits(
+      '${day.hDay} ${p.getHijriMonthName(day.hMonth, loc)} ${day.hYear}',
+    );
+    final gregPart = TextFormat.formatGregorianNumeric(g);
+    return Row(
+      children: [
+        // Inline "+" — replaces the old floating FAB.
+        Material(
+          color: AppColors.green,
+          shape: const CircleBorder(),
+          child: InkWell(
+            customBorder: const CircleBorder(),
+            onTap: () => Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => const AddEventScreen()),
+            ),
+            child: const SizedBox(
+              width: 26,
+              height: 26,
+              child: Icon(Icons.add_rounded, color: Colors.white, size: 18),
+            ),
           ),
         ),
-      ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: AppColors.green,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Text(
+              '$hijriPart  ▪  $gregPart',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.cairo(
+                fontSize: 12,
+                fontWeight: FontWeight.w800,
+                color: Colors.white,
+                letterSpacing: 0.5,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -642,219 +694,216 @@ class _WeeklyView extends StatefulWidget {
 }
 
 class _WeeklyViewState extends State<_WeeklyView> {
-  late ScrollController _timelineCtrl;
-  late DateTime _weekStart; // always Monday
+  late DateTime _weekStart; // always Monday in Gregorian terms
 
   @override
   void initState() {
     super.initState();
     _weekStart = _getMonday(DateTime.now());
-    _timelineCtrl = ScrollController(initialScrollOffset: 8 * 60.0);
   }
-
-  @override
-  void dispose() { _timelineCtrl.dispose(); super.dispose(); }
 
   DateTime _getMonday(DateTime d) {
     final diff = d.weekday - 1;
     return DateTime(d.year, d.month, d.day).subtract(Duration(days: diff));
   }
 
+  void _shiftWeek(int weeks) {
+    setState(() => _weekStart = _weekStart.add(Duration(days: 7 * weeks)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final p = widget.p;
     final isDark = widget.isDark;
-    final surf = isDark ? AppColors.darkSurface : AppColors.white;
-
     return Column(
       children: [
-        // Week header
-        Container(
-          color: surf,
-          padding: const EdgeInsets.fromLTRB(0, 4, 0, 6),
-          child: _buildWeekHeader(p, isDark, surf),
+        _WeekStrip(
+          weekStart: _weekStart,
+          p: p,
+          isDark: isDark,
+          onPrev: () => _shiftWeek(-1),
+          onNext: () => _shiftWeek(1),
         ),
-        // Timeline
         Expanded(
-          child: SingleChildScrollView(
-            controller: _timelineCtrl,
-            child: _buildTimeline(p, isDark, surf),
+          child: ListView.builder(
+            padding: const EdgeInsets.only(top: 6, bottom: 80),
+            itemCount: 7,
+            itemBuilder: (ctx, i) {
+              final greg = _weekStart.add(Duration(days: i));
+              final hijri = HijriDate.fromGregorian(
+                  greg.subtract(Duration(days: p.hijriDayOffset)));
+              final events =
+                  p.getEventsForDay(hijri.hDay, hijri.hMonth, hijri.hYear);
+              return _DaySection(
+                hijri: hijri,
+                gregorian: greg,
+                events: events,
+                p: p,
+                isDark: isDark,
+              );
+            },
           ),
         ),
       ],
     );
   }
+}
 
-  Widget _buildWeekHeader(AppProvider p, bool isDark, Color surf) {
-    final days = p.locale == 'ar'
-        ? ['إث','ث','أر','خ','ج','س','أح']
-        : ['Lu','Ma','Me','Je','Ve','Sa','Di'];
+/// Top mini-strip: 7 day pills with weekday name + Hijri day big +
+/// Gregorian day small. Today's pill is filled green.
+class _WeekStrip extends StatelessWidget {
+  final DateTime weekStart;
+  final AppProvider p;
+  final bool isDark;
+  final VoidCallback onPrev;
+  final VoidCallback onNext;
+  const _WeekStrip({
+    required this.weekStart,
+    required this.p,
+    required this.isDark,
+    required this.onPrev,
+    required this.onNext,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = p.locale;
+    final dayLabels = loc == 'ar'
+        ? ['إث', 'ث', 'أر', 'خ', 'ج', 'س', 'أح']
+        : loc == 'fr'
+            ? ['Lu', 'Ma', 'Me', 'Je', 'Ve', 'Sa', 'Di']
+            : loc == 'es'
+                ? ['Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sá', 'Do']
+                : ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'];
+    final surf = isDark ? AppColors.darkSurface : AppColors.white;
     final now = DateTime.now();
-
-    return Row(
-      children: [
-        // Time gutter
-        const SizedBox(width: 48),
-        // Days
-        ...List.generate(7, (i) {
-          final d = _weekStart.add(Duration(days: i));
-          final h = HijriDate.fromGregorian(d);
-          final isToday = d.year == now.year && d.month == now.month && d.day == now.day;
-          final isFri = d.weekday == 5;
-          return Expanded(
-            child: Column(
-              children: [
-                Text(days[i],
-                  style: GoogleFonts.cairo(
-                    fontSize: 9, fontWeight: FontWeight.w700,
-                    color: isFri ? AppColors.green
-                        : (isDark ? AppColors.darkText3 : AppColors.text3)),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 4),
-                Container(
-                  width: 30, height: 30,
-                  decoration: BoxDecoration(
-                    color: isToday ? AppColors.green : Colors.transparent,
-                    shape: BoxShape.circle,
+    return Container(
+      color: surf,
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
+      child: Row(
+        children: [
+          IconButton(
+            icon: const Icon(Icons.chevron_left_rounded,
+                color: AppColors.text3, size: 20),
+            onPressed: onPrev,
+            visualDensity: VisualDensity.compact,
+          ),
+          ...List.generate(7, (i) {
+            final greg = weekStart.add(Duration(days: i));
+            final hijri = HijriDate.fromGregorian(
+                greg.subtract(Duration(days: p.hijriDayOffset)));
+            final isToday = greg.year == now.year &&
+                greg.month == now.month &&
+                greg.day == now.day;
+            return Expanded(
+              child: Column(
+                children: [
+                  Text(
+                    dayLabels[i],
+                    style: GoogleFonts.cairo(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      color: isDark
+                          ? AppColors.darkText3
+                          : AppColors.text3,
+                    ),
                   ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('${d.day}',
-                        style: GoogleFonts.cairo(
-                          fontSize: 12, fontWeight: FontWeight.w700,
-                          color: isToday ? Colors.white
-                              : isFri ? AppColors.green
-                              : (isDark ? AppColors.darkText : AppColors.text)),
-                        textAlign: TextAlign.center,
+                  const SizedBox(height: 4),
+                  Container(
+                    width: 36,
+                    height: 36,
+                    decoration: BoxDecoration(
+                      color: isToday ? AppColors.green : Colors.transparent,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Center(
+                      child: Text(
+                        TextFormat.toWesternDigits('${hijri.hDay}'),
+                        style: GoogleFonts.amiri(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: isToday
+                              ? Colors.white
+                              : (isDark
+                                  ? AppColors.darkText
+                                  : AppColors.navy),
+                        ),
                       ),
-                    ],
+                    ),
                   ),
-                ),
-                Text('${h.hDay}',
-                  style: GoogleFonts.cairo(fontSize: 8, color: AppColors.text3),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-          );
-        }),
-      ],
+                  Text(
+                    TextFormat.toWesternDigits('${greg.day}'),
+                    style: GoogleFonts.cairo(
+                      fontSize: 9,
+                      color: AppColors.text3,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+          IconButton(
+            icon: const Icon(Icons.chevron_right_rounded,
+                color: AppColors.text3, size: 20),
+            onPressed: onNext,
+            visualDensity: VisualDensity.compact,
+          ),
+        ],
+      ),
     );
   }
+}
 
-  Widget _buildTimeline(AppProvider p, bool isDark, Color surf) {
-    final now = DateTime.now();
-    const hourHeight = 60.0;
-    const totalHeight = 24 * hourHeight;
+/// One day section in the weekly list: a green date pill (Hijri ▪
+/// Gregorian) + agenda-style colored event cards.
+class _DaySection extends StatelessWidget {
+  final HijriDate hijri;
+  final DateTime gregorian;
+  final List<AppEvent> events;
+  final AppProvider p;
+  final bool isDark;
+  const _DaySection({
+    required this.hijri,
+    required this.gregorian,
+    required this.events,
+    required this.p,
+    required this.isDark,
+  });
 
-    return SizedBox(
-      height: totalHeight,
-      child: Stack(
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 8, 14, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Hour lines + labels
-          Column(
-            children: List.generate(24, (h) {
-              final label = '${h.toString().padLeft(2,'0')}:00';
-              return SizedBox(
-                height: hourHeight,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SizedBox(
-                      width: 48,
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 0, right: 6),
-                        child: Text(label,
-                          style: GoogleFonts.cairo(fontSize: 9,
-                              color: isDark ? AppColors.darkText3 : AppColors.text3),
-                          textAlign: TextAlign.right,
-                        ),
-                      ),
-                    ),
-                    Expanded(
-                      child: Container(
-                        decoration: BoxDecoration(
-                          border: Border(
-                            top: BorderSide(
-                              color: isDark ? AppColors.darkBorder : AppColors.border,
-                              width: 0.5),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
+          _DateBadge(hijri: hijri, gregorian: gregorian, p: p),
+          const SizedBox(height: 8),
+          if (events.isEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(0, 0, 0, 8),
+              child: Text(
+                p.label('no_events'),
+                style: GoogleFonts.cairo(
+                    fontSize: 11, color: AppColors.text3),
+              ),
+            )
+          else
+            ...events.map(
+              (ev) => Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: _AgendaCard(
+                  event: ev,
+                  hijri: hijri,
+                  gregorian: gregorian,
+                  p: p,
+                  isDark: isDark,
                 ),
-              );
-            }),
-          ),
-          // Events blocks — built as flat list then added to Stack
-          ..._buildEventBlocks(context, p),
-          // Current time red line
-          if (_isCurrentWeek())
-            Positioned(
-              top: now.hour * hourHeight + now.minute.toDouble(),
-              left: 48 + (MediaQuery.of(context).size.width - 48) / 7 *
-                  (now.weekday - 1).toDouble(),
-              width: (MediaQuery.of(context).size.width - 48) / 7,
-              child: Row(
-                children: [
-                  Container(width: 8, height: 8,
-                      decoration: const BoxDecoration(
-                          color: AppColors.red, shape: BoxShape.circle)),
-                  Expanded(child: Container(height: 1.5,
-                      color: AppColors.red)),
-                ],
               ),
             ),
         ],
       ),
     );
-  }
-
-  List<Widget> _buildEventBlocks(BuildContext context, AppProvider p) {
-    final result = <Widget>[];
-    final screenW = MediaQuery.of(context).size.width;
-    const hourHeight = 60.0;
-    final colW = (screenW - 48) / 7;
-    for (int dayIdx = 0; dayIdx < 7; dayIdx++) {
-      final d = _weekStart.add(Duration(days: dayIdx));
-      final h = HijriDate.fromGregorian(d);
-      final events = p.getEventsForDay(h.hDay, h.hMonth, h.hYear)
-          .where((e) => !e.isAllDay).toList();
-      for (final ev in events) {
-        final top = ev.startDate.hour * hourHeight + ev.startDate.minute.toDouble();
-        result.add(Positioned(
-          top: top,
-          left: 48 + colW * dayIdx,
-          width: colW - 2,
-          height: 50,
-          child: Container(
-            margin: const EdgeInsets.symmetric(horizontal: 1),
-            decoration: BoxDecoration(
-              color: ev.color.withValues(alpha: 0.85),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            padding: const EdgeInsets.all(4),
-            child: Text(ev.title(p.locale),
-              style: GoogleFonts.cairo(fontSize: 9, color: Colors.white,
-                  fontWeight: FontWeight.w700),
-              maxLines: 2, overflow: TextOverflow.ellipsis,
-            ),
-          ),
-        ));
-      }
-    }
-    return result;
-  }
-
-    bool _isCurrentWeek() {
-    final now = DateTime.now();
-    final monday = _getMonday(now);
-    return _weekStart.year == monday.year &&
-        _weekStart.month == monday.month &&
-        _weekStart.day == monday.day;
   }
 }
 
@@ -938,121 +987,448 @@ class _AgendaViewState extends State<_AgendaView> {
   }
 }
 
+// ════════════════════════════════════════════════════════════
+// AGENDA PRIMITIVES (date badge + card) — shared between weekly
+// and agenda views. Matches the design in the attached screenshot:
+//   - Green pill at the top: "11 ذو القعدة 1447 ▪ 28/4/2026"
+//   - White rounded cards with a coloured leading bar (event color),
+//     centered title + emoji, time below, and a category chip on
+//     the trailing side.
+// ════════════════════════════════════════════════════════════
+
+class _DateBadge extends StatelessWidget {
+  final HijriDate hijri;
+  final DateTime gregorian;
+  final AppProvider p;
+  const _DateBadge({
+    required this.hijri,
+    required this.gregorian,
+    required this.p,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = p.locale;
+    final hijriPart = TextFormat.toWesternDigits(
+      '${hijri.hDay} ${p.getHijriMonthName(hijri.hMonth, loc)} ${hijri.hYear}',
+    );
+    final gregPart = TextFormat.formatGregorianNumeric(gregorian);
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppColors.green,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          '$hijriPart  ▪  $gregPart',
+          style: GoogleFonts.cairo(
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+            color: Colors.white,
+            letterSpacing: 0.4,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _AgendaCard extends StatelessWidget {
+  final AppEvent event;
+  final HijriDate hijri;
+  final DateTime gregorian;
+  final AppProvider p;
+  final bool isDark;
+  const _AgendaCard({
+    required this.event,
+    required this.hijri,
+    required this.gregorian,
+    required this.p,
+    required this.isDark,
+  });
+
+  String _timeLabel(String loc) {
+    if (event.isAllDay) {
+      return loc == 'ar' ? 'طوال اليوم'
+          : loc == 'es' ? 'Todo el día'
+          : loc == 'en' ? 'All day'
+          : 'Toute la journée';
+    }
+    String two(int n) => n.toString().padLeft(2, '0');
+    return TextFormat.toWesternDigits(
+      '${two(event.startDate.hour)}:${two(event.startDate.minute)}',
+    );
+  }
+
+  String _categoryLabel(String loc) {
+    if (event.isIslamic) {
+      return loc == 'ar' ? 'إسلامي'
+          : loc == 'es' ? 'Islámico'
+          : loc == 'en' ? 'Islamic'
+          : 'Islamique';
+    }
+    const map = <String, List<String>>{
+      'personal':  ['شخصي',  'Personnel', 'Personal',  'Personal'],
+      'family':    ['عائلي',  'Famille',   'Family',    'Familia'],
+      'social':    ['اجتماعي','Social',    'Social',    'Social'],
+      'work':      ['عمل',    'Travail',   'Work',      'Trabajo'],
+      'health':    ['صحة',    'Santé',     'Health',    'Salud'],
+      'religious': ['ديني',   'Religieux', 'Religious', 'Religioso'],
+    };
+    final entry = map[event.category];
+    if (entry == null) return '';
+    final idx = loc == 'ar' ? 0 : loc == 'fr' ? 1 : loc == 'en' ? 2 : 3;
+    return entry[idx];
+  }
+
+  Color get _chipBg => event.isIslamic
+      ? AppColors.greenPale
+      : (event.color.value == AppColors.gold.value
+          ? AppColors.goldPale
+          : event.color.value == AppColors.red.value
+              ? const Color(0xFFFDEAEA)
+              : AppColors.bluePale);
+
+  Color get _chipFg => event.isIslamic ? AppColors.green : event.color;
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = p.locale;
+    final surf = isDark ? AppColors.darkSurface : AppColors.white;
+    return GestureDetector(
+      onTap: () => showEventDetails(
+        context: context,
+        event: event,
+        hijri: hijri,
+        gregorian: gregorian,
+        p: p,
+      ),
+      child: Container(
+        decoration: BoxDecoration(
+          color: surf,
+          borderRadius: BorderRadius.circular(14),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withValues(alpha: 0.05), blurRadius: 6),
+          ],
+        ),
+        child: IntrinsicHeight(
+          child: Row(
+            children: [
+              // Leading colored bar — under RTL the start side is the
+              // right edge, which matches the screenshot.
+              Container(
+                width: 5,
+                decoration: BoxDecoration(
+                  color: event.color,
+                  borderRadius: const BorderRadiusDirectional.only(
+                    topStart: Radius.circular(14),
+                    bottomStart: Radius.circular(14),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          if (event.emoji.isNotEmpty) ...[
+                            Text(event.emoji,
+                                style: const TextStyle(fontSize: 18)),
+                            const SizedBox(width: 8),
+                          ],
+                          Flexible(
+                            child: Text(
+                              event.title(loc),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: GoogleFonts.cairo(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                                color: isDark
+                                    ? AppColors.darkText
+                                    : AppColors.text,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        _timeLabel(loc),
+                        style: GoogleFonts.cairo(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AppColors.text3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Padding(
+                padding: const EdgeInsetsDirectional.only(end: 12),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _chipBg,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Text(
+                    _categoryLabel(loc),
+                    style: GoogleFonts.cairo(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: _chipFg,
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// EVENT DETAILS BOTTOM SHEET
+// ════════════════════════════════════════════════════════════
+
+void showEventDetails({
+  required BuildContext context,
+  required AppEvent event,
+  required HijriDate hijri,
+  required DateTime gregorian,
+  required AppProvider p,
+}) {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: AppColors.white,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (ctx) => _EventDetailsSheet(
+      event: event,
+      hijri: hijri,
+      gregorian: gregorian,
+      p: p,
+    ),
+  );
+}
+
+class _EventDetailsSheet extends StatelessWidget {
+  final AppEvent event;
+  final HijriDate hijri;
+  final DateTime gregorian;
+  final AppProvider p;
+  const _EventDetailsSheet({
+    required this.event,
+    required this.hijri,
+    required this.gregorian,
+    required this.p,
+  });
+
+  String _editLabel(String loc) {
+    return loc == 'ar' ? 'تعديل'
+        : loc == 'es' ? 'Editar'
+        : loc == 'en' ? 'Edit'
+        : 'Modifier';
+  }
+
+  String _closeLabel(String loc) {
+    return loc == 'ar' ? 'إغلاق'
+        : loc == 'es' ? 'Cerrar'
+        : loc == 'en' ? 'Close'
+        : 'Fermer';
+  }
+
+  String _timeLabel(String loc) {
+    if (event.isAllDay) {
+      return loc == 'ar' ? 'طوال اليوم'
+          : loc == 'es' ? 'Todo el día'
+          : loc == 'en' ? 'All day'
+          : 'Toute la journée';
+    }
+    String two(int n) => n.toString().padLeft(2, '0');
+    return TextFormat.toWesternDigits(
+      '${two(event.startDate.hour)}:${two(event.startDate.minute)} '
+      '— ${two(event.endDate.hour)}:${two(event.endDate.minute)}',
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = p.locale;
+    return SafeArea(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 14, 20, 18),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Drag handle
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                if (event.emoji.isNotEmpty) ...[
+                  Text(event.emoji, style: const TextStyle(fontSize: 22)),
+                  const SizedBox(width: 8),
+                ],
+                Flexible(
+                  child: Text(
+                    event.title(loc),
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.cairo(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w800,
+                      color: AppColors.text,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            _DateBadge(hijri: hijri, gregorian: gregorian, p: p),
+            const SizedBox(height: 12),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                const Icon(Icons.schedule_rounded,
+                    size: 18, color: AppColors.text3),
+                const SizedBox(width: 6),
+                Text(
+                  _timeLabel(loc),
+                  style: GoogleFonts.cairo(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                    color: AppColors.text2,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton(
+                    style: OutlinedButton.styleFrom(
+                      side: const BorderSide(color: AppColors.border),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12)),
+                      padding:
+                          const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                    onPressed: () => Navigator.pop(context),
+                    child: Text(
+                      _closeLabel(loc),
+                      style: GoogleFonts.cairo(
+                        color: AppColors.text2,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
+                if (!event.isIslamic) ...[
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.green,
+                        foregroundColor: Colors.white,
+                        elevation: 0,
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 12),
+                      ),
+                      onPressed: () {
+                        Navigator.pop(context);
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                AddEventScreen(existingEvent: event),
+                          ),
+                        );
+                      },
+                      icon: const Icon(Icons.edit_rounded, size: 16),
+                      label: Text(
+                        _editLabel(loc),
+                        style: GoogleFonts.cairo(
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _AgendaGroup extends StatelessWidget {
   final HijriDate date;
   final List<AppEvent> events;
   final AppProvider p;
   final bool isDark;
-  const _AgendaGroup({required this.date, required this.events,
-      required this.p, required this.isDark});
+  const _AgendaGroup({
+    required this.date,
+    required this.events,
+    required this.p,
+    required this.isDark,
+  });
 
   @override
   Widget build(BuildContext context) {
-    String gregStr = '';
+    DateTime greg;
     try {
-      final g = date.toGregorian();
-      const ms = ['Jan','Fév','Mar','Avr','Mai','Jun','Jul','Aoû','Sep','Oct','Nov','Déc'];
-      gregStr = '${g.day} ${ms[g.month-1]}';
-    } catch (_) {}
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Sticky date header
-        Container(
-          color: isDark ? AppColors.darkBg : AppColors.bg,
-          padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
-          child: Row(
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                decoration: BoxDecoration(
-                  color: AppColors.navy,
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Text(
-                  '${date.hDay} ${p.getHijriMonthName(date.hMonth, p.locale)}',
-                  style: GoogleFonts.amiri(fontSize: 13,
-                      fontWeight: FontWeight.bold, color: Colors.white),
-                ),
+      greg = p.hijriToGregorian(date.hYear, date.hMonth, date.hDay);
+    } catch (_) {
+      greg = DateTime.now();
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _DateBadge(hijri: date, gregorian: greg, p: p),
+          const SizedBox(height: 10),
+          ...events.map(
+            (ev) => Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: _AgendaCard(
+                event: ev,
+                hijri: date,
+                gregorian: greg,
+                p: p,
+                isDark: isDark,
               ),
-              const SizedBox(width: 8),
-              Text(gregStr,
-                  style: GoogleFonts.cairo(fontSize: 11, color: AppColors.text3)),
-            ],
+            ),
           ),
-        ),
-        // Events
-        ...events.map((ev) => _AgendaEventRow(event: ev, p: p, isDark: isDark)),
-      ],
-    );
-  }
-}
-
-class _AgendaEventRow extends StatelessWidget {
-  final AppEvent event;
-  final AppProvider p;
-  final bool isDark;
-  const _AgendaEventRow({required this.event, required this.p, required this.isDark});
-
-  @override
-  Widget build(BuildContext context) {
-    final surf = isDark ? AppColors.darkSurface : AppColors.white;
-    return Container(
-      margin: const EdgeInsets.fromLTRB(12, 0, 12, 6),
-      decoration: BoxDecoration(
-        color: surf,
-        borderRadius: BorderRadius.circular(14),
-        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.05), blurRadius: 4)],
-      ),
-      child: IntrinsicHeight(
-        child: Row(
-          children: [
-            Container(
-              width: 4,
-              decoration: BoxDecoration(
-                color: event.color,
-                borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(14), bottomLeft: Radius.circular(14)),
-              ),
-            ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(event.title(p.locale),
-                            style: GoogleFonts.cairo(fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: isDark ? AppColors.darkText : AppColors.text)),
-                          if (!event.isAllDay)
-                            Text(
-                              '${event.startDate.hour.toString().padLeft(2,'0')}:${event.startDate.minute.toString().padLeft(2,'0')}',
-                              style: GoogleFonts.cairo(fontSize: 10, color: AppColors.text3)),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                      decoration: BoxDecoration(
-                        color: event.isIslamic ? AppColors.goldPale : AppColors.greenPale,
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        event.isIslamic ? p.label('islamic') : p.label('personal'),
-                        style: GoogleFonts.cairo(fontSize: 8, fontWeight: FontWeight.w700,
-                          color: event.isIslamic ? AppColors.gold : AppColors.green)),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
+        ],
       ),
     );
   }
