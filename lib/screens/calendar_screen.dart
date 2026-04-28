@@ -584,11 +584,16 @@ class _EventsList extends StatelessWidget {
                 itemCount: events.length,
                 itemBuilder: (ctx, i) {
                   final ev = events[i];
-                  // Always tap-to-show details. The details sheet hosts
-                  // the Edit button (and shows it only for non-Islamic).
+                  // Hoist the selected day into a non-nullable local —
+                  // closures don't carry the outer null-check
+                  // promotion. Falling back to provider.today keeps
+                  // the card valid even in the (impossible) case where
+                  // events were materialized without a selected day.
+                  final hijri = s ?? p.today;
                   DateTime greg;
                   try {
-                    greg = p.hijriToGregorian(s.hYear, s.hMonth, s.hDay);
+                    greg = p.hijriToGregorian(
+                        hijri.hYear, hijri.hMonth, hijri.hDay);
                   } catch (_) {
                     greg = DateTime.now();
                   }
@@ -596,7 +601,7 @@ class _EventsList extends StatelessWidget {
                     padding: const EdgeInsets.only(bottom: 8),
                     child: _AgendaCard(
                       event: ev,
-                      hijri: s,
+                      hijri: hijri,
                       gregorian: greg,
                       p: p,
                       isDark: isDark,
