@@ -83,34 +83,36 @@ class _AddEventScreenState extends State<AddEventScreen> {
       widget.existingEvent?.recurrenceRule != null;
 
   // ── Recurrence sheets ───────────────────────────────────────────
-  Future<void> _openRecurrenceSheet() async {
+  Future<void> _openRecurrenceSheet(String locale) async {
     final picked = await showModalBottomSheet<_RecurrenceChoice>(
       context: context,
       backgroundColor: AppColors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => _RecurrenceSheet(selected: _draft.recurrence),
+      builder: (_) =>
+          _RecurrenceSheet(selected: _draft.recurrence, locale: locale),
     );
     if (picked == null) return;
     setState(() => _draft.setRecurrence(picked));
   }
 
-  Future<void> _openEditScopeSheet() async {
+  Future<void> _openEditScopeSheet(String locale) async {
     final picked = await showModalBottomSheet<_EditScope>(
       context: context,
       backgroundColor: AppColors.white,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      builder: (_) => _EditScopeSheet(selected: _draft.editScope),
+      builder: (_) =>
+          _EditScopeSheet(selected: _draft.editScope, locale: locale),
     );
     if (picked == null) return;
     setState(() => _draft.setEditScope(picked));
   }
 
   // ── Notifications sheet ─────────────────────────────────────────
-  Future<void> _openAddReminderSheet() async {
+  Future<void> _openAddReminderSheet(String locale) async {
     if (!_draft.canAddReminder) return;
     final picked = await showModalBottomSheet<EventReminder>(
       context: context,
@@ -120,6 +122,7 @@ class _AddEventScreenState extends State<AddEventScreen> {
       ),
       builder: (_) => _AddReminderSheet(
         isAllDay: _draft.isAllDay,
+        locale: locale,
         idGenerator: _EventDraft._newReminderId,
       ),
     );
@@ -130,24 +133,26 @@ class _AddEventScreenState extends State<AddEventScreen> {
   // ── Build ───────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    final locale = context.watch<AppProvider>().locale;
     return Scaffold(
       backgroundColor: AppColors.bg,
-      appBar: _buildAppBar(),
+      appBar: _buildAppBar(locale),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 24),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _TitleField(controller: _titleCtrl),
+            _TitleField(controller: _titleCtrl, locale: locale),
             const SizedBox(height: 12),
             _KindSelector(
               selected: _kind,
+              locale: locale,
               onChanged: (k) => setState(() => _kind = k),
             ),
             const SizedBox(height: 12),
             _TimeSection(
               draft: _draft,
-              locale: context.watch<AppProvider>().locale,
+              locale: locale,
               onAllDayChanged: (v) =>
                   setState(() => _draft.toggleAllDay(v)),
               onStartTap: _pickStart,
@@ -156,27 +161,29 @@ class _AddEventScreenState extends State<AddEventScreen> {
             const SizedBox(height: 12),
             _RecurrenceSection(
               draft: _draft,
+              locale: locale,
               showEditScope: _isEditingRecurringEvent,
-              onRecurrenceTap: _openRecurrenceSheet,
-              onEditScopeTap: _openEditScopeSheet,
+              onRecurrenceTap: () => _openRecurrenceSheet(locale),
+              onEditScopeTap: () => _openEditScopeSheet(locale),
             ),
             const SizedBox(height: 12),
             _NotificationsSection(
               draft: _draft,
+              locale: locale,
               onEnabledChanged: (v) =>
                   setState(() => _draft.setNotificationsEnabled(v)),
-              onAddReminder: _openAddReminderSheet,
+              onAddReminder: () => _openAddReminderSheet(locale),
               onRemoveReminder: (id) =>
                   setState(() => _draft.removeReminder(id)),
             ),
           ],
         ),
       ),
-      bottomNavigationBar: const _SaveBar(),
+      bottomNavigationBar: _SaveBar(locale: locale),
     );
   }
 
-  PreferredSizeWidget _buildAppBar() {
+  PreferredSizeWidget _buildAppBar(String locale) {
     return AppBar(
       backgroundColor: AppColors.white,
       elevation: 0,
@@ -185,7 +192,9 @@ class _AddEventScreenState extends State<AddEventScreen> {
         onPressed: () => Navigator.pop(context),
       ),
       title: Text(
-        'Add Event',
+        widget.existingEvent != null
+            ? _Tr.editEvent.value(locale)
+            : _Tr.addEvent.value(locale),
         style: GoogleFonts.cairo(
           fontSize: 16,
           fontWeight: FontWeight.w800,
@@ -212,18 +221,18 @@ class _AddEventScreenState extends State<AddEventScreen> {
 enum _RecurrenceChoice { none, daily, weekly, monthly, yearly }
 
 extension _RecurrenceChoiceX on _RecurrenceChoice {
-  String get label {
+  String label(String locale) {
     switch (this) {
       case _RecurrenceChoice.none:
-        return 'Does not repeat';
+        return _Tr.repeatNone.value(locale);
       case _RecurrenceChoice.daily:
-        return 'Daily';
+        return _Tr.repeatDaily.value(locale);
       case _RecurrenceChoice.weekly:
-        return 'Weekly';
+        return _Tr.repeatWeekly.value(locale);
       case _RecurrenceChoice.monthly:
-        return 'Monthly';
+        return _Tr.repeatMonthly.value(locale);
       case _RecurrenceChoice.yearly:
-        return 'Yearly';
+        return _Tr.repeatYearly.value(locale);
     }
   }
 }
@@ -233,14 +242,14 @@ extension _RecurrenceChoiceX on _RecurrenceChoice {
 enum _EditScope { thisOccurrence, thisAndFollowing, allOccurrences }
 
 extension _EditScopeX on _EditScope {
-  String get label {
+  String label(String locale) {
     switch (this) {
       case _EditScope.thisOccurrence:
-        return 'This event';
+        return _Tr.scopeThis.value(locale);
       case _EditScope.thisAndFollowing:
-        return 'This and following events';
+        return _Tr.scopeThisAndFollowing.value(locale);
       case _EditScope.allOccurrences:
-        return 'All events';
+        return _Tr.scopeAll.value(locale);
     }
   }
 }
@@ -408,7 +417,8 @@ class _EventDraft {
 
 class _TitleField extends StatelessWidget {
   final TextEditingController controller;
-  const _TitleField({required this.controller});
+  final String locale;
+  const _TitleField({required this.controller, required this.locale});
 
   @override
   Widget build(BuildContext context) {
@@ -423,7 +433,7 @@ class _TitleField extends StatelessWidget {
         decoration: InputDecoration(
           border: InputBorder.none,
           isDense: true,
-          hintText: 'Event title',
+          hintText: _Tr.titleHint.value(locale),
           hintStyle: GoogleFonts.cairo(
             fontSize: 16,
             color: AppColors.text3,
@@ -436,13 +446,18 @@ class _TitleField extends StatelessWidget {
 
 class _KindSelector extends StatelessWidget {
   final EventKind selected;
+  final String locale;
   final ValueChanged<EventKind> onChanged;
-  const _KindSelector({required this.selected, required this.onChanged});
+  const _KindSelector({
+    required this.selected,
+    required this.locale,
+    required this.onChanged,
+  });
 
-  static const _options = <(EventKind, String, IconData)>[
-    (EventKind.event, 'Event', Icons.event_rounded),
-    (EventKind.task, 'Task', Icons.check_circle_outline_rounded),
-    (EventKind.birthday, 'Birthday', Icons.cake_outlined),
+  static const _options = <(EventKind, _Tr, IconData)>[
+    (EventKind.event, _Tr.kindEvent, Icons.event_rounded),
+    (EventKind.task, _Tr.kindTask, Icons.check_circle_outline_rounded),
+    (EventKind.birthday, _Tr.kindBirthday, Icons.cake_outlined),
   ];
 
   @override
@@ -476,7 +491,7 @@ class _KindSelector extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      o.$2,
+                      o.$2.value(locale),
                       style: GoogleFonts.cairo(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
@@ -542,7 +557,7 @@ class _TimeSection extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Time',
+                    _Tr.sectionTime.value(locale),
                     style: GoogleFonts.cairo(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
@@ -561,7 +576,7 @@ class _TimeSection extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'All day',
+                    _Tr.allDay.value(locale),
                     style: GoogleFonts.cairo(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -579,13 +594,13 @@ class _TimeSection extends StatelessWidget {
           ),
           const Divider(height: 1, color: AppColors.border, indent: 14),
           _TimeRow(
-            label: 'Start',
+            label: _Tr.start.value(locale),
             value: _format(draft.start),
             onTap: onStartTap,
           ),
           const Divider(height: 1, color: AppColors.border, indent: 14),
           _TimeRow(
-            label: 'End',
+            label: _Tr.end.value(locale),
             value: _format(draft.end),
             onTap: onEndTap,
             last: true,
@@ -649,11 +664,13 @@ class _TimeRow extends StatelessWidget {
 
 class _RecurrenceSection extends StatelessWidget {
   final _EventDraft draft;
+  final String locale;
   final bool showEditScope;
   final VoidCallback onRecurrenceTap;
   final VoidCallback onEditScopeTap;
   const _RecurrenceSection({
     required this.draft,
+    required this.locale,
     required this.showEditScope,
     required this.onRecurrenceTap,
     required this.onEditScopeTap,
@@ -686,7 +703,7 @@ class _RecurrenceSection extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Recurrence',
+                    _Tr.sectionRecurrence.value(locale),
                     style: GoogleFonts.cairo(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
@@ -699,16 +716,16 @@ class _RecurrenceSection extends StatelessWidget {
           ),
           const Divider(height: 1, color: AppColors.border),
           _PropertyRow(
-            label: 'Repeats',
-            value: draft.recurrence.label,
+            label: _Tr.repeats.value(locale),
+            value: draft.recurrence.label(locale),
             onTap: onRecurrenceTap,
             last: !showEditScope,
           ),
           if (showEditScope) ...[
             const Divider(height: 1, color: AppColors.border, indent: 14),
             _PropertyRow(
-              label: 'Edit scope',
-              value: draft.editScope.label,
+              label: _Tr.editScope.value(locale),
+              value: draft.editScope.label(locale),
               onTap: onEditScopeTap,
               last: true,
             ),
@@ -775,30 +792,32 @@ class _PropertyRow extends StatelessWidget {
 
 class _RecurrenceSheet extends StatelessWidget {
   final _RecurrenceChoice selected;
-  const _RecurrenceSheet({required this.selected});
+  final String locale;
+  const _RecurrenceSheet({required this.selected, required this.locale});
 
   @override
   Widget build(BuildContext context) {
     return _OptionsSheet<_RecurrenceChoice>(
-      title: 'Repeats',
+      title: _Tr.repeats.value(locale),
       options: _RecurrenceChoice.values,
       selected: selected,
-      labelOf: (c) => c.label,
+      labelOf: (c) => c.label(locale),
     );
   }
 }
 
 class _EditScopeSheet extends StatelessWidget {
   final _EditScope selected;
-  const _EditScopeSheet({required this.selected});
+  final String locale;
+  const _EditScopeSheet({required this.selected, required this.locale});
 
   @override
   Widget build(BuildContext context) {
     return _OptionsSheet<_EditScope>(
-      title: 'Apply changes to',
+      title: _Tr.applyChangesTo.value(locale),
       options: _EditScope.values,
       selected: selected,
-      labelOf: (c) => c.label,
+      labelOf: (c) => c.label(locale),
     );
   }
 }
@@ -885,37 +904,36 @@ class _OptionsSheet<T> extends StatelessWidget {
 
 /// Standard relative-reminder presets (timed events).
 /// Source: docs/event_notifications.md §4.1.
-const List<(int, String)> _kRelativePresets = [
-  (0, 'At time'),
-  (5, '5 minutes before'),
-  (10, '10 minutes before'),
-  (15, '15 minutes before'),
-  (30, '30 minutes before'),
-  (60, '1 hour before'),
-  (120, '2 hours before'),
-  (1440, '1 day before'),
-  (2880, '2 days before'),
-  (10080, '1 week before'),
+///
+/// Labels are derived from [EventReminder.label] which already
+/// supports ar/fr/en/es, so they automatically match the chosen UI
+/// locale.
+const List<int> _kRelativePresetMinutes = [
+  0, 5, 10, 15, 30, 60, 120, 1440, 2880, 10080,
 ];
 
 /// Standard fixed-time-reminder presets (all-day events).
-/// Source: docs/event_notifications.md §4.2. Tuple = (daysBefore, hour, minute, label).
-const List<(int, int, int, String)> _kFixedPresets = [
-  (0, 9, 0, 'Same day at 09:00'),
-  (1, 9, 0, 'The day before at 09:00'),
-  (1, 11, 0, 'The day before at 11:00'),
-  (1, 17, 0, 'The day before at 17:00'),
-  (2, 9, 0, '2 days before at 09:00'),
-  (7, 9, 0, '1 week before at 09:00'),
+/// Source: docs/event_notifications.md §4.2.
+/// Tuple = (daysBefore, hour, minute). Labels come from
+/// [EventReminder.fixed(...).label(locale)].
+const List<(int, int, int)> _kFixedPresetSpecs = [
+  (0, 9, 0),
+  (1, 9, 0),
+  (1, 11, 0),
+  (1, 17, 0),
+  (2, 9, 0),
+  (7, 9, 0),
 ];
 
 class _NotificationsSection extends StatelessWidget {
   final _EventDraft draft;
+  final String locale;
   final ValueChanged<bool> onEnabledChanged;
   final VoidCallback onAddReminder;
   final ValueChanged<String> onRemoveReminder;
   const _NotificationsSection({
     required this.draft,
+    required this.locale,
     required this.onEnabledChanged,
     required this.onAddReminder,
     required this.onRemoveReminder,
@@ -950,7 +968,7 @@ class _NotificationsSection extends StatelessWidget {
                 const SizedBox(width: 12),
                 Expanded(
                   child: Text(
-                    'Notifications',
+                    _Tr.sectionNotifications.value(locale),
                     style: GoogleFonts.cairo(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
@@ -969,7 +987,7 @@ class _NotificationsSection extends StatelessWidget {
               children: [
                 Expanded(
                   child: Text(
-                    'Enable notifications',
+                    _Tr.enableNotifications.value(locale),
                     style: GoogleFonts.cairo(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
@@ -991,6 +1009,7 @@ class _NotificationsSection extends StatelessWidget {
             for (final r in draft.reminders) ...[
               _ReminderRow(
                 reminder: r,
+                locale: locale,
                 onRemove: () => onRemoveReminder(r.id),
               ),
               const Divider(height: 1, color: AppColors.border, indent: 14),
@@ -1011,8 +1030,8 @@ class _NotificationsSection extends StatelessWidget {
                     Expanded(
                       child: Text(
                         canAdd
-                            ? 'Add reminder'
-                            : 'Reminder limit reached (5)',
+                            ? _Tr.addReminder.value(locale)
+                            : _Tr.reminderLimit.value(locale),
                         style: GoogleFonts.cairo(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
@@ -1035,8 +1054,13 @@ class _NotificationsSection extends StatelessWidget {
 
 class _ReminderRow extends StatelessWidget {
   final EventReminder reminder;
+  final String locale;
   final VoidCallback onRemove;
-  const _ReminderRow({required this.reminder, required this.onRemove});
+  const _ReminderRow({
+    required this.reminder,
+    required this.locale,
+    required this.onRemove,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1052,7 +1076,7 @@ class _ReminderRow extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              reminder.label('en'),
+              reminder.label(locale),
               style: GoogleFonts.cairo(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
@@ -1061,7 +1085,7 @@ class _ReminderRow extends StatelessWidget {
             ),
           ),
           IconButton(
-            tooltip: 'Remove',
+            tooltip: _Tr.remove.value(locale),
             icon: const Icon(
               Icons.close_rounded,
               size: 18,
@@ -1077,35 +1101,34 @@ class _ReminderRow extends StatelessWidget {
 
 class _AddReminderSheet extends StatelessWidget {
   final bool isAllDay;
+  final String locale;
   final String Function() idGenerator;
   const _AddReminderSheet({
     required this.isAllDay,
+    required this.locale,
     required this.idGenerator,
   });
 
   @override
   Widget build(BuildContext context) {
-    final title = isAllDay ? 'Add reminder' : 'Add reminder';
+    // Each preset is materialized as a real EventReminder. Its label
+    // already follows the chosen locale via EventReminder.label(loc).
     final entries = isAllDay
-        ? _kFixedPresets
-            .map((p) => (
-                  EventReminder.fixed(
-                    id: idGenerator(),
-                    daysBefore: p.$1,
-                    hour: p.$2,
-                    minute: p.$3,
-                  ),
-                  p.$4,
+        ? _kFixedPresetSpecs
+            .map((p) => EventReminder.fixed(
+                  id: idGenerator(),
+                  daysBefore: p.$1,
+                  hour: p.$2,
+                  minute: p.$3,
                 ))
+            .map((r) => (r, r.label(locale)))
             .toList()
-        : _kRelativePresets
-            .map((p) => (
-                  EventReminder.relative(
-                    id: idGenerator(),
-                    minutesBefore: p.$1,
-                  ),
-                  p.$2,
+        : _kRelativePresetMinutes
+            .map((m) => EventReminder.relative(
+                  id: idGenerator(),
+                  minutesBefore: m,
                 ))
+            .map((r) => (r, r.label(locale)))
             .toList();
 
     return SafeArea(
@@ -1126,7 +1149,7 @@ class _AddReminderSheet extends StatelessWidget {
             child: Row(
               children: [
                 Text(
-                  title,
+                  _Tr.addReminder.value(locale),
                   style: GoogleFonts.cairo(
                     fontSize: 14,
                     fontWeight: FontWeight.w800,
@@ -1142,7 +1165,9 @@ class _AddReminderSheet extends StatelessWidget {
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    isAllDay ? 'All-day presets' : 'Timed presets',
+                    isAllDay
+                        ? _Tr.allDayPresets.value(locale)
+                        : _Tr.timedPresets.value(locale),
                     style: GoogleFonts.cairo(
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
@@ -1162,9 +1187,9 @@ class _AddReminderSheet extends StatelessWidget {
               separatorBuilder: (_, __) =>
                   const Divider(height: 1, color: AppColors.border),
               itemBuilder: (_, i) {
-                final entry = entries[i];
+                final (reminder, label) = entries[i];
                 return InkWell(
-                  onTap: () => Navigator.of(context).pop(entry.$1),
+                  onTap: () => Navigator.of(context).pop(reminder),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
                         horizontal: 20, vertical: 14),
@@ -1172,7 +1197,7 @@ class _AddReminderSheet extends StatelessWidget {
                       children: [
                         Expanded(
                           child: Text(
-                            entry.$2,
+                            label,
                             style: GoogleFonts.cairo(
                               fontSize: 14,
                               fontWeight: FontWeight.w600,
@@ -1200,7 +1225,8 @@ class _AddReminderSheet extends StatelessWidget {
 }
 
 class _SaveBar extends StatelessWidget {
-  const _SaveBar();
+  final String locale;
+  const _SaveBar({required this.locale});
 
   @override
   Widget build(BuildContext context) {
@@ -1223,7 +1249,7 @@ class _SaveBar extends StatelessWidget {
             ),
           ),
           child: Text(
-            'Save',
+            _Tr.save.value(locale),
             style: GoogleFonts.cairo(
               fontSize: 14,
               fontWeight: FontWeight.w800,
@@ -1263,5 +1289,201 @@ class _Card extends StatelessWidget {
       ),
       child: child,
     );
+  }
+}
+
+// ─── Localization keys ──────────────────────────────────────────────
+//
+// All user-facing strings in this screen route through _Tr so the UI
+// follows the language chosen in app settings (ar / fr / en / es).
+// Brand-style date numbers stay Western per the global text-format
+// rule (lib/utils/text_format.dart).
+enum _Tr {
+  addEvent,
+  editEvent,
+  titleHint,
+  kindEvent,
+  kindTask,
+  kindBirthday,
+  sectionTime,
+  allDay,
+  start,
+  end,
+  sectionRecurrence,
+  repeats,
+  editScope,
+  applyChangesTo,
+  repeatNone,
+  repeatDaily,
+  repeatWeekly,
+  repeatMonthly,
+  repeatYearly,
+  scopeThis,
+  scopeThisAndFollowing,
+  scopeAll,
+  sectionNotifications,
+  enableNotifications,
+  addReminder,
+  reminderLimit,
+  remove,
+  allDayPresets,
+  timedPresets,
+  save,
+}
+
+extension _TrX on _Tr {
+  String value(String loc) {
+    switch (this) {
+      case _Tr.addEvent:
+        return loc == 'ar' ? 'حدث جديد'
+            : loc == 'es' ? 'Nuevo evento'
+            : loc == 'en' ? 'New event'
+            : 'Nouvel événement';
+      case _Tr.editEvent:
+        return loc == 'ar' ? 'تعديل الحدث'
+            : loc == 'es' ? 'Editar evento'
+            : loc == 'en' ? 'Edit event'
+            : 'Modifier l\'événement';
+      case _Tr.titleHint:
+        return loc == 'ar' ? 'عنوان الحدث'
+            : loc == 'es' ? 'Título del evento'
+            : loc == 'en' ? 'Event title'
+            : "Titre de l'événement";
+      case _Tr.kindEvent:
+        return loc == 'ar' ? 'حدث'
+            : loc == 'es' ? 'Evento'
+            : loc == 'en' ? 'Event'
+            : 'Événement';
+      case _Tr.kindTask:
+        return loc == 'ar' ? 'مهمّة'
+            : loc == 'es' ? 'Tarea'
+            : loc == 'en' ? 'Task'
+            : 'Tâche';
+      case _Tr.kindBirthday:
+        return loc == 'ar' ? 'عيد ميلاد'
+            : loc == 'es' ? 'Cumpleaños'
+            : loc == 'en' ? 'Birthday'
+            : 'Anniversaire';
+      case _Tr.sectionTime:
+        return loc == 'ar' ? 'الوقت'
+            : loc == 'es' ? 'Hora'
+            : loc == 'en' ? 'Time'
+            : 'Heure';
+      case _Tr.allDay:
+        return loc == 'ar' ? 'طوال اليوم'
+            : loc == 'es' ? 'Todo el día'
+            : loc == 'en' ? 'All day'
+            : 'Toute la journée';
+      case _Tr.start:
+        return loc == 'ar' ? 'البداية'
+            : loc == 'es' ? 'Inicio'
+            : loc == 'en' ? 'Start'
+            : 'Début';
+      case _Tr.end:
+        return loc == 'ar' ? 'النهاية'
+            : loc == 'es' ? 'Fin'
+            : loc == 'en' ? 'End'
+            : 'Fin';
+      case _Tr.sectionRecurrence:
+        return loc == 'ar' ? 'التكرار'
+            : loc == 'es' ? 'Repetición'
+            : loc == 'en' ? 'Recurrence'
+            : 'Récurrence';
+      case _Tr.repeats:
+        return loc == 'ar' ? 'يتكرر'
+            : loc == 'es' ? 'Se repite'
+            : loc == 'en' ? 'Repeats'
+            : 'Se répète';
+      case _Tr.editScope:
+        return loc == 'ar' ? 'نطاق التعديل'
+            : loc == 'es' ? 'Alcance de edición'
+            : loc == 'en' ? 'Edit scope'
+            : 'Portée de modification';
+      case _Tr.applyChangesTo:
+        return loc == 'ar' ? 'تطبيق التغييرات على'
+            : loc == 'es' ? 'Aplicar cambios a'
+            : loc == 'en' ? 'Apply changes to'
+            : 'Appliquer les changements à';
+      case _Tr.repeatNone:
+        return loc == 'ar' ? 'لا يتكرر'
+            : loc == 'es' ? 'No se repite'
+            : loc == 'en' ? 'Does not repeat'
+            : 'Ne se répète pas';
+      case _Tr.repeatDaily:
+        return loc == 'ar' ? 'يومياً'
+            : loc == 'es' ? 'Diario'
+            : loc == 'en' ? 'Daily'
+            : 'Quotidien';
+      case _Tr.repeatWeekly:
+        return loc == 'ar' ? 'أسبوعياً'
+            : loc == 'es' ? 'Semanal'
+            : loc == 'en' ? 'Weekly'
+            : 'Hebdomadaire';
+      case _Tr.repeatMonthly:
+        return loc == 'ar' ? 'شهرياً'
+            : loc == 'es' ? 'Mensual'
+            : loc == 'en' ? 'Monthly'
+            : 'Mensuel';
+      case _Tr.repeatYearly:
+        return loc == 'ar' ? 'سنوياً'
+            : loc == 'es' ? 'Anual'
+            : loc == 'en' ? 'Yearly'
+            : 'Annuel';
+      case _Tr.scopeThis:
+        return loc == 'ar' ? 'هذا الحدث فقط'
+            : loc == 'es' ? 'Este evento'
+            : loc == 'en' ? 'This event'
+            : 'Cet événement';
+      case _Tr.scopeThisAndFollowing:
+        return loc == 'ar' ? 'هذا الحدث وما يليه'
+            : loc == 'es' ? 'Este evento y los siguientes'
+            : loc == 'en' ? 'This and following events'
+            : 'Cet événement et les suivants';
+      case _Tr.scopeAll:
+        return loc == 'ar' ? 'جميع الأحداث'
+            : loc == 'es' ? 'Todos los eventos'
+            : loc == 'en' ? 'All events'
+            : 'Tous les événements';
+      case _Tr.sectionNotifications:
+        return loc == 'ar' ? 'الإشعارات'
+            : loc == 'es' ? 'Notificaciones'
+            : loc == 'en' ? 'Notifications'
+            : 'Notifications';
+      case _Tr.enableNotifications:
+        return loc == 'ar' ? 'تفعيل الإشعارات'
+            : loc == 'es' ? 'Activar notificaciones'
+            : loc == 'en' ? 'Enable notifications'
+            : 'Activer les notifications';
+      case _Tr.addReminder:
+        return loc == 'ar' ? 'إضافة تذكير'
+            : loc == 'es' ? 'Añadir recordatorio'
+            : loc == 'en' ? 'Add reminder'
+            : 'Ajouter un rappel';
+      case _Tr.reminderLimit:
+        return loc == 'ar' ? 'تم بلوغ الحد الأقصى للتذكيرات (5)'
+            : loc == 'es' ? 'Límite de recordatorios alcanzado (5)'
+            : loc == 'en' ? 'Reminder limit reached (5)'
+            : 'Limite de rappels atteinte (5)';
+      case _Tr.remove:
+        return loc == 'ar' ? 'حذف'
+            : loc == 'es' ? 'Eliminar'
+            : loc == 'en' ? 'Remove'
+            : 'Supprimer';
+      case _Tr.allDayPresets:
+        return loc == 'ar' ? 'إعدادات لأحداث طوال اليوم'
+            : loc == 'es' ? 'Predefinidos de todo el día'
+            : loc == 'en' ? 'All-day presets'
+            : 'Préréglages "toute la journée"';
+      case _Tr.timedPresets:
+        return loc == 'ar' ? 'إعدادات لأحداث موقوتة'
+            : loc == 'es' ? 'Predefinidos con hora'
+            : loc == 'en' ? 'Timed presets'
+            : 'Préréglages horaires';
+      case _Tr.save:
+        return loc == 'ar' ? 'حفظ'
+            : loc == 'es' ? 'Guardar'
+            : loc == 'en' ? 'Save'
+            : 'Enregistrer';
+    }
   }
 }
