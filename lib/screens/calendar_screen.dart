@@ -44,16 +44,27 @@ class _CalendarScreenState extends State<CalendarScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Region offset is loaded asynchronously by AppProvider.init(). We
-    // wait until the provider is available, then anchor _baseYear /
-    // _baseMonth to the provider's region-adjusted today so the page
-    // at _kBaseIndex truly represents "today" in the user's region —
-    // including across app restarts.
-    if (!_baseInitialized) {
-      final p = context.read<AppProvider>();
+    // Anchor _baseYear/_baseMonth to the provider's region-adjusted
+    // today. We watch isLoading so that, if the first build ran while
+    // AppProvider.init() was still loading prefs (and `today` was
+    // therefore the wrong UAQ-default value), we re-anchor as soon as
+    // loading flips false. This is what guarantees today's cell is
+    // green on app restart with region = Morocco.
+    final p = context.watch<AppProvider>();
+    if (!_baseInitialized && !p.isLoading) {
       _baseYear = p.today.hYear;
       _baseMonth = p.today.hMonth;
       _baseInitialized = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _pageCtrl.hasClients) {
+          _pageCtrl.jumpToPage(_kBaseIndex);
+        }
+      });
+    } else if (!_baseInitialized) {
+      // Provisional anchor while init() is still running, so the
+      // very first frame doesn't crash on uninitialized fields.
+      _baseYear = p.today.hYear;
+      _baseMonth = p.today.hMonth;
     }
   }
 
@@ -486,16 +497,25 @@ class _DayCell extends StatelessWidget {
     }
     if (isFriday && !isToday && !isSelected) textColor = AppColors.green;
 
+    // Today gets a pronounced filled disc; other days no border box —
+    // selection is conveyed by the soft greenPale background only.
+    final cellRadius = isToday ? BorderRadius.circular(14) : BorderRadius.circular(10);
     return GestureDetector(
       onTap: () => p.selectDay(HijriDate(year, month, day)),
       onDoubleTap: () => Navigator.push(context,
         MaterialPageRoute(builder: (_) => AddEventScreen())),
       child: Container(
+        margin: isToday ? const EdgeInsets.all(2) : EdgeInsets.zero,
         decoration: BoxDecoration(
           color: bg,
-          borderRadius: BorderRadius.circular(10),
-          border: isSelected && !isToday
-              ? Border.all(color: AppColors.green, width: 1.5) : null,
+          borderRadius: cellRadius,
+          boxShadow: isToday
+              ? [
+                  BoxShadow(
+                      color: AppColors.green.withValues(alpha: 0.35),
+                      blurRadius: 6),
+                ]
+              : null,
         ),
         child: Stack(
           alignment: Alignment.center,
@@ -503,17 +523,24 @@ class _DayCell extends StatelessWidget {
             Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Text('$day',
+                Text(
+                  TextFormat.toWesternDigits('$day'),
                   style: GoogleFonts.cairo(
-                    fontSize: 13,
+                    fontSize: isToday ? 15 : 13,
                     fontWeight: isToday ? FontWeight.w900 : FontWeight.w600,
-                    color: textColor, height: 1,
+                    color: textColor,
+                    height: 1,
                   ),
                 ),
                 if (gregDay > 0)
-                  Text('$gregDay',
-                    style: TextStyle(fontSize: 7, height: 1,
-                      color: isToday ? Colors.white70 : AppColors.text3)),
+                  Text(
+                    TextFormat.toWesternDigits('$gregDay'),
+                    style: TextStyle(
+                      fontSize: 7,
+                      height: 1,
+                      color: isToday ? Colors.white70 : AppColors.text3,
+                    ),
+                  ),
               ],
             ),
             if (events.isNotEmpty)
@@ -552,7 +579,10 @@ class _EventsList extends StatelessWidget {
     final s = p.selectedDay;
     return Container(
       color: isDark ? AppColors.darkBg : AppColors.bg,
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 80),
+      // Tight bottom padding — used to be 80 to clear the old FAB.
+      // Without the FAB the list can sit close to the nav bar so
+      // there's more vertical room for events.
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -649,6 +679,8 @@ class _SelectedDayHeader extends StatelessWidget {
         Material(
           color: AppColors.green,
           shape: const CircleBorder(),
+          elevation: 2,
+          shadowColor: AppColors.green.withValues(alpha: 0.4),
           child: InkWell(
             customBorder: const CircleBorder(),
             onTap: () => Navigator.push(
@@ -656,9 +688,9 @@ class _SelectedDayHeader extends StatelessWidget {
               MaterialPageRoute(builder: (_) => const AddEventScreen()),
             ),
             child: const SizedBox(
-              width: 26,
-              height: 26,
-              child: Icon(Icons.add_rounded, color: Colors.white, size: 18),
+              width: 34,
+              height: 34,
+              child: Icon(Icons.add_rounded, color: Colors.white, size: 22),
             ),
           ),
         ),

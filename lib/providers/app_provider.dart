@@ -87,16 +87,24 @@ class AppProvider extends ChangeNotifier {
       assertHijriMonthOrder();
 
       await _notifs.init();
-      _today = _todayForRegion();
-      _currentMonth = HijriDate(_today.hYear, _today.hMonth, 1);
-      _selectedDay = _today;
 
       for (final e in IslamicEventsData.events) {
         _islamicEventsEnabled[e.id] = e.defaultEnabled;
       }
 
+      // CRITICAL ordering: load persisted prefs FIRST so the region
+      // offset is in place before computing today. Otherwise restart
+      // with region = Morocco (offset +1) would compute today using
+      // the default region = global (offset 0), and the calendar
+      // would highlight the wrong cell on startup until the user
+      // manually tapped Today.
       await _loadPrefs();
       _notificationSettings = await _notifSettings.load();
+
+      _today = _todayForRegion();
+      _currentMonth = HijriDate(_today.hYear, _today.hMonth, 1);
+      _selectedDay = _today;
+
       await _notifs.requestPermissions();
       await _repo.loadAll();
       await _repo.rescheduleAllNotifications();
@@ -208,6 +216,7 @@ class AppProvider extends ChangeNotifier {
 
   void setViewMode(CalendarViewMode mode) {
     _viewMode = mode;
+    _savePrefs();
     notifyListeners();
   }
 
@@ -473,6 +482,7 @@ class AppProvider extends ChangeNotifier {
       await prefs.setString('locale', _locale);
       await prefs.setString('region', _region);
       await prefs.setInt('hijri_manual_adjust', _hijriManualAdjust);
+      await prefs.setString('view_mode', _viewMode.name);
       await prefs.setString('islamic_events', jsonEncode(_islamicEventsEnabled));
     } catch (e) {
       debugPrint('_savePrefs error: $e');
@@ -491,6 +501,13 @@ class AppProvider extends ChangeNotifier {
       if (reg != null && reg.isNotEmpty) _region = reg;
       final adj = prefs.getInt('hijri_manual_adjust');
       if (adj != null) _hijriManualAdjust = adj.clamp(-2, 2);
+      final vm = prefs.getString('view_mode');
+      if (vm != null) {
+        _viewMode = CalendarViewMode.values.firstWhere(
+          (e) => e.name == vm,
+          orElse: () => CalendarViewMode.monthly,
+        );
+      }
       final ieJson = prefs.getString('islamic_events');
       if (ieJson != null && ieJson.isNotEmpty) {
         final saved = Map<String, dynamic>.from(jsonDecode(ieJson) as Map);

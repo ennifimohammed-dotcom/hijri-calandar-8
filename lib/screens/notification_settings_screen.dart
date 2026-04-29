@@ -128,8 +128,6 @@ class _NotificationSettingsScreenState
               const _Divider(),
               _soundRow(p, s, loc),
               const _Divider(),
-              _volumeRow(p, s, loc),
-              const _Divider(),
               _row(
                 title: _t(loc, _Tr.vibrator),
                 trailing: _iosSwitch(
@@ -139,8 +137,6 @@ class _NotificationSettingsScreenState
                   ),
                 ),
               ),
-              const _Divider(),
-              _lockScreenRow(p, s, loc),
             ],
           ),
         ),

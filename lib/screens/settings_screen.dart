@@ -153,7 +153,6 @@ class _ProfileCard extends StatelessWidget {
     final today = HijriDate.now();
     final greg = DateTime.now();
     final loc = p.locale;
-    final enabled = p.islamicEventsEnabled.values.where((v) => v).length;
     final appTitle = loc == 'ar' ? 'تقويم الهجري'
         : loc == 'fr' ? 'Calendrier Hégirien'
         : loc == 'es' ? 'Calendario Hijri'
@@ -203,50 +202,10 @@ class _ProfileCard extends StatelessWidget {
                 ])),
             ],
           ),
-          const SizedBox(height: 14),
-          Row(children: [
-            _StatBox(value: '${p.userEvents.length}',
-              label: loc == 'ar' ? 'أحداث'
-                  : loc == 'fr' ? 'Événements'
-                  : loc == 'es' ? 'Eventos'
-                  : 'Events', isDark: isDark),
-            const SizedBox(width: 8),
-            _StatBox(value: '$enabled',
-              label: loc == 'ar' ? 'إسلامية'
-                  : loc == 'fr' ? 'Islamiques'
-                  : loc == 'es' ? 'Islámicos'
-                  : 'Islamic', isDark: isDark),
-            const SizedBox(width: 8),
-            _StatBox(value: '${today.hYear}',
-              label: loc == 'ar' ? 'السنة'
-                  : loc == 'fr' ? 'Année'
-                  : loc == 'es' ? 'Año'
-                  : 'Year', isDark: isDark),
-          ]),
         ],
       ),
     );
   }
-}
-
-class _StatBox extends StatelessWidget {
-  final String value, label;
-  final bool isDark;
-  const _StatBox({required this.value, required this.label, required this.isDark});
-  @override
-  Widget build(BuildContext context) => Expanded(
-    child: Container(
-      padding: const EdgeInsets.symmetric(vertical: 10),
-      decoration: BoxDecoration(
-        color: isDark ? AppColors.darkBg : AppColors.bg,
-        borderRadius: BorderRadius.circular(12)),
-      child: Column(children: [
-        Text(value, style: GoogleFonts.amiri(fontSize: 20, fontWeight: FontWeight.bold,
-            color: isDark ? AppColors.darkText : AppColors.navy)),
-        Text(label, style: GoogleFonts.cairo(fontSize: 9, color: AppColors.text3)),
-      ]),
-    ),
-  );
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -264,14 +223,32 @@ class _LanguageSection extends StatelessWidget {
       ('ar', '🇸🇦', 'عربي'), ('fr', '🇫🇷', 'FR'),
       ('en', '🇬🇧', 'EN'),   ('es', '🇪🇸', 'ES'),
     ];
-    const regions = [
-      ('global', '🌍', 'Global (Umm al-Qura)'),
-      ('ma', '🇲🇦', 'Maroc'),
-      ('dz', '🇩🇿', 'Algérie'),
-      ('tn', '🇹🇳', 'Tunisie'),
-      ('sa', '🇸🇦', 'Saudi Arabia'),
-      ('tr', '🇹🇷', 'Türkiye'),
-      ('id', '🇮🇩', 'Indonesia'),
+    // Two regions only: Umm al-Qura (the calendrical baseline used
+    // by Saudi Arabia) and Morocco (Ministry of Habous and Islamic
+    // Affairs — typically lags UAQ by one day via local sighting).
+    final regions = [
+      (
+        'global',
+        '🕋',
+        loc == 'ar'
+            ? 'أم القرى'
+            : loc == 'es'
+                ? 'Umm al-Qura'
+                : loc == 'en'
+                    ? 'Umm al-Qura'
+                    : 'Oumm al-Qoura',
+      ),
+      (
+        'ma',
+        '🇲🇦',
+        loc == 'ar'
+            ? 'المغرب'
+            : loc == 'es'
+                ? 'Marruecos'
+                : loc == 'en'
+                    ? 'Morocco'
+                    : 'Maroc',
+      ),
     ];
 
     return Column(
@@ -511,15 +488,16 @@ class _CalendarSectionState extends State<_CalendarSection> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Default view
+              // Default view — actually drives provider.viewMode and
+              // is persisted in SharedPreferences.
               Text(loc == 'ar' ? 'العرض الافتراضي'
-                  : loc == 'fr' ? 'Vue par défaut' : 'Default view',
+                  : loc == 'fr' ? 'Vue par défaut'
+                  : loc == 'es' ? 'Vista por defecto'
+                  : 'Default view',
                 style: GoogleFonts.cairo(fontSize: 10, fontWeight: FontWeight.w700,
                     color: AppColors.text3)),
               const SizedBox(height: 8),
-              _ChipRow(
-                options: [p.label('monthly'), p.label('weekly'), p.label('agenda')],
-                selected: p.label('monthly'), isDark: isDark),
+              _ViewModePicker(p: p, isDark: isDark),
               const SizedBox(height: 14),
               Text(loc == 'ar' ? 'إظهار' : loc == 'fr' ? 'Afficher' : 'Show',
                 style: GoogleFonts.cairo(fontSize: 10, fontWeight: FontWeight.w700,
@@ -907,6 +885,52 @@ class _HijriAdjustRow extends StatelessWidget {
               size: 18, color: AppColors.text3),
         ),
       ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Default-view picker (wired to provider.setViewMode)
+// ═══════════════════════════════════════════════════════════
+class _ViewModePicker extends StatelessWidget {
+  final AppProvider p;
+  final bool isDark;
+  const _ViewModePicker({required this.p, required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    final modes = <(CalendarViewMode, String)>[
+      (CalendarViewMode.monthly, p.label('monthly')),
+      (CalendarViewMode.weekly,  p.label('weekly')),
+      (CalendarViewMode.agenda,  p.label('agenda')),
+    ];
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: modes.map((m) {
+        final active = p.viewMode == m.$1;
+        return GestureDetector(
+          onTap: () => p.setViewMode(m.$1),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 150),
+            margin: const EdgeInsets.only(right: 6),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            decoration: BoxDecoration(
+              color: active ? AppColors.green : Colors.transparent,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                  color: active ? AppColors.green : AppColors.border),
+            ),
+            child: Text(
+              m.$2,
+              style: GoogleFonts.cairo(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: active ? Colors.white : AppColors.text2,
+              ),
+            ),
+          ),
+        );
+      }).toList(),
     );
   }
 }
