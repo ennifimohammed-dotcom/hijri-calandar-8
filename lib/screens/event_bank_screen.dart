@@ -565,17 +565,20 @@ class _InfoBlock extends StatelessWidget {
 class _Toggle extends StatelessWidget {
   final bool value;
   final ValueChanged<bool> onChanged;
-  final Color color;
-  const _Toggle({required this.value, required this.onChanged, this.color = AppColors.green});
+  /// Active-state color. Null = follow the current accent
+  /// (`AppColors.green`, which is now a runtime getter).
+  final Color? color;
+  const _Toggle({required this.value, required this.onChanged, this.color});
   @override
   Widget build(BuildContext context) {
+    final activeColor = color ?? AppColors.green;
     return GestureDetector(
       onTap: () => onChanged(!value),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         width: 36, height: 20, padding: const EdgeInsets.all(2),
         decoration: BoxDecoration(
-          color: value ? color : Colors.grey.shade300,
+          color: value ? activeColor : Colors.grey.shade300,
           borderRadius: BorderRadius.circular(10)),
         child: AnimatedAlign(
           duration: const Duration(milliseconds: 200),

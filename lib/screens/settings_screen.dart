@@ -172,8 +172,11 @@ class _ProfileCard extends StatelessWidget {
               Container(
                 width: 56, height: 56,
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [AppColors.green, Color(0xFF1A5C40)],
+                  gradient: LinearGradient(
+                    colors: [
+                      AppColors.green,
+                      Color.lerp(AppColors.green, Colors.black, 0.25)!,
+                    ],
                     begin: Alignment.topLeft, end: Alignment.bottomRight),
                   borderRadius: BorderRadius.circular(18)),
                 child: const Center(child: Text('🌙', style: TextStyle(fontSize: 28)))),
@@ -382,20 +385,8 @@ class _AppearanceSection extends StatelessWidget {
                 onTap: () => p.setThemeMode(
                   p.themeMode == ThemeMode.dark ? ThemeMode.light : ThemeMode.dark),
               ),
-              // Accent color
-              _SettRow(
-                emoji: '🎨', bg: AppColors.bluePale,
-                title: loc == 'ar' ? 'لون التطبيق' : 'Couleur d\'accent',
-                sub: '',
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [AppColors.green, AppColors.blue, AppColors.gold,
-                              AppColors.red, AppColors.navy].map((c) =>
-                    Container(width: 14, height: 14, margin: const EdgeInsets.only(right: 4),
-                      decoration: BoxDecoration(color: c, shape: BoxShape.circle))).toList(),
-                ),
-                isDark: isDark,
-              ),
+              // Accent color — functional 8-swatch picker.
+              _AccentColorRow(p: p, isDark: isDark),
               // Font size
               _SettRow(
                 emoji: '🔤', bg: AppColors.greenPale,
@@ -931,6 +922,99 @@ class _ViewModePicker extends StatelessWidget {
           ),
         );
       }).toList(),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Accent color row — 8-swatch picker driving provider.setAccent.
+// Tapping a swatch swaps the active accent everywhere in the app
+// because AppColors.green is now backed by AccentBus.
+// ═══════════════════════════════════════════════════════════
+class _AccentColorRow extends StatelessWidget {
+  final AppProvider p;
+  final bool isDark;
+  const _AccentColorRow({required this.p, required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = p.locale;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+              color: isDark ? AppColors.darkBorder : AppColors.border),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppColors.bluePale,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Center(
+                  child: Text('🎨', style: TextStyle(fontSize: 16)),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  loc == 'ar'
+                      ? 'لون التطبيق'
+                      : loc == 'es'
+                          ? 'Color de la app'
+                          : loc == 'en'
+                              ? 'App color'
+                              : "Couleur d'accent",
+                  style: GoogleFonts.cairo(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: isDark ? AppColors.darkText : AppColors.text,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: kAccentPalette.map((s) {
+              final selected = p.accentIndex == s.index;
+              return GestureDetector(
+                onTap: () => p.setAccent(s.index),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  width: selected ? 32 : 26,
+                  height: selected ? 32 : 26,
+                  decoration: BoxDecoration(
+                    color: s.main,
+                    shape: BoxShape.circle,
+                    boxShadow: selected
+                        ? [
+                            BoxShadow(
+                                color: s.main.withValues(alpha: 0.4),
+                                blurRadius: 6),
+                          ]
+                        : null,
+                  ),
+                  child: selected
+                      ? const Icon(Icons.check_rounded,
+                          color: Colors.white, size: 16)
+                      : null,
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
     );
   }
 }

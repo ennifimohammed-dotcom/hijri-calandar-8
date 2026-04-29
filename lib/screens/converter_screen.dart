@@ -81,7 +81,7 @@ class _ConverterScreenState extends State<ConverterScreen>
         centerTitle: true,
         actions: [
           IconButton(
-            icon: const Icon(Icons.today_rounded, color: AppColors.green),
+            icon: Icon(Icons.today_rounded, color: AppColors.green),
             tooltip: loc == 'ar' ? 'اليوم' : "Aujourd'hui",
             onPressed: _goToToday),
         ],

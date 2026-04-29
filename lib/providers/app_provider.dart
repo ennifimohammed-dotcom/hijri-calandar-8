@@ -9,6 +9,7 @@ import '../repositories/event_repository.dart';
 import '../services/recurrence_engine.dart';
 import '../services/notification_service.dart';
 import '../services/notification_settings_service.dart';
+import '../theme.dart';
 import '../utils/hijri_utils.dart';
 
 enum CalendarViewMode { monthly, weekly, agenda }
@@ -42,6 +43,10 @@ class AppProvider extends ChangeNotifier {
   String _locale = 'ar';
   Map<String, bool> _islamicEventsEnabled = {};
   NotificationSettings _notificationSettings = const NotificationSettings();
+
+  /// Index into [kAccentPalette] (theme.dart). Default 0 = green.
+  /// Drives [AccentBus] which backs `AppColors.green` / `greenPale`.
+  int _accentIndex = 0;
 
   /// Region code for Hijri calendar synchronization. Each region has a
   /// default day-offset relative to the Umm al-Qura baseline (see
@@ -381,6 +386,22 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ── Accent / theme color ─────────────────────────────────
+  int get accentIndex => _accentIndex;
+
+  /// Selected swatch from [kAccentPalette]. Drops through to
+  /// [AccentBus] which is what `AppColors.green` / `greenPale` read,
+  /// and the [MaterialApp]'s ThemeData getters re-evaluate next
+  /// frame. The whole tree restyles after [notifyListeners].
+  void setAccent(int idx) {
+    if (idx < 0 || idx >= kAccentPalette.length) return;
+    if (_accentIndex == idx) return;
+    _accentIndex = idx;
+    AccentBus.set(idx);
+    _savePrefs();
+    notifyListeners();
+  }
+
   // ── Notification settings ────────────────────────────────
   Future<void> updateNotificationSettings(
     NotificationSettings Function(NotificationSettings) updater, {
@@ -483,6 +504,7 @@ class AppProvider extends ChangeNotifier {
       await prefs.setString('region', _region);
       await prefs.setInt('hijri_manual_adjust', _hijriManualAdjust);
       await prefs.setString('view_mode', _viewMode.name);
+      await prefs.setInt('accent_index', _accentIndex);
       await prefs.setString('islamic_events', jsonEncode(_islamicEventsEnabled));
     } catch (e) {
       debugPrint('_savePrefs error: $e');
@@ -507,6 +529,11 @@ class AppProvider extends ChangeNotifier {
           (e) => e.name == vm,
           orElse: () => CalendarViewMode.monthly,
         );
+      }
+      final acc = prefs.getInt('accent_index');
+      if (acc != null && acc >= 0 && acc < kAccentPalette.length) {
+        _accentIndex = acc;
+        AccentBus.set(acc);
       }
       final ieJson = prefs.getString('islamic_events');
       if (ieJson != null && ieJson.isNotEmpty) {
