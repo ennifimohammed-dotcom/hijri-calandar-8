@@ -387,32 +387,10 @@ class _AppearanceSection extends StatelessWidget {
               ),
               // Accent color — functional 8-swatch picker.
               _AccentColorRow(p: p, isDark: isDark),
-              // Font size
-              _SettRow(
-                emoji: '🔤', bg: AppColors.greenPale,
-                title: loc == 'ar' ? 'حجم الخط' : 'Taille de police',
-                sub: '',
-                trailing: _ChipRow(
-                  options: ['S', 'M', 'L', 'XL'],
-                  selected: 'M',
-                  isDark: isDark,
-                ),
-                isDark: isDark,
-              ),
-              // Calendar density
-              _SettRow(
-                emoji: '📐', bg: AppColors.bg,
-                title: loc == 'ar' ? 'كثافة التقويم' : 'Densité du calendrier',
-                sub: '',
-                trailing: _ChipRow(
-                  options: loc == 'ar'
-                      ? ['مضغوط', 'عادي', 'موسّع']
-                      : ['Compact', 'Normal', 'Étendu'],
-                  selected: loc == 'ar' ? 'عادي' : 'Normal',
-                  isDark: isDark,
-                ),
-                isDark: isDark, last: true,
-              ),
+              // Font size — wires to provider.setFontScale.
+              _FontScaleRow(p: p, isDark: isDark),
+              // Calendar density — wires to provider.setCalendarDensity.
+              _CalendarDensityRow(p: p, isDark: isDark, last: true),
             ],
           ),
         ),
@@ -1009,6 +987,204 @@ class _AccentColorRow extends StatelessWidget {
                       ? const Icon(Icons.check_rounded,
                           color: Colors.white, size: 16)
                       : null,
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Font scale picker — S / M / L / XL → 0.85 / 1.0 / 1.15 / 1.30.
+// Drives provider.setFontScale, which is applied via MediaQuery in
+// main.dart so every Text in the app rescales uniformly.
+// ═══════════════════════════════════════════════════════════
+class _FontScaleRow extends StatelessWidget {
+  final AppProvider p;
+  final bool isDark;
+  const _FontScaleRow({required this.p, required this.isDark});
+
+  static const _options = <(String, double)>[
+    ('S', 0.85),
+    ('M', 1.00),
+    ('L', 1.15),
+    ('XL', 1.30),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = p.locale;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+              color: isDark ? AppColors.darkBorder : AppColors.border),
+        ),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 34, height: 34,
+            decoration: BoxDecoration(
+              color: AppColors.greenPale,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Center(
+              child: Text('🔤', style: TextStyle(fontSize: 16)),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              loc == 'ar' ? 'حجم الخط'
+                  : loc == 'es' ? 'Tamaño de fuente'
+                  : loc == 'en' ? 'Font size'
+                  : 'Taille de police',
+              style: GoogleFonts.cairo(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: isDark ? AppColors.darkText : AppColors.text,
+              ),
+            ),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: _options.map((o) {
+              final active = (p.fontScale - o.$2).abs() < 0.01;
+              return GestureDetector(
+                onTap: () => p.setFontScale(o.$2),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  margin: const EdgeInsets.only(right: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: active ? AppColors.green : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color: active ? AppColors.green : AppColors.border),
+                  ),
+                  child: Text(
+                    o.$1,
+                    style: GoogleFonts.cairo(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      color: active ? Colors.white : AppColors.text2,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Calendar density picker — Compact / Normal / Wide.
+// Drives provider.setCalendarDensity which is read by the monthly
+// grid to choose its mainAxisSpacing / crossAxisSpacing.
+// ═══════════════════════════════════════════════════════════
+class _CalendarDensityRow extends StatelessWidget {
+  final AppProvider p;
+  final bool isDark;
+  final bool last;
+  const _CalendarDensityRow({
+    required this.p,
+    required this.isDark,
+    this.last = false,
+  });
+
+  String _label(CalendarDensity d, String loc) {
+    switch (d) {
+      case CalendarDensity.compact:
+        return loc == 'ar' ? 'مضغوط'
+            : loc == 'es' ? 'Compacto'
+            : loc == 'en' ? 'Compact'
+            : 'Compact';
+      case CalendarDensity.normal:
+        return loc == 'ar' ? 'عادي'
+            : loc == 'es' ? 'Normal'
+            : loc == 'en' ? 'Normal'
+            : 'Normal';
+      case CalendarDensity.wide:
+        return loc == 'ar' ? 'موسّع'
+            : loc == 'es' ? 'Amplio'
+            : loc == 'en' ? 'Wide'
+            : 'Étendu';
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = p.locale;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: last
+          ? null
+          : BoxDecoration(
+              border: Border(
+                bottom: BorderSide(
+                    color: isDark ? AppColors.darkBorder : AppColors.border),
+              ),
+            ),
+      child: Row(
+        children: [
+          Container(
+            width: 34, height: 34,
+            decoration: BoxDecoration(
+              color: AppColors.bg,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Center(
+              child: Text('📐', style: TextStyle(fontSize: 16)),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              loc == 'ar' ? 'كثافة التقويم'
+                  : loc == 'es' ? 'Densidad del calendario'
+                  : loc == 'en' ? 'Calendar density'
+                  : 'Densité du calendrier',
+              style: GoogleFonts.cairo(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: isDark ? AppColors.darkText : AppColors.text,
+              ),
+            ),
+          ),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: CalendarDensity.values.map((d) {
+              final active = p.calendarDensity == d;
+              return GestureDetector(
+                onTap: () => p.setCalendarDensity(d),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  margin: const EdgeInsets.only(right: 4),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: active ? AppColors.green : Colors.transparent,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                        color: active ? AppColors.green : AppColors.border),
+                  ),
+                  child: Text(
+                    _label(d, loc),
+                    style: GoogleFonts.cairo(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      color: active ? Colors.white : AppColors.text2,
+                    ),
+                  ),
                 ),
               );
             }).toList(),

@@ -9,6 +9,44 @@ import '../theme.dart';
 import 'add_event_screen.dart';
 import 'search_screen.dart';
 
+// ─── Calendar-density helpers ───────────────────────────────────
+// Map provider.calendarDensity → tunables for the monthly grid.
+// Picked by `_MonthPage`'s GridView so the monthly view re-flows
+// when the user picks a different density in settings.
+
+EdgeInsets _gridPaddingForDensity(CalendarDensity d) {
+  switch (d) {
+    case CalendarDensity.compact:
+      return const EdgeInsets.fromLTRB(8, 0, 8, 4);
+    case CalendarDensity.normal:
+      return const EdgeInsets.fromLTRB(12, 2, 12, 8);
+    case CalendarDensity.wide:
+      return const EdgeInsets.fromLTRB(14, 6, 14, 14);
+  }
+}
+
+double _gridSpacingForDensity(CalendarDensity d) {
+  switch (d) {
+    case CalendarDensity.compact:
+      return 0;
+    case CalendarDensity.normal:
+      return 2;
+    case CalendarDensity.wide:
+      return 6;
+  }
+}
+
+double _gridAspectForDensity(CalendarDensity d) {
+  switch (d) {
+    case CalendarDensity.compact:
+      return 1.15; // wider-than-tall → shorter cells
+    case CalendarDensity.normal:
+      return 1.0;
+    case CalendarDensity.wide:
+      return 0.9;  // taller cells with more breathing room
+  }
+}
+
 class CalendarScreen extends StatefulWidget {
   const CalendarScreen({super.key});
   @override
@@ -415,15 +453,15 @@ class _MonthPage extends StatelessWidget {
       children: [
         Container(
           color: surf,
-          padding: const EdgeInsets.fromLTRB(12, 2, 12, 8),
+          padding: _gridPaddingForDensity(p.calendarDensity),
           child: GridView.builder(
             shrinkWrap: true,
             physics: const NeverScrollableScrollPhysics(),
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+            gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 7,
-              childAspectRatio: 1.0,
-              mainAxisSpacing: 2,
-              crossAxisSpacing: 2,
+              childAspectRatio: _gridAspectForDensity(p.calendarDensity),
+              mainAxisSpacing: _gridSpacingForDensity(p.calendarDensity),
+              crossAxisSpacing: _gridSpacingForDensity(p.calendarDensity),
             ),
             itemCount: total,
             itemBuilder: (ctx, idx) {

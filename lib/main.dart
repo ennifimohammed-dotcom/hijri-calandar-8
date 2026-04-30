@@ -83,10 +83,20 @@ class _HijriCalendarAppState extends State<HijriCalendarApp>
         GlobalWidgetsLocalizations.delegate,
         GlobalCupertinoLocalizations.delegate,
       ],
-      builder: (context, child) => Directionality(
-        textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
-        child: child!,
-      ),
+      builder: (context, child) {
+        final mq = MediaQuery.of(context);
+        // The user's chosen font scale is applied uniformly across
+        // every Text in the app via a MediaQuery override.
+        return MediaQuery(
+          data: mq.copyWith(
+            textScaler: TextScaler.linear(provider.fontScale),
+          ),
+          child: Directionality(
+            textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
+            child: child!,
+          ),
+        );
+      },
       home: widget.showOnboarding
           ? const OnboardingScreen()
           : const HomeScreen(),

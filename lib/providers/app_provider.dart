@@ -14,6 +14,10 @@ import '../utils/hijri_utils.dart';
 
 enum CalendarViewMode { monthly, weekly, agenda }
 
+/// Visual density for the monthly calendar grid. Drives the
+/// `mainAxisSpacing` / `crossAxisSpacing` of the day-cell grid.
+enum CalendarDensity { compact, normal, wide }
+
 class AppProvider extends ChangeNotifier {
   // ── Dependencies ─────────────────────────────────────────
   final EventRepository _repo;
@@ -47,6 +51,13 @@ class AppProvider extends ChangeNotifier {
   /// Index into [kAccentPalette] (theme.dart). Default 0 = green.
   /// Drives [AccentBus] which backs `AppColors.green` / `greenPale`.
   int _accentIndex = 0;
+
+  /// Global text-scale multiplier applied via MediaQuery in main.dart.
+  /// Picker choices: S = 0.85, M = 1.0, L = 1.15, XL = 1.30.
+  double _fontScale = 1.0;
+
+  /// Visual density for the monthly grid.
+  CalendarDensity _calendarDensity = CalendarDensity.normal;
 
   /// Region code for Hijri calendar synchronization. Each region has a
   /// default day-offset relative to the Umm al-Qura baseline (see
@@ -386,6 +397,30 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ── Font scale ──────────────────────────────────────────
+  double get fontScale => _fontScale;
+
+  /// Picker choices: 0.85 / 1.0 / 1.15 / 1.30 (S / M / L / XL).
+  /// Applied via a MediaQuery wrapper in main.dart so it scales the
+  /// entire app's text uniformly.
+  void setFontScale(double scale) {
+    final clamped = scale.clamp(0.7, 1.5);
+    if ((clamped - _fontScale).abs() < 0.001) return;
+    _fontScale = clamped;
+    _savePrefs();
+    notifyListeners();
+  }
+
+  // ── Calendar density ────────────────────────────────────
+  CalendarDensity get calendarDensity => _calendarDensity;
+
+  void setCalendarDensity(CalendarDensity d) {
+    if (_calendarDensity == d) return;
+    _calendarDensity = d;
+    _savePrefs();
+    notifyListeners();
+  }
+
   // ── Accent / theme color ─────────────────────────────────
   int get accentIndex => _accentIndex;
 
@@ -505,6 +540,8 @@ class AppProvider extends ChangeNotifier {
       await prefs.setInt('hijri_manual_adjust', _hijriManualAdjust);
       await prefs.setString('view_mode', _viewMode.name);
       await prefs.setInt('accent_index', _accentIndex);
+      await prefs.setDouble('font_scale', _fontScale);
+      await prefs.setString('calendar_density', _calendarDensity.name);
       await prefs.setString('islamic_events', jsonEncode(_islamicEventsEnabled));
     } catch (e) {
       debugPrint('_savePrefs error: $e');
@@ -534,6 +571,15 @@ class AppProvider extends ChangeNotifier {
       if (acc != null && acc >= 0 && acc < kAccentPalette.length) {
         _accentIndex = acc;
         AccentBus.set(acc);
+      }
+      final fs = prefs.getDouble('font_scale');
+      if (fs != null) _fontScale = fs.clamp(0.7, 1.5);
+      final cd = prefs.getString('calendar_density');
+      if (cd != null) {
+        _calendarDensity = CalendarDensity.values.firstWhere(
+          (e) => e.name == cd,
+          orElse: () => CalendarDensity.normal,
+        );
       }
       final ieJson = prefs.getString('islamic_events');
       if (ieJson != null && ieJson.isNotEmpty) {
