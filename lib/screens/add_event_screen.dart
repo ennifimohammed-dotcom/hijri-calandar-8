@@ -953,7 +953,7 @@ class _TimeSection extends StatelessWidget {
                     color: AppColors.greenPale,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.schedule_rounded,
                     size: 18,
                     color: AppColors.green,
@@ -1123,7 +1123,7 @@ class _RecurrenceSection extends StatelessWidget {
                     color: AppColors.greenPale,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.repeat_rounded,
                     size: 18,
                     color: AppColors.green,
@@ -1313,7 +1313,7 @@ class _OptionsSheet<T> extends StatelessWidget {
                       ),
                     ),
                     if (option == selected)
-                      const Icon(
+                      Icon(
                         Icons.check_rounded,
                         color: AppColors.green,
                         size: 20,
@@ -1593,7 +1593,7 @@ class _Spinner extends StatelessWidget {
         ),
         const SizedBox(height: 4),
         IconButton(
-          icon: const Icon(Icons.keyboard_arrow_up_rounded,
+          icon: Icon(Icons.keyboard_arrow_up_rounded,
               color: AppColors.green, size: 26),
           onPressed: onUp,
         ),
@@ -1612,7 +1612,7 @@ class _Spinner extends StatelessWidget {
           ),
         ),
         IconButton(
-          icon: const Icon(Icons.keyboard_arrow_down_rounded,
+          icon: Icon(Icons.keyboard_arrow_down_rounded,
               color: AppColors.green, size: 26),
           onPressed: onDown,
         ),
@@ -1655,7 +1655,7 @@ class _NotificationsSection extends StatelessWidget {
                     color: AppColors.greenPale,
                     borderRadius: BorderRadius.circular(10),
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.notifications_outlined,
                     size: 18,
                     color: AppColors.green,
@@ -1901,7 +1901,7 @@ class _AddReminderSheet extends StatelessWidget {
                             ),
                           ),
                         ),
-                        const Icon(
+                        Icon(
                           Icons.add_rounded,
                           color: AppColors.green,
                           size: 20,

@@ -324,7 +324,7 @@ class _TodayButton extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.today_rounded,
+            Icon(Icons.today_rounded,
                 size: 14, color: AppColors.green),
             const SizedBox(width: 5),
             Text(

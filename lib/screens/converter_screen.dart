@@ -334,7 +334,7 @@ class _GregToHijriTab extends StatelessWidget {
                 lastDate: DateTime(2100),
                 builder: (ctx, child) => Theme(
                   data: Theme.of(ctx).copyWith(
-                    colorScheme: const ColorScheme.light(
+                    colorScheme: ColorScheme.light(
                         primary: AppColors.green)),
                   child: child!),
               );
@@ -474,14 +474,14 @@ class _NumberPicker extends StatelessWidget {
         const SizedBox(height: 4),
         GestureDetector(
           onTap: () => onChanged((value + 1).clamp(min, max)),
-          child: const Icon(Icons.keyboard_arrow_up_rounded,
+          child: Icon(Icons.keyboard_arrow_up_rounded,
               color: AppColors.green, size: 22)),
         Text('$value', style: GoogleFonts.amiri(fontSize: 22,
             fontWeight: FontWeight.bold,
             color: isDark ? AppColors.darkText : AppColors.navy)),
         GestureDetector(
           onTap: () => onChanged((value - 1).clamp(min, max)),
-          child: const Icon(Icons.keyboard_arrow_down_rounded,
+          child: Icon(Icons.keyboard_arrow_down_rounded,
               color: AppColors.green, size: 22)),
       ],
     );
@@ -508,7 +508,7 @@ class _MonthPicker extends StatelessWidget {
         const SizedBox(height: 4),
         GestureDetector(
           onTap: () => onChanged(value % 12 + 1),
-          child: const Icon(Icons.keyboard_arrow_up_rounded,
+          child: Icon(Icons.keyboard_arrow_up_rounded,
               color: AppColors.green, size: 22)),
         SizedBox(
           width: 80,
@@ -520,7 +520,7 @@ class _MonthPicker extends StatelessWidget {
         ),
         GestureDetector(
           onTap: () => onChanged((value - 2) % 12 + 1),
-          child: const Icon(Icons.keyboard_arrow_down_rounded,
+          child: Icon(Icons.keyboard_arrow_down_rounded,
               color: AppColors.green, size: 22)),
       ],
     );
