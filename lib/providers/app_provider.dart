@@ -46,6 +46,11 @@ class AppProvider extends ChangeNotifier {
   ThemeMode _themeMode = ThemeMode.light;
   String _locale = 'ar';
   Map<String, bool> _islamicEventsEnabled = {};
+
+  /// Per-event configurable trigger time. Key = IslamicEventConfig.id.
+  /// Missing entries fall back to the cfg's defaultHour/defaultMinute.
+  Map<String, TimeOfDay> _islamicEventTimes = {};
+
   NotificationSettings _notificationSettings = const NotificationSettings();
 
   /// Index into [kAccentPalette] (theme.dart). Default 0 = green.
@@ -124,6 +129,7 @@ class AppProvider extends ChangeNotifier {
       await _notifs.requestPermissions();
       await _repo.loadAll();
       await _repo.rescheduleAllNotifications();
+      await _scheduleIslamicNotifications();
       await _notifs.scheduleMidnightReschedule();
     } catch (e) {
       debugPrint('AppProvider.init error: $e');
@@ -181,6 +187,7 @@ class AppProvider extends ChangeNotifier {
     await _savePrefs();
     notifyListeners();
     await _repo.rescheduleAllNotifications();
+    await _scheduleIslamicNotifications();
   }
 
   Future<void> setHijriManualAdjust(int days) async {
@@ -193,6 +200,7 @@ class AppProvider extends ChangeNotifier {
     await _savePrefs();
     notifyListeners();
     await _repo.rescheduleAllNotifications();
+    await _scheduleIslamicNotifications();
   }
 
   /// Region → default day-offset relative to Umm al-Qura.
@@ -318,44 +326,36 @@ class AppProvider extends ChangeNotifier {
   // ── Islamic events ────────────────────────────────────────
   List<AppEvent> _getIslamicEventsForDay(int day, int month, int year) {
     final result = <AppEvent>[];
+    DateTime greg;
+    try {
+      greg = hijriToGregorian(year, month, day);
+    } catch (_) {
+      greg = DateTime.now();
+    }
     for (final cfg in IslamicEventsData.events) {
       if (_islamicEventsEnabled[cfg.id] != true) continue;
-      bool matches = false;
-
-      if (cfg.isDaily) {
-        matches = true;
-      } else if (cfg.isWeekly) {
-        try {
-          final g = hijriToGregorian(year, month, day);
-          if (cfg.weekday != null && g.weekday == cfg.weekday) matches = true;
-          if (cfg.id == 'sawm_ithnayn_khamis' &&
-              (g.weekday == 1 || g.weekday == 4)) matches = true;
-        } catch (_) {}
-      } else if (cfg.isMonthly) {
-        if (cfg.id == 'ayyam_albid' && (day == 13 || day == 14 || day == 15)) matches = true;
-        else if (cfg.id == 'hijama' && (day == 17 || day == 19 || day == 21)) matches = true;
-        else if (cfg.id != 'ayyam_albid' && cfg.id != 'hijama' && cfg.day == day) matches = true;
-      } else {
-        if (cfg.day == day && cfg.month == month) matches = true;
+      if (!cfg.matchesDay(hijriDay: day, hijriMonth: month, greg: greg)) {
+        continue;
       }
-
-      if (matches) result.add(_islamicConfigToEvent(cfg, day, month, year));
+      result.add(_islamicConfigToEvent(cfg, day, month, year, greg));
     }
     return result;
   }
 
   AppEvent _islamicConfigToEvent(
-      IslamicEventConfig cfg, int day, int month, int year) {
+      IslamicEventConfig cfg, int day, int month, int year, DateTime greg) {
     final now = DateTime.now();
-    DateTime greg = now;
-    try { greg = hijriToGregorian(year, month, day); } catch (_) {}
+    final time = islamicEventTime(cfg.id);
+    final start = DateTime(
+        greg.year, greg.month, greg.day, time.hour, time.minute);
+    final end = start.add(const Duration(hours: 1));
     return AppEvent(
-      id: '${cfg.id}_${year}_$month',
+      id: '${cfg.id}_${year}_${month}_$day',
       titles: cfg.names,
       descriptions: cfg.description,
-      startDate: greg,
-      endDate: greg,
-      isAllDay: true,
+      startDate: start,
+      endDate: end,
+      isAllDay: false,
       type: EventType.islamic,
       color: cfg.color,
       emoji: cfg.emoji,
@@ -367,10 +367,28 @@ class AppProvider extends ChangeNotifier {
     );
   }
 
+  /// Per-event configurable trigger time (defaults to the cfg's
+  /// `defaultHour:defaultMinute`).
+  TimeOfDay islamicEventTime(String id) {
+    final stored = _islamicEventTimes[id];
+    if (stored != null) return stored;
+    final cfg = IslamicEventsData.events
+        .firstWhere((e) => e.id == id, orElse: () => IslamicEventsData.events.first);
+    return TimeOfDay(hour: cfg.defaultHour, minute: cfg.defaultMinute);
+  }
+
+  Future<void> setIslamicEventTime(String id, TimeOfDay t) async {
+    _islamicEventTimes[id] = t;
+    await _savePrefs();
+    notifyListeners();
+    await _scheduleIslamicNotifications();
+  }
+
   void toggleIslamicEvent(String id, bool value) {
     _islamicEventsEnabled[id] = value;
     _savePrefs();
     notifyListeners();
+    _scheduleIslamicNotifications();
   }
 
   void toggleAllIslamicEvents(bool value) {
@@ -379,6 +397,49 @@ class AppProvider extends ChangeNotifier {
     }
     _savePrefs();
     notifyListeners();
+    _scheduleIslamicNotifications();
+  }
+
+  /// Re-builds the next 30 days of Islamic-event reminders from
+  /// scratch. Called on app start, when the user toggles an event,
+  /// changes a per-event time, switches region, or changes locale.
+  Future<void> _scheduleIslamicNotifications() async {
+    try {
+      await _notifs.cancelIslamicReminders();
+      final now = DateTime.now();
+      for (int dayOffset = 0; dayOffset < 30; dayOffset++) {
+        final greg = DateTime(now.year, now.month, now.day)
+            .add(Duration(days: dayOffset));
+        // Hijri date for this Greg date in the user's region.
+        final hShifted =
+            HijriDate.fromGregorian(greg.subtract(Duration(days: hijriDayOffset)));
+        for (final cfg in IslamicEventsData.events) {
+          if (_islamicEventsEnabled[cfg.id] != true) continue;
+          if (!cfg.matchesDay(
+            hijriDay: hShifted.hDay,
+            hijriMonth: hShifted.hMonth,
+            greg: greg,
+          )) {
+            continue;
+          }
+          final t = islamicEventTime(cfg.id);
+          final fireAt =
+              DateTime(greg.year, greg.month, greg.day, t.hour, t.minute);
+          if (!fireAt.isAfter(now)) continue;
+          final body =
+              '${cfg.desc(_locale)}\n\n${cfg.virt(_locale)}';
+          await _notifs.scheduleIslamicReminder(
+            eventId: cfg.id,
+            date: greg,
+            title: '${cfg.emoji}  ${cfg.name(_locale)}',
+            body: body,
+            scheduledDate: fireAt,
+          );
+        }
+      }
+    } catch (e) {
+      debugPrint('_scheduleIslamicNotifications error: $e');
+    }
   }
 
   // ── Search ────────────────────────────────────────────────
@@ -543,6 +604,10 @@ class AppProvider extends ChangeNotifier {
       await prefs.setDouble('font_scale', _fontScale);
       await prefs.setString('calendar_density', _calendarDensity.name);
       await prefs.setString('islamic_events', jsonEncode(_islamicEventsEnabled));
+      await prefs.setString('islamic_event_times', jsonEncode({
+        for (final e in _islamicEventTimes.entries)
+          e.key: '${e.value.hour}:${e.value.minute}',
+      }));
     } catch (e) {
       debugPrint('_savePrefs error: $e');
     }
@@ -587,6 +652,21 @@ class AppProvider extends ChangeNotifier {
         for (final k in saved.keys) {
           if (_islamicEventsEnabled.containsKey(k)) {
             _islamicEventsEnabled[k] = saved[k] as bool;
+          }
+        }
+      }
+      final ietJson = prefs.getString('islamic_event_times');
+      if (ietJson != null && ietJson.isNotEmpty) {
+        final saved = Map<String, dynamic>.from(jsonDecode(ietJson) as Map);
+        for (final entry in saved.entries) {
+          final raw = entry.value as String;
+          final parts = raw.split(':');
+          if (parts.length == 2) {
+            final h = int.tryParse(parts[0]);
+            final m = int.tryParse(parts[1]);
+            if (h != null && m != null && h >= 0 && h < 24 && m >= 0 && m < 60) {
+              _islamicEventTimes[entry.key] = TimeOfDay(hour: h, minute: m);
+            }
           }
         }
       }

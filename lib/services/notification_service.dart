@@ -360,6 +360,62 @@ class NotificationService {
     }
   }
 
+  // ── Islamic reminders ────────────────────────────────────
+  /// Notification id range reserved for Islamic events. Keeps them
+  /// separate from user-event reminder ids (which fall in 0..99 999)
+  /// and from the system reminders (290000, 900000-900001, 999999).
+  static const int _kIslamicIdMin = 1000000;
+  static const int _kIslamicIdMax = 1999999;
+
+  /// Stable, conflict-free id derived from (eventId, date).
+  int _islamicNotifId(String eventId, DateTime date) {
+    final key = '$eventId|${date.year}|${date.month}|${date.day}';
+    return _kIslamicIdMin + (key.hashCode.abs() % (_kIslamicIdMax - _kIslamicIdMin));
+  }
+
+  /// Schedules a single Islamic-reminder notification at [scheduledDate].
+  /// Body text is rendered with BigTextStyle so the full description +
+  /// virtue text is shown in the notification drawer without
+  /// truncation.
+  Future<void> scheduleIslamicReminder({
+    required String eventId,
+    required DateTime date,
+    required String title,
+    required String body,
+    required DateTime scheduledDate,
+  }) async {
+    if (!_settings.settings.enabled) return;
+    if (!scheduledDate.isAfter(DateTime.now())) return;
+    try {
+      final id = _islamicNotifId(eventId, date);
+      await _scheduleExact(
+        id: id,
+        title: title,
+        body: body,
+        scheduledDate: scheduledDate,
+        payload: 'islamic_$eventId',
+        bigText: true,
+      );
+    } catch (e) {
+      debugPrint('scheduleIslamicReminder error: $e');
+    }
+  }
+
+  /// Cancels every notification id in the Islamic range. Called
+  /// before re-scheduling so the next 30 days are rebuilt cleanly.
+  Future<void> cancelIslamicReminders() async {
+    try {
+      final pending = await _plugin.pendingNotificationRequests();
+      for (final req in pending) {
+        if (req.id >= _kIslamicIdMin && req.id <= _kIslamicIdMax) {
+          await _plugin.cancel(req.id);
+        }
+      }
+    } catch (e) {
+      debugPrint('cancelIslamicReminders error: $e');
+    }
+  }
+
   // ── Midnight self-reschedule ─────────────────────────────
   Future<void> scheduleMidnightReschedule() async {
     if (!_settings.settings.enabled) return;
@@ -426,25 +482,64 @@ class NotificationService {
     required DateTime scheduledDate,
     String? payload,
     bool silent = false,
+    bool bigText = false,
   }) async {
     try {
       final tzDate = tz.TZDateTime.from(scheduledDate, tz.local);
       final s = _settings.settings;
-      final details = silent
-          ? const NotificationDetails(
-              android: AndroidNotificationDetails(
-                'hijri_silent_internal',
-                'Internal',
-                channelDescription: 'Internal scheduling channel',
-                importance: Importance.min,
-                priority: Priority.min,
-                playSound: false,
-                enableVibration: false,
-                visibility: NotificationVisibility.secret,
-                showWhen: false,
-              ),
-            )
-          : _buildDetails(s);
+      NotificationDetails details;
+      if (silent) {
+        details = const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'hijri_silent_internal',
+            'Internal',
+            channelDescription: 'Internal scheduling channel',
+            importance: Importance.min,
+            priority: Priority.min,
+            playSound: false,
+            enableVibration: false,
+            visibility: NotificationVisibility.secret,
+            showWhen: false,
+          ),
+        );
+      } else if (bigText) {
+        // Re-decorate the user's chosen channel with BigTextStyle so
+        // long Islamic-reminder bodies (full hadîth + virtue text)
+        // expand cleanly in the notification drawer.
+        final base = _buildAndroidDetails(s);
+        details = NotificationDetails(
+          android: AndroidNotificationDetails(
+            base.channelId,
+            base.channelName,
+            channelDescription: base.channelDescription,
+            importance: base.importance,
+            priority: base.priority,
+            playSound: base.playSound,
+            sound: base.sound,
+            enableVibration: base.enableVibration,
+            vibrationPattern: base.vibrationPattern,
+            visibility: base.visibility,
+            fullScreenIntent: base.fullScreenIntent,
+            category: base.category,
+            ticker: base.ticker,
+            channelShowBadge: base.channelShowBadge,
+            styleInformation: BigTextStyleInformation(
+              body,
+              htmlFormatBigText: false,
+              contentTitle: title,
+              htmlFormatContentTitle: false,
+              summaryText: '',
+            ),
+          ),
+          iOS: const DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          ),
+        );
+      } else {
+        details = _buildDetails(s);
+      }
 
       await _plugin.zonedSchedule(
         id,

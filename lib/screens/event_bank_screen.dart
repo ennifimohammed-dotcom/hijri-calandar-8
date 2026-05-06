@@ -357,35 +357,47 @@ class _EventRow extends StatelessWidget {
   String _subtitle() {
     final loc = p.locale;
     if (cfg.isDaily) {
-      return loc == 'ar' ? 'كل يوم' : loc == 'fr' ? 'Tous les jours' : 'Every day';
+      return loc == 'ar' ? 'كل يوم'
+          : loc == 'es' ? 'Todos los días'
+          : loc == 'en' ? 'Every day'
+          : 'Tous les jours';
     }
     if (cfg.isWeekly) {
-      if (cfg.weekday == 5) {
-        return loc == 'ar' ? 'كل جمعة' : loc == 'fr' ? 'Chaque vendredi' : 'Every Friday';
-      }
-      return loc == 'ar' ? 'كل اثنين وخميس'
-          : loc == 'fr' ? 'Chaque lundi et jeudi'
-          : 'Every Mon & Thu';
+      // Reminder day(s) of week — driven by cfg.weekdays so the
+      // text stays in sync with the actual scheduling rule.
+      const dayNames = <int, List<String>>{
+        1: ['الإثنين', 'lundi', 'Monday', 'lunes'],
+        2: ['الثلاثاء', 'mardi', 'Tuesday', 'martes'],
+        3: ['الأربعاء', 'mercredi', 'Wednesday', 'miércoles'],
+        4: ['الخميس', 'jeudi', 'Thursday', 'jueves'],
+        5: ['الجمعة', 'vendredi', 'Friday', 'viernes'],
+        6: ['السبت', 'samedi', 'Saturday', 'sábado'],
+        7: ['الأحد', 'dimanche', 'Sunday', 'domingo'],
+      };
+      final wds = cfg.weekdays.isNotEmpty
+          ? cfg.weekdays
+          : (cfg.weekday != null ? [cfg.weekday!] : const <int>[]);
+      final idx = loc == 'ar' ? 0 : loc == 'fr' ? 1 : loc == 'en' ? 2 : 3;
+      final names = wds.map((d) => dayNames[d]?[idx] ?? '').toList();
+      final joiner = loc == 'ar' ? ' و '
+          : loc == 'es' ? ' y '
+          : loc == 'en' ? ' & '
+          : ' & ';
+      final eachPrefix = loc == 'ar' ? 'كل '
+          : loc == 'es' ? 'Cada '
+          : loc == 'en' ? 'Every '
+          : 'Chaque ';
+      return '$eachPrefix${names.join(joiner)}';
     }
     if (cfg.isMonthly) {
-      // Per spec: numbers must always be Western digits (0-9) in
-      // every locale, including Arabic.
-      if (cfg.id == 'ayyam_albid') {
-        return loc == 'ar' ? '13 · 14 · 15 كل شهر'
-            : loc == 'fr' ? '13 · 14 · 15 chaque mois'
-            : loc == 'es' ? '13 · 14 · 15 cada mes'
-            : '13 · 14 · 15 each month';
-      }
-      if (cfg.id == 'hijama') {
-        return loc == 'ar' ? '17 · 19 · 21 كل شهر'
-            : loc == 'fr' ? '17 · 19 · 21 chaque mois'
-            : loc == 'es' ? '17 · 19 · 21 cada mes'
-            : '17 · 19 · 21 each month';
-      }
-      return loc == 'ar' ? 'كل شهر'
-          : loc == 'fr' ? 'Mensuel'
-          : loc == 'es' ? 'Mensual'
-          : 'Monthly';
+      // Use the canonical monthlyDays list — Western digits only
+      // per the global text-format rule.
+      final days = cfg.monthlyDays.isNotEmpty ? cfg.monthlyDays : [cfg.day];
+      final joined = days.join(' · ');
+      return loc == 'ar' ? '$joined كل شهر'
+          : loc == 'es' ? '$joined cada mes'
+          : loc == 'en' ? '$joined each month'
+          : '$joined chaque mois';
     }
     // Annual: reuse the canonical month list from the provider so
     // spellings stay consistent across the whole app.
@@ -488,12 +500,15 @@ class _EventDetailSheetState extends State<_EventDetailSheet> {
               ],
             ),
             const SizedBox(height: 20),
+            // Configurable notification time
+            _TimeRow(p: p, cfg: cfg, isDark: isDark, loc: loc),
+            const SizedBox(height: 12),
             // Description
             _InfoBlock(
               title: loc == 'ar' ? 'الوصف' : loc == 'fr' ? 'Description' : 'Description',
               content: cfg.desc(loc), isDark: isDark, icon: Icons.info_outline_rounded),
             const SizedBox(height: 12),
-            // Virtue / Hadith
+            // Virtue / Hadith — full text, no truncation.
             _InfoBlock(
               title: loc == 'ar' ? 'الفضل' : loc == 'fr' ? 'Vertu / Hadith' : 'Virtue / Hadith',
               content: cfg.virt(loc), isDark: isDark,
@@ -586,6 +601,113 @@ class _Toggle extends StatelessWidget {
           child: Container(width: 14, height: 14,
               decoration: const BoxDecoration(
                   color: Colors.white, shape: BoxShape.circle))),
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Per-event notification time — tap to open showTimePicker.
+// Drives provider.setIslamicEventTime, which persists and
+// re-schedules the next 30 days of reminders for this event.
+// ═══════════════════════════════════════════════════════════
+class _TimeRow extends StatelessWidget {
+  final AppProvider p;
+  final IslamicEventConfig cfg;
+  final bool isDark;
+  final String loc;
+  const _TimeRow({
+    required this.p,
+    required this.cfg,
+    required this.isDark,
+    required this.loc,
+  });
+
+  String _two(int n) => n.toString().padLeft(2, '0');
+
+  Future<void> _pick(BuildContext ctx) async {
+    final current = p.islamicEventTime(cfg.id);
+    final picked = await showTimePicker(
+      context: ctx,
+      initialTime: current,
+    );
+    if (picked == null) return;
+    await p.setIslamicEventTime(cfg.id, picked);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = p.islamicEventTime(cfg.id);
+    return InkWell(
+      onTap: () => _pick(context),
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.darkBg : AppColors.bg,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 36, height: 36,
+              decoration: BoxDecoration(
+                color: AppColors.greenPale,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(Icons.alarm_rounded,
+                  size: 18, color: AppColors.green),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    loc == 'ar' ? 'وقت التذكير'
+                        : loc == 'es' ? 'Hora del recordatorio'
+                        : loc == 'en' ? 'Reminder time'
+                        : 'Heure du rappel',
+                    style: GoogleFonts.cairo(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: isDark ? AppColors.darkText : AppColors.text,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    loc == 'ar'
+                        ? 'انقر للتعديل'
+                        : loc == 'es'
+                            ? 'Toca para cambiar'
+                            : loc == 'en'
+                                ? 'Tap to change'
+                                : 'Touchez pour modifier',
+                    style: GoogleFonts.cairo(
+                      fontSize: 9,
+                      color: AppColors.text3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.green,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '${_two(t.hour)}:${_two(t.minute)}',
+                style: GoogleFonts.cairo(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
