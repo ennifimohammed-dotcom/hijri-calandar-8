@@ -69,6 +69,13 @@ class AppProvider extends ChangeNotifier {
   /// Visual density for the monthly grid.
   CalendarDensity _calendarDensity = CalendarDensity.normal;
 
+  /// Font-family identifier — picked from one of the lists below.
+  ///   Arabic: 'amiri', 'cairo', 'tajawal'   (3 choices)
+  ///   Other:  'roboto', 'merriweather'      (2 choices)
+  /// Defaults align with the existing visual identity (Amiri for AR
+  /// headings, Roboto otherwise).
+  String _fontFamily = 'amiri';
+
   /// Region code for Hijri calendar synchronization. Each region has a
   /// default day-offset relative to the Umm al-Qura baseline (see
   /// [_regionOffset]). The user MAY further fine-tune via
@@ -543,6 +550,24 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  // ── Font family ─────────────────────────────────────────
+  String get fontFamily => _fontFamily;
+
+  /// Three fonts for Arabic (amiri / cairo / tajawal) and two for
+  /// non-Arabic (roboto / merriweather). The values align with the
+  /// `google_fonts` package's API names.
+  List<String> get availableFonts =>
+      _locale == 'ar'
+          ? const ['amiri', 'cairo', 'tajawal']
+          : const ['roboto', 'merriweather'];
+
+  void setFontFamily(String f) {
+    if (_fontFamily == f) return;
+    _fontFamily = f;
+    _savePrefs();
+    notifyListeners();
+  }
+
   // ── Accent / theme color ─────────────────────────────────
   int get accentIndex => _accentIndex;
 
@@ -664,6 +689,7 @@ class AppProvider extends ChangeNotifier {
       await prefs.setInt('accent_index', _accentIndex);
       await prefs.setDouble('font_scale', _fontScale);
       await prefs.setString('calendar_density', _calendarDensity.name);
+      await prefs.setString('font_family', _fontFamily);
       await prefs.setString('islamic_events', jsonEncode(_islamicEventsEnabled));
       await prefs.setString('islamic_event_times', jsonEncode({
         for (final e in _islamicEventTimes.entries)
@@ -722,6 +748,10 @@ class AppProvider extends ChangeNotifier {
           (e) => e.name == cd,
           orElse: () => CalendarDensity.normal,
         );
+      }
+      final ff = prefs.getString('font_family');
+      if (ff != null && ff.isNotEmpty) {
+        _fontFamily = ff;
       }
       final ieJson = prefs.getString('islamic_events');
       if (ieJson != null && ieJson.isNotEmpty) {

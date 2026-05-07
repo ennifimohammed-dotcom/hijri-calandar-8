@@ -44,6 +44,10 @@ jobs:
           rm -rf /tmp/base_project/lib
           cp -r $GITHUB_WORKSPACE/lib /tmp/base_project/
           cp $GITHUB_WORKSPACE/pubspec.yaml /tmp/base_project/pubspec.yaml
+          # Ship the launcher-icon source asset so flutter_launcher_icons
+          # can generate every density variant for the app icon.
+          mkdir -p /tmp/base_project/assets/icon
+          cp $GITHUB_WORKSPACE/assets/icon/icon.png /tmp/base_project/assets/icon/icon.png
           rm -rf /tmp/base_project/test
 
       - name: Replace Android build.gradle
@@ -112,6 +116,10 @@ jobs:
         working-directory: /tmp/base_project
         run: flutter pub get
 
+      - name: Generate launcher icons
+        working-directory: /tmp/base_project
+        run: dart run flutter_launcher_icons
+
       - name: Analyze code
         working-directory: /tmp/base_project
         run: flutter analyze --no-fatal-infos
@@ -124,6 +132,6 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Hijri-Calendar-APK
+          name: badr-APK
           path: /tmp/base_project/build/app/outputs/flutter-apk/app-release.apk
           retention-days: 30

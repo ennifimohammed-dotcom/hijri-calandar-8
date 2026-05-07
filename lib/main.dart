@@ -65,8 +65,12 @@ class _HijriCalendarAppState extends State<HijriCalendarApp>
   Widget build(BuildContext context) {
     final provider = context.watch<AppProvider>();
     final isRtl = provider.locale == 'ar';
+    // Push the user-picked font into AppTheme before its theme
+    // getters re-evaluate, so MaterialApp.theme / darkTheme rebuild
+    // with the right Google-Fonts text styles.
+    AppTheme.setActiveFontFamily(provider.fontFamily);
     return MaterialApp(
-      title: 'تقويم الهجري',
+      title: 'بدر | badr',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.lightTheme,
       darkTheme: AppTheme.darkTheme,

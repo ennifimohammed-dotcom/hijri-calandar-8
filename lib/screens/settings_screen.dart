@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../models/notification_settings.dart';
 import '../providers/app_provider.dart';
 import '../utils/hijri_utils.dart';
@@ -26,7 +28,6 @@ class SettingsScreen extends StatelessWidget {
             SliverToBoxAdapter(child: _AppearanceSection(p: p, isDark: isDark)),
             SliverToBoxAdapter(child: _CalendarSection(p: p, isDark: isDark)),
             SliverToBoxAdapter(child: _NotificationsSection(p: p, isDark: isDark)),
-            SliverToBoxAdapter(child: _DataSection(p: p, isDark: isDark)),
             SliverToBoxAdapter(child: _AboutSection(p: p, isDark: isDark)),
             const SliverToBoxAdapter(child: SizedBox(height: 100)),
           ],
@@ -153,10 +154,7 @@ class _ProfileCard extends StatelessWidget {
     final today = HijriDate.now();
     final greg = DateTime.now();
     final loc = p.locale;
-    final appTitle = loc == 'ar' ? 'تقويم الهجري'
-        : loc == 'fr' ? 'Calendrier Hégirien'
-        : loc == 'es' ? 'Calendario Hijri'
-        : 'Hijri Calendar';
+    final appTitle = loc == 'ar' ? 'بدر | badr' : 'بدر | badr';
     final hijriLine = TextFormat.toWesternDigits(
         '${today.hDay} ${p.getHijriMonthName(today.hMonth, loc)} ${today.hYear}');
     final gregStr = TextFormat.toWesternDigits(
@@ -223,7 +221,7 @@ class _LanguageSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final loc = p.locale;
     const langs = [
-      ('ar', '🇸🇦', 'عربي'), ('fr', '🇫🇷', 'FR'),
+      ('ar', '🇲🇦', 'عربي'), ('fr', '🇫🇷', 'FR'),
       ('en', '🇬🇧', 'EN'),   ('es', '🇪🇸', 'ES'),
     ];
     // Two regions only: Umm al-Qura (the calendrical baseline used
@@ -387,6 +385,9 @@ class _AppearanceSection extends StatelessWidget {
               ),
               // Accent color — functional 8-swatch picker.
               _AccentColorRow(p: p, isDark: isDark),
+              // Font type — picks one of the localized fonts and
+              // pushes it into Theme.of(context).textTheme.
+              _FontFamilyRow(p: p, isDark: isDark),
               // Font size — wires to provider.setFontScale.
               _FontScaleRow(p: p, isDark: isDark),
               // Calendar density — wires to provider.setCalendarDensity.
@@ -619,107 +620,10 @@ class _NotificationsSectionState extends State<_NotificationsSection> {
   }
 }
 
-// ═══════════════════════════════════════════════════════════
-// 6. DATA & SYNC
-// ═══════════════════════════════════════════════════════════
-class _DataSection extends StatelessWidget {
-  final AppProvider p;
-  final bool isDark;
-  const _DataSection({required this.p, required this.isDark});
-
-  @override
-  Widget build(BuildContext context) {
-    final loc = p.locale;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _SectionTitle(
-          text: loc == 'ar' ? 'البيانات والمزامنة'
-              : loc == 'fr' ? 'DONNÉES & SYNC' : 'DATA & SYNC',
-          isDark: isDark),
-        _Card(
-          isDark: isDark,
-          child: Column(children: [
-            _SettRow(
-              emoji: '📤', bg: AppColors.greenPale,
-              title: loc == 'ar' ? 'تصدير كـ JSON' : 'Exporter JSON',
-              sub: '',
-              trailing: const Icon(Icons.file_download_outlined,
-                  size: 16, color: AppColors.text3),
-              isDark: isDark,
-              onTap: () => _showSnack(context,
-                loc == 'ar' ? 'قريباً...' : 'Bientôt...')),
-            _SettRow(
-              emoji: '📤', bg: AppColors.bluePale,
-              title: loc == 'ar' ? 'تصدير كـ ICS' : 'Exporter ICS (iCal)',
-              sub: 'Google/Apple Calendar',
-              trailing: const Icon(Icons.file_download_outlined,
-                  size: 16, color: AppColors.text3),
-              isDark: isDark,
-              onTap: () => _showSnack(context,
-                loc == 'ar' ? 'قريباً...' : 'Bientôt...')),
-            _SettRow(
-              emoji: '📥', bg: AppColors.goldPale,
-              title: loc == 'ar' ? 'استيراد JSON / ICS' : 'Importer JSON / ICS',
-              sub: '',
-              trailing: const Icon(Icons.file_upload_outlined,
-                  size: 16, color: AppColors.text3),
-              isDark: isDark,
-              onTap: () => _showSnack(context,
-                loc == 'ar' ? 'قريباً...' : 'Bientôt...')),
-            _SettRow(
-              emoji: '☁️', bg: AppColors.bluePale,
-              title: loc == 'ar' ? 'Google Calendar' : 'Google Calendar',
-              sub: loc == 'ar' ? 'قريباً' : 'Bientôt disponible',
-              trailing: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(color: AppColors.goldPale,
-                    borderRadius: BorderRadius.circular(8)),
-                child: Text(loc == 'ar' ? 'قريباً' : 'Soon',
-                  style: GoogleFonts.cairo(fontSize: 9, color: AppColors.gold,
-                      fontWeight: FontWeight.w700))),
-              isDark: isDark),
-            _SettRow(
-              emoji: '🗑', bg: const Color(0xFFFDEAEA),
-              title: loc == 'ar' ? 'حذف جميع الأحداث' : 'Effacer tous les événements',
-              sub: '',
-              trailing: const Icon(Icons.chevron_left, size: 14, color: AppColors.red),
-              isDark: isDark, last: true,
-              onTap: () => _confirmDelete(context, p, loc)),
-          ]),
-        ),
-      ],
-    );
-  }
-
-  void _showSnack(BuildContext ctx, String msg) =>
-    ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(msg)));
-
-  void _confirmDelete(BuildContext context, AppProvider p, String loc) {
-    showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text(loc == 'ar' ? 'حذف جميع الأحداث؟' : 'Effacer tous les événements ?',
-            style: GoogleFonts.amiri(fontWeight: FontWeight.bold)),
-        content: Text(loc == 'ar' ? 'لا يمكن التراجع عن هذا الإجراء.'
-            : 'Cette action est irréversible.',
-            style: GoogleFonts.cairo()),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(p.label('cancel'), style: const TextStyle(color: AppColors.text3))),
-          TextButton(
-            onPressed: () {
-              for (final ev in List.from(p.userEvents)) p.deleteEvent(ev.id);
-              Navigator.pop(context);
-            },
-            child: Text(p.label('delete'),
-                style: const TextStyle(color: AppColors.red))),
-        ],
-      ),
-    );
-  }
-}
+// (Section "Données & Sync" — Export JSON / Import / ICS / Google
+//  Calendar — was removed per spec. The "Delete all events" action
+//  was preserved by moving it into the About section as a danger
+//  row so the user can still wipe their personal events.)
 
 // ═══════════════════════════════════════════════════════════
 // 7. ABOUT
@@ -728,6 +632,133 @@ class _AboutSection extends StatelessWidget {
   final AppProvider p;
   final bool isDark;
   const _AboutSection({required this.p, required this.isDark});
+
+  static const String _appVersion = '1.0.0';
+  // Public-facing endpoints. Replace these with the real ones once
+  // the Play Store / website are live.
+  static const String _playStoreUrl =
+      'https://play.google.com/store/apps/details?id=com.hijricalendar.hijri_calendar';
+  static const String _privacyUrl =
+      'https://hijricalendar.app/privacy';
+  static const String _contactEmail = 'support@hijricalendar.app';
+
+  Future<void> _openUrl(BuildContext ctx, String url) async {
+    final uri = Uri.parse(url);
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && ctx.mounted) {
+      _snack(ctx, ctx.localeArOrFallback(
+        ar: 'تعذّر فتح الرابط',
+        fr: "Impossible d'ouvrir le lien",
+        en: 'Could not open the link',
+        es: 'No se pudo abrir el enlace',
+      ));
+    }
+  }
+
+  Future<void> _share(BuildContext ctx, String loc) async {
+    final text = loc == 'ar'
+        ? 'بدر | badr — تقويم هجري وأذكار وفضائل إسلامية\n$_playStoreUrl'
+        : loc == 'fr'
+            ? 'بدر | badr — Calendrier hégirien, adhkâr et vertus islamiques\n$_playStoreUrl'
+            : loc == 'es'
+                ? 'بدر | badr — Calendario hégira, adhkâr y virtudes islámicas\n$_playStoreUrl'
+                : 'بدر | badr — Hijri calendar, adhkâr and Islamic virtues\n$_playStoreUrl';
+    await Share.share(text);
+  }
+
+  Future<void> _contact(BuildContext ctx, String loc) async {
+    final subject = loc == 'ar' ? 'دعم بدر | badr'
+        : loc == 'es' ? 'Soporte بدر | badr'
+        : loc == 'en' ? 'بدر | badr support'
+        : 'Support بدر | badr';
+    final uri = Uri(
+      scheme: 'mailto',
+      path: _contactEmail,
+      queryParameters: {'subject': subject},
+    );
+    final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    if (!ok && ctx.mounted) _snack(ctx, _contactEmail);
+  }
+
+  void _snack(BuildContext ctx, String msg) =>
+      ScaffoldMessenger.of(ctx).showSnackBar(SnackBar(content: Text(msg)));
+
+  void _showVersionDialog(BuildContext context, String loc) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(
+          loc == 'ar' ? 'حول بدر | badr' : 'À propos de بدر | badr',
+          style: GoogleFonts.amiri(fontWeight: FontWeight.bold),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Version $_appVersion',
+                style: GoogleFonts.cairo(fontWeight: FontWeight.w700)),
+            const SizedBox(height: 8),
+            Text(
+              loc == 'ar'
+                  ? 'بدر — تقويم هجري بمنطقتين (المغرب وأم القرى)، أذكار، فضائل إسلامية وأحداث شخصية مع إشعارات قابلة للضبط.'
+                  : loc == 'fr'
+                      ? 'بدر — calendrier hégirien (régions Maroc et Umm al-Qura), adhkâr, vertus islamiques et événements personnels avec notifications configurables.'
+                      : loc == 'es'
+                          ? 'بدر — calendario hégira (Marruecos y Umm al-Qura), adhkâr, virtudes islámicas y eventos personales con notificaciones configurables.'
+                          : 'بدر — Hijri calendar (Morocco and Umm al-Qura regions), adhkâr, Islamic virtues and personal events with fully configurable notifications.',
+              style: GoogleFonts.cairo(fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(p.label('cancel')),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDeleteAll(BuildContext context, String loc) {
+    showDialog(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: Text(
+          loc == 'ar' ? 'حذف جميع الأحداث؟'
+              : loc == 'fr' ? 'Effacer tous les événements ?'
+              : loc == 'es' ? '¿Eliminar todos los eventos?'
+              : 'Delete all events?',
+          style: GoogleFonts.amiri(fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          loc == 'ar' ? 'لا يمكن التراجع عن هذا الإجراء.'
+              : loc == 'fr' ? 'Cette action est irréversible.'
+              : loc == 'es' ? 'Esta acción es irreversible.'
+              : 'This action cannot be undone.',
+          style: GoogleFonts.cairo(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(p.label('cancel'),
+                style: const TextStyle(color: AppColors.text3)),
+          ),
+          TextButton(
+            onPressed: () {
+              for (final ev in List.from(p.userEvents)) {
+                p.deleteEvent(ev.id);
+              }
+              Navigator.pop(context);
+            },
+            child: Text(p.label('delete'),
+                style: const TextStyle(color: AppColors.red)),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final loc = p.locale;
@@ -736,7 +767,9 @@ class _AboutSection extends StatelessWidget {
       children: [
         _SectionTitle(
           text: loc == 'ar' ? 'حول التطبيق'
-              : loc == 'fr' ? 'À PROPOS' : 'ABOUT',
+              : loc == 'fr' ? 'À PROPOS'
+              : loc == 'es' ? 'ACERCA DE'
+              : 'ABOUT',
           isDark: isDark),
         _Card(
           isDark: isDark,
@@ -747,39 +780,93 @@ class _AboutSection extends StatelessWidget {
                   : loc == 'fr' ? 'Version'
                   : loc == 'es' ? 'Versión'
                   : 'Version',
-              sub: loc == 'ar' ? 'تقويم الهجري'
-                  : loc == 'fr' ? 'Calendrier Hégirien'
-                  : loc == 'es' ? 'Calendario Hijri'
-                  : 'Hijri Calendar',
-              trailing: Text('1.0.0', style: GoogleFonts.cairo(
+              sub: 'بدر | badr',
+              trailing: Text(_appVersion, style: GoogleFonts.cairo(
                   fontSize: 11, color: AppColors.text3)),
-              isDark: isDark),
+              isDark: isDark,
+              onTap: () => _showVersionDialog(context, loc),
+            ),
             _SettRow(
               emoji: '⭐', bg: AppColors.goldPale,
-              title: loc == 'ar' ? 'تقييم التطبيق' : 'Évaluer l\'app',
-              sub: '', trailing: const SizedBox(),
+              title: loc == 'ar' ? 'تقييم التطبيق'
+                  : loc == 'fr' ? "Évaluer l'app"
+                  : loc == 'es' ? 'Calificar la app'
+                  : 'Rate the app',
+              sub: '',
+              trailing: const SizedBox(),
               isDark: isDark,
-              onTap: () {}),
+              onTap: () => _openUrl(context, _playStoreUrl),
+            ),
             _SettRow(
               emoji: '🔗', bg: AppColors.greenPale,
-              title: loc == 'ar' ? 'مشاركة' : 'Partager',
-              sub: '', trailing: const SizedBox(),
+              title: loc == 'ar' ? 'مشاركة التطبيق'
+                  : loc == 'fr' ? "Partager l'app"
+                  : loc == 'es' ? 'Compartir la app'
+                  : 'Share the app',
+              sub: '',
+              trailing: const SizedBox(),
               isDark: isDark,
-              onTap: () {}),
+              onTap: () => _share(context, loc),
+            ),
             _SettRow(
               emoji: '🔒', bg: AppColors.bg,
-              title: loc == 'ar' ? 'سياسة الخصوصية' : 'Politique de confidentialité',
-              sub: '', trailing: const SizedBox(),
-              isDark: isDark),
+              title: loc == 'ar' ? 'سياسة الخصوصية'
+                  : loc == 'fr' ? 'Politique de confidentialité'
+                  : loc == 'es' ? 'Política de privacidad'
+                  : 'Privacy policy',
+              sub: '',
+              trailing: const SizedBox(),
+              isDark: isDark,
+              onTap: () => _openUrl(context, _privacyUrl),
+            ),
             _SettRow(
               emoji: '📧', bg: AppColors.bg,
-              title: loc == 'ar' ? 'اتصل بنا' : 'Nous contacter',
-              sub: '', trailing: const SizedBox(),
-              isDark: isDark, last: true),
+              title: loc == 'ar' ? 'اتصل بنا'
+                  : loc == 'fr' ? 'Nous contacter'
+                  : loc == 'es' ? 'Contáctanos'
+                  : 'Contact us',
+              sub: '',
+              trailing: const SizedBox(),
+              isDark: isDark,
+              onTap: () => _contact(context, loc),
+            ),
+            _SettRow(
+              emoji: '🗑',
+              bg: const Color(0xFFFDEAEA),
+              title: loc == 'ar' ? 'حذف جميع الأحداث'
+                  : loc == 'fr' ? 'Effacer tous les événements'
+                  : loc == 'es' ? 'Eliminar todos los eventos'
+                  : 'Delete all events',
+              sub: '',
+              trailing: const Icon(Icons.chevron_left,
+                  size: 14, color: AppColors.red),
+              isDark: isDark,
+              last: true,
+              onTap: () => _confirmDeleteAll(context, loc),
+            ),
           ]),
         ),
       ],
     );
+  }
+}
+
+// ── BuildContext locale helper used by _AboutSection ───────────
+extension _CtxLocaleX on BuildContext {
+  String localeArOrFallback({
+    required String ar,
+    required String fr,
+    required String en,
+    required String es,
+  }) {
+    final p = Provider.of<AppProvider>(this, listen: false);
+    switch (p.locale) {
+      case 'ar': return ar;
+      case 'fr': return fr;
+      case 'en': return en;
+      case 'es': return es;
+      default:   return ar;
+    }
   }
 }
 
@@ -1182,6 +1269,119 @@ class _CalendarDensityRow extends StatelessWidget {
                     style: GoogleFonts.cairo(
                       fontSize: 10,
                       fontWeight: FontWeight.w800,
+                      color: active ? Colors.white : AppColors.text2,
+                    ),
+                  ),
+                ),
+              );
+            }).toList(),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Font-family picker — 3 fonts in Arabic mode, 2 in others.
+// Drives provider.setFontFamily. Theme.of(context).textTheme
+// follows automatically because main.dart pushes the chosen
+// family into AppTheme.setActiveFontFamily on every rebuild.
+// ═══════════════════════════════════════════════════════════
+class _FontFamilyRow extends StatelessWidget {
+  final AppProvider p;
+  final bool isDark;
+  const _FontFamilyRow({required this.p, required this.isDark});
+
+  String _label(String key, String loc) {
+    // Display labels — leave font names as-is for non-Arabic, give
+    // a transliteration for Arabic so users see the option name in
+    // their reading direction.
+    switch (key) {
+      case 'amiri':        return loc == 'ar' ? 'أميري'   : 'Amiri';
+      case 'cairo':        return loc == 'ar' ? 'كايرو'   : 'Cairo';
+      case 'tajawal':      return loc == 'ar' ? 'تجوّل'    : 'Tajawal';
+      case 'roboto':       return 'Roboto';
+      case 'merriweather': return 'Merriweather';
+      default:             return key;
+    }
+  }
+
+  TextStyle _previewStyle(String key) {
+    switch (key) {
+      case 'cairo':        return GoogleFonts.cairo(fontWeight: FontWeight.w800);
+      case 'tajawal':      return GoogleFonts.tajawal(fontWeight: FontWeight.w800);
+      case 'merriweather': return GoogleFonts.merriweather(fontWeight: FontWeight.w800);
+      case 'roboto':       return GoogleFonts.roboto(fontWeight: FontWeight.w800);
+      case 'amiri':
+      default:             return GoogleFonts.amiri(fontWeight: FontWeight.bold);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = p.locale;
+    final fonts = p.availableFonts;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        border: Border(
+          bottom: BorderSide(
+              color: isDark ? AppColors.darkBorder : AppColors.border),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 34, height: 34,
+                decoration: BoxDecoration(
+                  color: AppColors.bluePale,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Center(
+                    child: Text('🅰️', style: TextStyle(fontSize: 16))),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  loc == 'ar' ? 'نوع الخط'
+                      : loc == 'es' ? 'Tipo de fuente'
+                      : loc == 'en' ? 'Font type'
+                      : 'Type de police',
+                  style: GoogleFonts.cairo(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: isDark ? AppColors.darkText : AppColors.text,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: fonts.map((key) {
+              final active = p.fontFamily == key;
+              return GestureDetector(
+                onTap: () => p.setFontFamily(key),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: active ? AppColors.green : Colors.transparent,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                        color: active ? AppColors.green : AppColors.border),
+                  ),
+                  child: Text(
+                    _label(key, loc),
+                    style: _previewStyle(key).copyWith(
+                      fontSize: 13,
                       color: active ? Colors.white : AppColors.text2,
                     ),
                   ),

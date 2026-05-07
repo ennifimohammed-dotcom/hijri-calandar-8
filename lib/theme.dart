@@ -142,18 +142,67 @@ class AppColors {
 }
 
 class AppTheme {
+  /// Resolves a Google-Fonts `TextStyle` for one of the supported
+  /// font-family identifiers. Read by [_textTheme] so the user's
+  /// chosen font (set via [AppProvider.setFontFamily]) flows through
+  /// the whole [Theme.of(context).textTheme] tree.
+  static TextStyle _font(
+    String family, {
+    double? fontSize,
+    FontWeight? fontWeight,
+    Color? color,
+  }) {
+    switch (family) {
+      case 'cairo':
+        return GoogleFonts.cairo(
+            fontSize: fontSize, fontWeight: fontWeight, color: color);
+      case 'tajawal':
+        return GoogleFonts.tajawal(
+            fontSize: fontSize, fontWeight: fontWeight, color: color);
+      case 'merriweather':
+        return GoogleFonts.merriweather(
+            fontSize: fontSize, fontWeight: fontWeight, color: color);
+      case 'roboto':
+        return GoogleFonts.roboto(
+            fontSize: fontSize, fontWeight: fontWeight, color: color);
+      case 'amiri':
+      default:
+        return GoogleFonts.amiri(
+            fontSize: fontSize, fontWeight: fontWeight, color: color);
+    }
+  }
+
+  /// Active font family — pushed by [HijriCalendarApp] every time
+  /// MaterialApp rebuilds (provider notifies). Defaults to `amiri`.
+  static String _activeFontFamily = 'amiri';
+
+  /// Called from main.dart's MaterialApp builder. The setter mutates
+  /// a static so [lightTheme] / [darkTheme] (which are getters) pick
+  /// up the new font on the next ThemeData read.
+  static void setActiveFontFamily(String family) {
+    _activeFontFamily = family;
+  }
+
   static TextTheme _textTheme(bool dark) {
     final c = dark ? AppColors.darkText : AppColors.text;
+    final f = _activeFontFamily;
     return TextTheme(
-      displayLarge: GoogleFonts.amiri(fontSize: 32, fontWeight: FontWeight.bold, color: c),
-      displayMedium: GoogleFonts.amiri(fontSize: 26, fontWeight: FontWeight.bold, color: c),
-      displaySmall: GoogleFonts.amiri(fontSize: 22, fontWeight: FontWeight.bold, color: c),
-      headlineMedium: GoogleFonts.cairo(fontSize: 18, fontWeight: FontWeight.w800, color: c),
-      headlineSmall: GoogleFonts.cairo(fontSize: 16, fontWeight: FontWeight.w700, color: c),
-      titleLarge: GoogleFonts.cairo(fontSize: 14, fontWeight: FontWeight.w700, color: c),
-      bodyLarge: GoogleFonts.cairo(fontSize: 14, color: c),
-      bodyMedium: GoogleFonts.cairo(fontSize: 12, color: c),
-      bodySmall: GoogleFonts.cairo(fontSize: 10, color: dark ? AppColors.darkText3 : AppColors.text3),
+      displayLarge:
+          _font(f, fontSize: 32, fontWeight: FontWeight.bold, color: c),
+      displayMedium:
+          _font(f, fontSize: 26, fontWeight: FontWeight.bold, color: c),
+      displaySmall:
+          _font(f, fontSize: 22, fontWeight: FontWeight.bold, color: c),
+      headlineMedium:
+          _font(f, fontSize: 18, fontWeight: FontWeight.w800, color: c),
+      headlineSmall:
+          _font(f, fontSize: 16, fontWeight: FontWeight.w700, color: c),
+      titleLarge:
+          _font(f, fontSize: 14, fontWeight: FontWeight.w700, color: c),
+      bodyLarge: _font(f, fontSize: 14, color: c),
+      bodyMedium: _font(f, fontSize: 12, color: c),
+      bodySmall: _font(f, fontSize: 10,
+          color: dark ? AppColors.darkText3 : AppColors.text3),
     );
   }
 
@@ -175,7 +224,7 @@ class AppTheme {
           foregroundColor: AppColors.navy,
           elevation: 0,
           centerTitle: true,
-          titleTextStyle: GoogleFonts.amiri(
+          titleTextStyle: _font(_activeFontFamily,
               fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.navy),
         ),
         bottomNavigationBarTheme: BottomNavigationBarThemeData(
@@ -210,7 +259,7 @@ class AppTheme {
           foregroundColor: AppColors.darkText,
           elevation: 0,
           centerTitle: true,
-          titleTextStyle: GoogleFonts.amiri(
+          titleTextStyle: _font(_activeFontFamily,
               fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.darkText),
         ),
         bottomNavigationBarTheme: BottomNavigationBarThemeData(
