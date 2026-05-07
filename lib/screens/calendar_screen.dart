@@ -666,7 +666,7 @@ class _EventsList extends StatelessWidget {
                     greg = DateTime.now();
                   }
                   return Padding(
-                    padding: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.only(bottom: 10),
                     child: _AgendaCard(
                       event: ev,
                       hijri: hijri,
@@ -1569,14 +1569,18 @@ class _AgendaCard extends StatelessWidget {
     return entry[idx];
   }
 
-  Color get _chipBg => event.isIslamic
-      ? AppColors.greenPale
-      : (event.color.value == AppColors.gold.value
-          ? AppColors.goldPale
-          : event.color.value == AppColors.red.value
-              ? const Color(0xFFFDEAEA)
-              : AppColors.bluePale);
+  /// Pale-tinted background for the round emoji disc, derived from
+  /// the event color so each card hints at its category at a glance.
+  Color get _iconBg {
+    if (event.isIslamic) return AppColors.greenPale;
+    if (event.color.value == AppColors.gold.value) return AppColors.goldPale;
+    if (event.color.value == AppColors.red.value) return const Color(0xFFFDEAEA);
+    if (event.color.value == AppColors.blue.value) return AppColors.bluePale;
+    if (event.color.value == AppColors.navy.value) return AppColors.bg;
+    return AppColors.greenPale;
+  }
 
+  Color get _chipBg => _iconBg;
   Color get _chipFg => event.isIslamic ? AppColors.green : event.color;
 
   @override
@@ -1592,73 +1596,90 @@ class _AgendaCard extends StatelessWidget {
         p: p,
       ),
       child: Container(
+        // Premium card: rounded 18 radius, soft shadow, generous
+        // breathing room. Same visual language as the Islamic events
+        // screen — colored bar on the start edge, pale circular
+        // emoji disc, calm Amiri title + Cairo time, category chip
+        // on the trailing side.
         decoration: BoxDecoration(
           color: surf,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(18),
           boxShadow: [
             BoxShadow(
-                color: Colors.black.withValues(alpha: 0.05), blurRadius: 6),
+              color: Colors.black.withValues(alpha: 0.05),
+              blurRadius: 6,
+            ),
           ],
         ),
         child: IntrinsicHeight(
           child: Row(
             children: [
-              // Leading colored bar — under RTL the start side is the
-              // right edge, which matches the screenshot.
+              // 1. Vertical colored bar — start edge (right in RTL).
               Container(
                 width: 5,
                 decoration: BoxDecoration(
                   color: event.color,
                   borderRadius: const BorderRadiusDirectional.only(
-                    topStart: Radius.circular(14),
-                    bottomStart: Radius.circular(14),
+                    topStart: Radius.circular(18),
+                    bottomStart: Radius.circular(18),
                   ),
                 ),
               ),
-              const SizedBox(width: 12),
+              // 2. Pale circular emoji disc.
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 12, vertical: 12),
+                child: Container(
+                  width: 50,
+                  height: 50,
+                  decoration: BoxDecoration(
+                    color: _iconBg,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Center(
+                    child: Text(
+                      event.emoji.isNotEmpty
+                          ? event.emoji
+                          : (event.isIslamic ? '🕌' : '📅'),
+                      style: const TextStyle(fontSize: 24),
+                    ),
+                  ),
+                ),
+              ),
+              // 3. Centered title (Amiri) + time (Cairo).
               Expanded(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          if (event.emoji.isNotEmpty) ...[
-                            Text(event.emoji,
-                                style: const TextStyle(fontSize: 18)),
-                            const SizedBox(width: 8),
-                          ],
-                          Flexible(
-                            child: Text(
-                              event.title(loc),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: GoogleFonts.cairo(
-                                fontSize: 16,
-                                fontWeight: FontWeight.w700,
-                                color: isDark
-                                    ? AppColors.darkText
-                                    : AppColors.text,
-                              ),
-                            ),
-                          ),
-                        ],
+                      Text(
+                        event.title(loc),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.amiri(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color:
+                              isDark ? AppColors.darkText : AppColors.text,
+                        ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 2),
                       Text(
                         _timeLabel(loc),
                         style: GoogleFonts.cairo(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w600,
-                          color: AppColors.text3,
+                          fontSize: 11,
+                          color: isDark
+                              ? AppColors.darkText3
+                              : AppColors.text3,
                         ),
                       ),
                     ],
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
+              // 4. Category pill on trailing edge.
               Padding(
                 padding: const EdgeInsetsDirectional.only(end: 12),
                 child: Container(
@@ -1672,7 +1693,7 @@ class _AgendaCard extends StatelessWidget {
                     _categoryLabel(loc),
                     style: GoogleFonts.cairo(
                       fontSize: 11,
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.w800,
                       color: _chipFg,
                     ),
                   ),
@@ -1904,7 +1925,7 @@ class _AgendaGroup extends StatelessWidget {
           const SizedBox(height: 10),
           ...events.map(
             (ev) => Padding(
-              padding: const EdgeInsets.only(bottom: 8),
+              padding: const EdgeInsets.only(bottom: 10),
               child: _AgendaCard(
                 event: ev,
                 hijri: date,
