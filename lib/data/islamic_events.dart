@@ -12,9 +12,13 @@ import '../theme.dart';
 ///   * yearly       → all of the above false → fires on the
 ///                   (Hijri [day], Hijri [month]) tuple every year.
 ///
-/// Each event has a default hour/minute that the user can override
-/// via [AppProvider.setIslamicEventTime]. The trigger time is the
-/// configured hour/minute on the day the rule matches.
+/// **Reminder vs actual day** — the spec asks for some reminders to
+/// fire the day(s) BEFORE the actual Islamic observance (e.g. Friday
+/// reminder on Thursday, Hijama 17/19/21 reminded on 16/18/20). The
+/// fields above drive scheduling. The `actual*` fields below describe
+/// the real Islamic date used for display in the bank (subtitle line)
+/// and for the next-occurrence pill on the row card. They default to
+/// the reminder fields when not specified.
 class IslamicEventConfig {
   final String id;
   final Map<String, String> names;
@@ -35,6 +39,12 @@ class IslamicEventConfig {
   /// Sunday & Wednesday). Uses 1=Mon..7=Sun like [DateTime.weekday].
   final List<int> weekdays;
 
+  // ── Display-only (actual Islamic date) ──────────────────
+  final int? actualDay;
+  final int? actualMonth;
+  final List<int> actualMonthlyDays;
+  final List<int> actualWeekdays;
+
   final bool isMonthly;
   final bool isWeekly;
   final bool isDaily;
@@ -50,6 +60,11 @@ class IslamicEventConfig {
   final int defaultHour;
   final int defaultMinute;
 
+  /// Marks the special "zakat" event whose schedule is fully driven
+  /// by user-configured dates (zakatDueDate + 2 reminders) instead
+  /// of repetition rules.
+  final bool isZakat;
+
   const IslamicEventConfig({
     required this.id,
     required this.names,
@@ -59,6 +74,10 @@ class IslamicEventConfig {
     required this.month,
     this.monthlyDays = const <int>[],
     this.weekdays = const <int>[],
+    this.actualDay,
+    this.actualMonth,
+    this.actualMonthlyDays = const <int>[],
+    this.actualWeekdays = const <int>[],
     this.isMonthly = false,
     this.isWeekly = false,
     this.isDaily = false,
@@ -68,11 +87,34 @@ class IslamicEventConfig {
     this.weekday,
     this.defaultHour = 9,
     this.defaultMinute = 0,
+    this.isZakat = false,
   });
 
   String name(String locale) => names[locale] ?? names['ar'] ?? '';
   String desc(String locale) => description[locale] ?? description['ar'] ?? '';
   String virt(String locale) => virtue[locale] ?? virtue['ar'] ?? '';
+
+  // ── Display helpers (read by event_bank) ────────────────
+
+  /// Hijri day(s) of the actual observance for monthly events.
+  List<int> get displayMonthlyDays =>
+      actualMonthlyDays.isNotEmpty
+          ? actualMonthlyDays
+          : (monthlyDays.isNotEmpty ? monthlyDays : <int>[day]);
+
+  /// Weekday(s) of the actual observance for weekly events.
+  List<int> get displayWeekdays =>
+      actualWeekdays.isNotEmpty
+          ? actualWeekdays
+          : (weekdays.isNotEmpty
+              ? weekdays
+              : (weekday != null ? <int>[weekday!] : const <int>[]));
+
+  /// Hijri day of the actual observance for yearly events.
+  int get displayDay => actualDay ?? day;
+
+  /// Hijri month of the actual observance for yearly events.
+  int get displayMonth => actualMonth ?? month;
 
   /// Whether this event fires on the day described by ([hijriDay],
   /// [hijriMonth]) which falls on the Gregorian [greg] date.
@@ -233,6 +275,7 @@ class IslamicEventsData {
       },
       day: 16, month: 0, isMonthly: true,
       monthlyDays: <int>[16, 18, 20],
+      actualMonthlyDays: <int>[17, 19, 21],
       color: AppColors.red, emoji: '🩸', defaultEnabled: false,
       defaultHour: 9, defaultMinute: 0,
     ),
@@ -263,6 +306,7 @@ class IslamicEventsData {
       },
       day: 12, month: 0, isMonthly: true,
       monthlyDays: <int>[12],
+      actualMonthlyDays: <int>[13, 14, 15],
       color: AppColors.gold, emoji: '🌕',
       defaultHour: 9, defaultMinute: 0,
     ),
@@ -293,6 +337,7 @@ class IslamicEventsData {
             'De Abu Qatada: el Profeta ﷺ dijo: «El ayuno del día de Ashura, espero de Alá que expíe los pecados del año anterior.» — Muslim.',
       },
       day: 8, month: 1,
+      actualDay: 10, actualMonth: 1,
       color: AppColors.blue, emoji: '🕯',
       defaultHour: 9, defaultMinute: 0,
     ),
@@ -322,6 +367,7 @@ class IslamicEventsData {
             'De Abu Huraira: el Profeta ﷺ dijo: «Quien ayune Ramadán con fe y buscando la recompensa, le serán perdonados sus pecados pasados. Quien rece de noche en Ramadán con fe y buscando la recompensa, le serán perdonados sus pecados pasados. Y quien rece en la Noche del Decreto con fe y buscando la recompensa, le serán perdonados sus pecados pasados.» — Acordado.',
       },
       day: 28, month: 8,
+      actualDay: 1, actualMonth: 9,
       color: AppColors.green, emoji: '🌙',
       defaultHour: 9, defaultMinute: 0,
     ),
@@ -351,6 +397,7 @@ class IslamicEventsData {
             'De Abu Huraira: el Profeta ﷺ dijo: «El ayunante tiene dos alegrías: cuando rompe su ayuno se alegra de la ruptura, y cuando encuentre a su Señor se alegrará de su ayuno.» — Acordado.',
       },
       day: 28, month: 9,
+      actualDay: 1, actualMonth: 10,
       color: AppColors.green, emoji: '🎉',
       defaultHour: 9, defaultMinute: 0,
     ),
@@ -380,6 +427,7 @@ class IslamicEventsData {
             'De Ibn ‘Abbâs: el Profeta ﷺ dijo: «No hay días en los que la buena obra sea más amada por Alá que estos diez.» Dijeron: ¿Ni siquiera el yihâd en Su sendero? Dijo: «Ni siquiera el yihâd en el sendero de Alá, salvo un hombre que sale con su persona y bienes y no regresa con nada.» — al-Bujari.',
       },
       day: 28, month: 11,
+      actualDay: 1, actualMonth: 12,
       color: AppColors.gold, emoji: '📅',
       defaultHour: 9, defaultMinute: 0,
     ),
@@ -409,6 +457,7 @@ class IslamicEventsData {
             'De Abu Qatada: el Profeta ﷺ fue preguntado sobre el ayuno del día de Arafat y dijo: «Expía los pecados del año pasado y del próximo.» — Muslim.',
       },
       day: 8, month: 12,
+      actualDay: 9, actualMonth: 12,
       color: AppColors.gold, emoji: '🏔',
       defaultHour: 9, defaultMinute: 0,
     ),
@@ -438,6 +487,7 @@ class IslamicEventsData {
             'De ‘Â\'isha: el Profeta ﷺ dijo: «Ninguna obra del hijo de Adán, el día del sacrificio, es más amada por Alá que la sangre derramada. El animal vendrá el Día de la Resurrección con sus cuernos, pelos y pezuñas; y la sangre es aceptada por Alá antes de tocar la tierra — alegrad por ello vuestros corazones.» — Tirmidhî e Ibn Mâya.',
       },
       day: 9, month: 12,
+      actualDay: 10, actualMonth: 12,
       color: AppColors.green, emoji: '🎊',
       defaultHour: 9, defaultMinute: 0,
     ),
@@ -470,6 +520,8 @@ class IslamicEventsData {
       day: 0, month: 0, isWeekly: true,
       // Reminder fires the day BEFORE Friday → Thursday (4).
       weekday: 4, weekdays: <int>[4],
+      // Actual observance: Friday (5).
+      actualWeekdays: <int>[5],
       color: AppColors.green, emoji: '🕌',
       defaultHour: 18, defaultMinute: 0,
     ),
@@ -505,8 +557,46 @@ class IslamicEventsData {
       day: 0, month: 0, isWeekly: true,
       // Reminder fires the day BEFORE → Sunday (7) and Wednesday (3).
       weekday: 7, weekdays: <int>[7, 3],
+      // Actual observance: Monday (1) and Thursday (4).
+      actualWeekdays: <int>[1, 4],
       color: AppColors.blue, emoji: '🤲', defaultEnabled: false,
       defaultHour: 19, defaultMinute: 0,
+    ),
+
+    // ── ZAKAT (user-configured annual event) ───────────────
+    IslamicEventConfig(
+      id: 'zakat',
+      names: {
+        'ar': 'الزكاة',
+        'fr': 'Zakat',
+        'en': 'Zakat',
+        'es': 'Zakat',
+      },
+      description: {
+        'ar':
+            'الزكاة ركن من أركان الإسلام الخمسة، وهي الفريضة المالية التي شرعها الله تعالى لتطهير المال وتزكية النفوس وسدّ حاجة الفقراء والمساكين. وتجب على كل مسلم بالغ عاقل ملك نصاباً وحال عليه الحول، وهي بنسبة ربع العشر (2.5%) من المال. اضبط في هذا التطبيق تاريخ استحقاق زكاتك السنوي وتذكيرين قبله ليصلك الإشعار في الوقت المناسب.',
+        'fr':
+            "La Zakât est l'un des cinq piliers de l'Islam: une obligation financière prescrite par Allah pour purifier la richesse et l'âme et subvenir aux besoins des pauvres. Elle est due par tout musulman pubère et sain d'esprit dont la richesse atteint le nisâb et a passé une année lunaire complète, à hauteur de 2,5%. Configurez dans cette application la date d'échéance annuelle de votre Zakât ainsi que deux rappels qui précéderont l'échéance.",
+        'en':
+            'Zakât is one of the five pillars of Islam: a divinely-ordained financial obligation that purifies wealth and the soul and meets the needs of the poor. It is due on every adult sane Muslim whose wealth reaches the nisâb and has been held for one lunar year, at the rate of 2.5%. Configure in this app your annual Zakât due date and two preceding reminders so the notification reaches you on time.',
+        'es':
+            'La Zakat es uno de los cinco pilares del Islam: una obligación financiera ordenada por Alá para purificar la riqueza y el alma y atender las necesidades de los pobres. La debe todo musulmán adulto y cuerdo cuya riqueza alcance el nisâb y haya pasado un año lunar, al 2,5%. Configura en esta aplicación la fecha de vencimiento anual de tu Zakat y dos recordatorios previos para que la notificación llegue a tiempo.',
+      },
+      virtue: {
+        'ar':
+            'قال الله تعالى: «خُذْ مِنْ أَمْوَالِهِمْ صَدَقَةً تُطَهِّرُهُمْ وَتُزَكِّيهِم بِهَا وَصَلِّ عَلَيْهِمْ ۖ إِنَّ صَلَاتَكَ سَكَنٌ لَّهُمْ» — التوبة 103. وعن ابن عمر رضي الله عنهما أن رسول الله ﷺ قال: «بُني الإسلامُ على خمسٍ: شهادة أن لا إله إلا الله وأن محمدًا رسول الله، وإقام الصلاة، وإيتاء الزكاة، وحجّ البيت، وصوم رمضان» — متفق عليه. ومن منعها عُذّب يوم القيامة كما قال الله تعالى: «وَالَّذِينَ يَكْنِزُونَ الذَّهَبَ وَالْفِضَّةَ وَلَا يُنفِقُونَهَا فِي سَبِيلِ اللَّهِ فَبَشِّرْهُم بِعَذَابٍ أَلِيمٍ» — التوبة 34.',
+        'fr':
+            "Allah le Très-Haut dit: « Prélève de leurs biens une aumône par laquelle tu les purifies et les bénis, et prie pour eux: ta prière est en effet une apaisement pour eux. » (Coran 9:103). Et le Prophète ﷺ a dit: « L'Islam est bâti sur cinq piliers: l'attestation qu'il n'y a de divinité qu'Allah et que Muhammad est le Messager d'Allah, l'accomplissement de la prière, le versement de la Zakât, le pèlerinage à la Maison sacrée et le jeûne de Ramadan. » — Muttafaq ‘alayh. Quiconque la refuse encourt un châtiment douloureux selon le verset: « Ceux qui thésaurisent l'or et l'argent et ne les dépensent pas dans le sentier d'Allah, annonce-leur un châtiment douloureux. » (Coran 9:34).",
+        'en':
+            'Allah says: "Take from their wealth a charity by which you purify them and cause them increase, and invoke blessings upon them; indeed your invocation is reassurance for them." (Qur\'an 9:103). The Prophet ﷺ said: "Islam is built on five pillars: the testimony that there is no god but Allah and Muhammad is the Messenger of Allah, the establishment of prayer, the giving of Zakât, pilgrimage to the House and fasting Ramadan." — Agreed upon. Whoever withholds it earns a painful punishment: "Those who hoard gold and silver and do not spend them in the way of Allah, give them tidings of a painful torment." (Qur\'an 9:34).',
+        'es':
+            'Alá dice: «Toma de sus bienes una limosna con la que los purifiques y los bendigas, y reza por ellos: tu oración es una calma para ellos.» (Corán 9:103). El Profeta ﷺ dijo: «El Islam se construye sobre cinco pilares: el testimonio de que no hay dios sino Alá y que Muhámmad es Su Mensajero, el establecimiento de la oración, el pago del Zakat, la peregrinación a la Casa y el ayuno de Ramadán.» — Acordado. Quien la rehúse merece un castigo doloroso: «Quienes atesoran oro y plata y no los gastan en el camino de Alá, anúnciales un castigo doloroso.» (Corán 9:34).',
+      },
+      day: 0, month: 0,
+      isZakat: true,
+      color: AppColors.gold, emoji: '💰',
+      defaultEnabled: false,
+      defaultHour: 9, defaultMinute: 0,
     ),
   ];
 }

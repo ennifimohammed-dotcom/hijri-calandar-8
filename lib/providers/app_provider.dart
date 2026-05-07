@@ -51,6 +51,11 @@ class AppProvider extends ChangeNotifier {
   /// Missing entries fall back to the cfg's defaultHour/defaultMinute.
   Map<String, TimeOfDay> _islamicEventTimes = {};
 
+  // ── Zakat — user-configured annual due date + 2 reminders ──
+  DateTime? _zakatDueDate;
+  DateTime? _zakatReminder1;
+  DateTime? _zakatReminder2;
+
   NotificationSettings _notificationSettings = const NotificationSettings();
 
   /// Index into [kAccentPalette] (theme.dart). Default 0 = green.
@@ -384,6 +389,32 @@ class AppProvider extends ChangeNotifier {
     await _scheduleIslamicNotifications();
   }
 
+  // ── Zakat dates ─────────────────────────────────────────
+  DateTime? get zakatDueDate => _zakatDueDate;
+  DateTime? get zakatReminder1 => _zakatReminder1;
+  DateTime? get zakatReminder2 => _zakatReminder2;
+
+  Future<void> setZakatDueDate(DateTime? value) async {
+    _zakatDueDate = value;
+    await _savePrefs();
+    notifyListeners();
+    await _scheduleIslamicNotifications();
+  }
+
+  Future<void> setZakatReminder1(DateTime? value) async {
+    _zakatReminder1 = value;
+    await _savePrefs();
+    notifyListeners();
+    await _scheduleIslamicNotifications();
+  }
+
+  Future<void> setZakatReminder2(DateTime? value) async {
+    _zakatReminder2 = value;
+    await _savePrefs();
+    notifyListeners();
+    await _scheduleIslamicNotifications();
+  }
+
   void toggleIslamicEvent(String id, bool value) {
     _islamicEventsEnabled[id] = value;
     _savePrefs();
@@ -415,6 +446,7 @@ class AppProvider extends ChangeNotifier {
             HijriDate.fromGregorian(greg.subtract(Duration(days: hijriDayOffset)));
         for (final cfg in IslamicEventsData.events) {
           if (_islamicEventsEnabled[cfg.id] != true) continue;
+          if (cfg.isZakat) continue; // handled separately below
           if (!cfg.matchesDay(
             hijriDay: hShifted.hDay,
             hijriMonth: hShifted.hMonth,
@@ -437,9 +469,38 @@ class AppProvider extends ChangeNotifier {
           );
         }
       }
+      await _scheduleZakatNotifications();
     } catch (e) {
       debugPrint('_scheduleIslamicNotifications error: $e');
     }
+  }
+
+  /// Schedules the three zakat notifications (due date + 2 reminders).
+  /// Each fires only if it's still in the future and the zakat event
+  /// is enabled.
+  Future<void> _scheduleZakatNotifications() async {
+    if (_islamicEventsEnabled['zakat'] != true) return;
+    final cfg = IslamicEventsData.events
+        .firstWhere((e) => e.id == 'zakat', orElse: () => IslamicEventsData.events.first);
+    final now = DateTime.now();
+    final body = '${cfg.desc(_locale)}\n\n${cfg.virt(_locale)}';
+
+    Future<void> scheduleOne(DateTime? when, String suffix) async {
+      if (when == null) return;
+      if (!when.isAfter(now)) return;
+      // Far-future scheduling is fine — the OS keeps the alarm.
+      await _notifs.scheduleIslamicReminder(
+        eventId: 'zakat_$suffix',
+        date: when,
+        title: '${cfg.emoji}  ${cfg.name(_locale)}',
+        body: body,
+        scheduledDate: when,
+      );
+    }
+
+    await scheduleOne(_zakatDueDate, 'due');
+    await scheduleOne(_zakatReminder1, 'r1');
+    await scheduleOne(_zakatReminder2, 'r2');
   }
 
   // ── Search ────────────────────────────────────────────────
@@ -608,6 +669,22 @@ class AppProvider extends ChangeNotifier {
         for (final e in _islamicEventTimes.entries)
           e.key: '${e.value.hour}:${e.value.minute}',
       }));
+      // Zakat — three nullable DateTimes stored as ISO-8601 strings.
+      if (_zakatDueDate != null) {
+        await prefs.setString('zakat_due', _zakatDueDate!.toIso8601String());
+      } else {
+        await prefs.remove('zakat_due');
+      }
+      if (_zakatReminder1 != null) {
+        await prefs.setString('zakat_r1', _zakatReminder1!.toIso8601String());
+      } else {
+        await prefs.remove('zakat_r1');
+      }
+      if (_zakatReminder2 != null) {
+        await prefs.setString('zakat_r2', _zakatReminder2!.toIso8601String());
+      } else {
+        await prefs.remove('zakat_r2');
+      }
     } catch (e) {
       debugPrint('_savePrefs error: $e');
     }
@@ -655,6 +732,14 @@ class AppProvider extends ChangeNotifier {
           }
         }
       }
+      DateTime? readDate(String key) {
+        final s = prefs.getString(key);
+        if (s == null || s.isEmpty) return null;
+        return DateTime.tryParse(s);
+      }
+      _zakatDueDate = readDate('zakat_due');
+      _zakatReminder1 = readDate('zakat_r1');
+      _zakatReminder2 = readDate('zakat_r2');
       final ietJson = prefs.getString('islamic_event_times');
       if (ietJson != null && ietJson.isNotEmpty) {
         final saved = Map<String, dynamic>.from(jsonDecode(ietJson) as Map);

@@ -60,8 +60,18 @@ class _BankHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = isDark ? AppColors.darkSurface : AppColors.navy;
+    // Header tracks the active accent (AppColors.green is the runtime
+    // accent backed by AccentBus); dark mode keeps the deeper surface.
+    final bg = isDark ? AppColors.darkSurface : AppColors.green;
     final loc = p.locale;
+    final title = loc == 'ar' ? 'فضائل إسلامية'
+        : loc == 'es' ? 'Virtudes islámicas'
+        : loc == 'en' ? 'Islamic Virtues'
+        : 'Vertus islamiques';
+    final subtitle = loc == 'ar' ? 'مجموعة من الأذكار والأيام والمواسم المباركة'
+        : loc == 'es' ? 'Recolección de adhkâr, días y temporadas bendecidas'
+        : loc == 'en' ? 'A collection of adhkâr, blessed days and seasons'
+        : "Recueil d'adhkâr, jours et saisons bénis";
     return Container(
       color: bg,
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
@@ -73,13 +83,11 @@ class _BankHeader extends StatelessWidget {
               Expanded(child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(p.label('islamic_events_bank'),
+                  Text(title,
                     style: GoogleFonts.amiri(fontSize: 20,
                         fontWeight: FontWeight.bold, color: Colors.white)),
-                  Text(loc == 'fr' ? "Banque d'événements islamiques"
-                      : loc == 'en' ? 'Islamic Events Bank'
-                      : "Banque d'événements islamiques",
-                    style: GoogleFonts.cairo(fontSize: 10, color: Colors.white54)),
+                  Text(subtitle,
+                    style: GoogleFonts.cairo(fontSize: 10, color: Colors.white70)),
                 ],
               )),
               const Text('🕌', style: TextStyle(fontSize: 26)),
@@ -171,37 +179,50 @@ class _BankList extends StatelessWidget {
   Widget build(BuildContext context) {
     final loc = p.locale;
     final daily   = filtered(IslamicEventsData.events.where((e) => e.isDaily).toList());
+    final weekly  = filtered(IslamicEventsData.events.where((e) => e.isWeekly).toList());
     final monthly = filtered(IslamicEventsData.events.where((e) => e.isMonthly).toList());
     final annual  = filtered(IslamicEventsData.events.where(
         (e) => !e.isDaily && !e.isMonthly && !e.isWeekly).toList());
-    final weekly  = filtered(IslamicEventsData.events.where((e) => e.isWeekly).toList());
 
+    // Section order per spec: Daily → Weekly → Monthly → Annual.
     return ListView(
       padding: const EdgeInsets.only(bottom: 100),
       children: [
         if (daily.isNotEmpty) ...[
           _SectionDivider(
-            label: loc == 'ar' ? 'يومي' : loc == 'fr' ? 'Quotidien' : 'Daily',
+            label: loc == 'ar' ? 'يومي'
+                : loc == 'es' ? 'Diario'
+                : loc == 'en' ? 'Daily'
+                : 'Quotidien',
             icon: '🌅', isDark: isDark),
           ...daily.map((e) => _EventRow(cfg: e, p: p, isDark: isDark)),
         ],
+        if (weekly.isNotEmpty) ...[
+          _SectionDivider(
+            label: loc == 'ar' ? 'أسبوعي'
+                : loc == 'es' ? 'Semanal'
+                : loc == 'en' ? 'Weekly'
+                : 'Hebdomadaire',
+            icon: '📿', isDark: isDark),
+          ...weekly.map((e) => _EventRow(cfg: e, p: p, isDark: isDark)),
+        ],
         if (monthly.isNotEmpty) ...[
           _SectionDivider(
-            label: loc == 'ar' ? 'شهري' : loc == 'fr' ? 'Mensuel' : 'Monthly',
+            label: loc == 'ar' ? 'شهري'
+                : loc == 'es' ? 'Mensual'
+                : loc == 'en' ? 'Monthly'
+                : 'Mensuel',
             icon: '📅', isDark: isDark),
           ...monthly.map((e) => _EventRow(cfg: e, p: p, isDark: isDark)),
         ],
         if (annual.isNotEmpty) ...[
           _SectionDivider(
-            label: loc == 'ar' ? 'سنوي' : loc == 'fr' ? 'Annuel' : 'Annual',
+            label: loc == 'ar' ? 'سنوي'
+                : loc == 'es' ? 'Anual'
+                : loc == 'en' ? 'Annual'
+                : 'Annuel',
             icon: '🌙', isDark: isDark),
           ...annual.map((e) => _EventRow(cfg: e, p: p, isDark: isDark)),
-        ],
-        if (weekly.isNotEmpty) ...[
-          _SectionDivider(
-            label: loc == 'ar' ? 'أسبوعي' : loc == 'fr' ? 'Hebdomadaire' : 'Weekly',
-            icon: '📿', isDark: isDark),
-          ...weekly.map((e) => _EventRow(cfg: e, p: p, isDark: isDark)),
         ],
       ],
     );
@@ -249,103 +270,176 @@ class _EventRow extends StatelessWidget {
     return AppColors.greenPale;
   }
 
-  int? _daysUntil() {
+  /// Days until the next ACTUAL occurrence of this event (uses the
+  /// `actual*` fields, not the reminder fields).
+  int? _daysUntilActual() {
     try {
       final today = HijriDate.now();
       final todayG = today.toGregorian();
-      // For monthly events, find next occurrence
-      if (cfg.isMonthly) {
-        int targetDay = cfg.day;
-        // For Ayyam Al-Bid, show days until 13th
-        if (cfg.id == 'ayyam_albid') targetDay = 13;
-        if (cfg.id == 'hijama') targetDay = 17;
-        final g = HijriDate.hijriToGregorian(today.hYear, today.hMonth, targetDay);
-        final diff = g.difference(todayG).inDays;
-        if (diff < 0) {
-          final next = HijriDate(today.hYear, today.hMonth + 1, targetDay);
-          final gNext = next.toGregorian();
-          return gNext.difference(todayG).inDays;
+      if (cfg.isDaily) return 0;
+      if (cfg.isWeekly) {
+        final wds = cfg.displayWeekdays;
+        if (wds.isEmpty) return null;
+        for (var i = 0; i <= 7; i++) {
+          final candidate = todayG.add(Duration(days: i));
+          if (wds.contains(candidate.weekday)) return i;
         }
-        return diff;
       }
-      // Annual
-      if (!cfg.isWeekly && !cfg.isDaily && cfg.month > 0) {
+      if (cfg.isMonthly) {
+        final days = cfg.displayMonthlyDays;
+        if (days.isEmpty) return null;
+        // Smallest day >= today.hDay in the current month, else first
+        // day in the next month.
+        final upcoming = days.where((d) => d >= today.hDay).toList()..sort();
+        if (upcoming.isNotEmpty) {
+          final target = upcoming.first;
+          final g = HijriDate.hijriToGregorian(today.hYear, today.hMonth, target);
+          return g.difference(todayG).inDays;
+        }
+        final firstNext = days.reduce((a, b) => a < b ? a : b);
+        final g = HijriDate(today.hYear, today.hMonth + 1, firstNext).toGregorian();
+        return g.difference(todayG).inDays;
+      }
+      // Yearly — uses displayMonth + displayDay (the actual observance).
+      if (cfg.displayMonth > 0) {
         var targetYear = today.hYear;
-        var g = HijriDate.hijriToGregorian(targetYear, cfg.month, cfg.day);
+        var g = HijriDate.hijriToGregorian(targetYear, cfg.displayMonth, cfg.displayDay);
         if (g.isBefore(todayG)) {
-          g = HijriDate.hijriToGregorian(targetYear + 1, cfg.month, cfg.day);
+          g = HijriDate.hijriToGregorian(targetYear + 1, cfg.displayMonth, cfg.displayDay);
         }
         final diff = g.difference(todayG).inDays;
-        return diff <= 30 ? diff : null;
+        return diff <= 60 ? diff : null;
       }
     } catch (_) {}
     return null;
+  }
+
+  /// "اليوم" / "غدا" / "بعد X يوم" pill text.
+  String? _statusPillText(String loc) {
+    final d = _daysUntilActual();
+    if (d == null) return null;
+    if (d == 0) {
+      return loc == 'ar' ? 'اليوم'
+          : loc == 'es' ? 'Hoy'
+          : loc == 'en' ? 'Today'
+          : "Auj.";
+    }
+    if (d == 1) {
+      return loc == 'ar' ? 'غداً'
+          : loc == 'es' ? 'Mañana'
+          : loc == 'en' ? 'Tomorrow'
+          : 'Demain';
+    }
+    if (d > 30) return null;
+    return loc == 'ar' ? 'بعد $d يوم'
+        : loc == 'es' ? 'En $d d'
+        : loc == 'en' ? 'In $d d'
+        : 'Dans $d j';
   }
 
   @override
   Widget build(BuildContext context) {
     final enabled = p.islamicEventsEnabled[cfg.id] ?? cfg.defaultEnabled;
     final surf = isDark ? AppColors.darkSurface : AppColors.white;
-    final daysUntil = _daysUntil();
+    final pillText = _statusPillText(p.locale);
 
     return GestureDetector(
       onTap: () => _showDetailSheet(context),
       child: Opacity(
-        opacity: enabled ? 1.0 : 0.5,
+        opacity: enabled ? 1.0 : 0.55,
         child: Container(
-          margin: const EdgeInsets.fromLTRB(12, 0, 12, 6),
+          margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
           decoration: BoxDecoration(
             color: surf,
-            borderRadius: BorderRadius.circular(14),
-            boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04), blurRadius: 4)],
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.05), blurRadius: 6),
+            ],
           ),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: IntrinsicHeight(
             child: Row(
               children: [
-                // Icon
+                // Colored leading bar — RTL: right edge of card.
                 Container(
-                  width: 40, height: 40,
+                  width: 5,
                   decoration: BoxDecoration(
-                      color: _iconBg, borderRadius: BorderRadius.circular(12)),
-                  child: Center(child: Text(cfg.emoji,
-                      style: const TextStyle(fontSize: 18))),
-                ),
-                const SizedBox(width: 12),
-                // Info
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(cfg.name(p.locale),
-                        style: GoogleFonts.cairo(fontSize: 12, fontWeight: FontWeight.w700,
-                            color: isDark ? AppColors.darkText : AppColors.text)),
-                      Text(_subtitle(),
-                        style: GoogleFonts.cairo(fontSize: 9, color: AppColors.text3)),
-                    ],
+                    color: cfg.color,
+                    borderRadius: const BorderRadiusDirectional.only(
+                      topStart: Radius.circular(18),
+                      bottomStart: Radius.circular(18),
+                    ),
                   ),
                 ),
-                // Days-until badge
-                if (daysUntil != null && daysUntil <= 30) ...[
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 12),
+                  child: Container(
+                    width: 50, height: 50,
                     decoration: BoxDecoration(
-                      color: daysUntil <= 3 ? AppColors.goldPale : AppColors.greenPale,
+                        color: _iconBg, shape: BoxShape.circle),
+                    child: Center(
+                      child: Text(cfg.emoji,
+                          style: const TextStyle(fontSize: 24)),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Text(
+                          cfg.name(p.locale),
+                          style: GoogleFonts.amiri(
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                            color: isDark ? AppColors.darkText : AppColors.text,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          _subtitle(),
+                          style: GoogleFonts.cairo(
+                            fontSize: 11,
+                            color: isDark
+                                ? AppColors.darkText3
+                                : AppColors.text3,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (pillText != null) ...[
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.greenPale,
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(
-                      daysUntil == 0
-                          ? (p.locale == 'ar' ? 'اليوم' : p.locale == 'fr' ? "Auj." : 'Today')
-                          : (p.locale == 'ar' ? 'بعد $daysUntil' : 'J-$daysUntil'),
-                      style: GoogleFonts.cairo(fontSize: 8, fontWeight: FontWeight.w700,
-                          color: daysUntil <= 3 ? AppColors.gold : AppColors.green)),
+                      pillText,
+                      style: GoogleFonts.cairo(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.green,
+                      ),
+                    ),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 10),
                 ],
-                // Toggle
-                _Toggle(
-                  value: enabled, color: cfg.color,
-                  onChanged: (v) => p.toggleIslamicEvent(cfg.id, v)),
+                Padding(
+                  padding: const EdgeInsetsDirectional.only(end: 12),
+                  child: _Toggle(
+                    value: enabled,
+                    color: AppColors.green,
+                    onChanged: (v) => p.toggleIslamicEvent(cfg.id, v),
+                  ),
+                ),
               ],
             ),
           ),
@@ -356,6 +450,12 @@ class _EventRow extends StatelessWidget {
 
   String _subtitle() {
     final loc = p.locale;
+    if (cfg.isZakat) {
+      return loc == 'ar' ? 'موعد سنوي قابل للضبط'
+          : loc == 'es' ? 'Vencimiento anual configurable'
+          : loc == 'en' ? 'Configurable yearly due date'
+          : "Date d'échéance annuelle configurable";
+    }
     if (cfg.isDaily) {
       return loc == 'ar' ? 'كل يوم'
           : loc == 'es' ? 'Todos los días'
@@ -363,8 +463,8 @@ class _EventRow extends StatelessWidget {
           : 'Tous les jours';
     }
     if (cfg.isWeekly) {
-      // Reminder day(s) of week — driven by cfg.weekdays so the
-      // text stays in sync with the actual scheduling rule.
+      // ACTUAL day(s) of the week the observance falls on (e.g.
+      // Friday for jumu'ah even though the reminder fires Thursday).
       const dayNames = <int, List<String>>{
         1: ['الإثنين', 'lundi', 'Monday', 'lunes'],
         2: ['الثلاثاء', 'mardi', 'Tuesday', 'martes'],
@@ -374,9 +474,7 @@ class _EventRow extends StatelessWidget {
         6: ['السبت', 'samedi', 'Saturday', 'sábado'],
         7: ['الأحد', 'dimanche', 'Sunday', 'domingo'],
       };
-      final wds = cfg.weekdays.isNotEmpty
-          ? cfg.weekdays
-          : (cfg.weekday != null ? [cfg.weekday!] : const <int>[]);
+      final wds = cfg.displayWeekdays;
       final idx = loc == 'ar' ? 0 : loc == 'fr' ? 1 : loc == 'en' ? 2 : 3;
       final names = wds.map((d) => dayNames[d]?[idx] ?? '').toList();
       final joiner = loc == 'ar' ? ' و '
@@ -390,19 +488,18 @@ class _EventRow extends StatelessWidget {
       return '$eachPrefix${names.join(joiner)}';
     }
     if (cfg.isMonthly) {
-      // Use the canonical monthlyDays list — Western digits only
-      // per the global text-format rule.
-      final days = cfg.monthlyDays.isNotEmpty ? cfg.monthlyDays : [cfg.day];
-      final joined = days.join(' · ');
-      return loc == 'ar' ? '$joined كل شهر'
-          : loc == 'es' ? '$joined cada mes'
-          : loc == 'en' ? '$joined each month'
-          : '$joined chaque mois';
+      // ACTUAL Hijri days of the observance — e.g. 17/19/21 for
+      // hijama, 13/14/15 for ayyam-al-bid.
+      final days = cfg.displayMonthlyDays;
+      final joined = days.join(' - ');
+      return loc == 'ar' ? '$joined من كل شهر هجري'
+          : loc == 'es' ? '$joined de cada mes hégira'
+          : loc == 'en' ? '$joined of every Hijri month'
+          : '$joined de chaque mois hégirien';
     }
-    // Annual: reuse the canonical month list from the provider so
-    // spellings stay consistent across the whole app.
-    if (cfg.month > 0 && cfg.month <= 12) {
-      return '${cfg.day} ${p.getHijriMonthName(cfg.month, loc)}';
+    // Annual — actual day + canonical Hijri month name.
+    if (cfg.displayMonth > 0 && cfg.displayMonth <= 12) {
+      return '${cfg.displayDay} ${p.getHijriMonthName(cfg.displayMonth, loc)}';
     }
     return '';
   }
@@ -500,8 +597,10 @@ class _EventDetailSheetState extends State<_EventDetailSheet> {
               ],
             ),
             const SizedBox(height: 20),
-            // Configurable notification time
-            _TimeRow(p: p, cfg: cfg, isDark: isDark, loc: loc),
+            if (cfg.isZakat)
+              _ZakatConfigBlock(p: p, isDark: isDark, loc: loc)
+            else
+              _TimeRow(p: p, cfg: cfg, isDark: isDark, loc: loc),
             const SizedBox(height: 12),
             // Description
             _InfoBlock(
@@ -709,6 +808,159 @@ class _TimeRow extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// Zakat configuration block — three pickable date+time slots
+// (zakat due date, first reminder, second reminder). Each one
+// opens showDatePicker then showTimePicker; the result is
+// persisted via provider.setZakat* and reschedules notifications.
+// ═══════════════════════════════════════════════════════════
+class _ZakatConfigBlock extends StatelessWidget {
+  final AppProvider p;
+  final bool isDark;
+  final String loc;
+  const _ZakatConfigBlock({
+    required this.p,
+    required this.isDark,
+    required this.loc,
+  });
+
+  String _two(int n) => n.toString().padLeft(2, '0');
+
+  String _formatDate(DateTime d) =>
+      '${d.day}/${_two(d.month)}/${d.year}  ${_two(d.hour)}:${_two(d.minute)}';
+
+  Future<DateTime?> _pick(BuildContext ctx, DateTime? initial) async {
+    final base = initial ?? DateTime.now().add(const Duration(days: 7));
+    final date = await showDatePicker(
+      context: ctx,
+      initialDate: base,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (date == null) return null;
+    final time = await showTimePicker(
+      context: ctx,
+      initialTime: TimeOfDay(hour: base.hour, minute: base.minute),
+    );
+    if (time == null) return null;
+    return DateTime(date.year, date.month, date.day, time.hour, time.minute);
+  }
+
+  Widget _row({
+    required BuildContext context,
+    required String label,
+    required DateTime? value,
+    required ValueChanged<DateTime?> onPicked,
+  }) {
+    final placeholder = loc == 'ar' ? 'انقر للضبط'
+        : loc == 'es' ? 'Toca para configurar'
+        : loc == 'en' ? 'Tap to configure'
+        : 'Touchez pour configurer';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: isDark ? AppColors.darkBg : AppColors.bg,
+        borderRadius: BorderRadius.circular(14),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(14),
+        onTap: () async {
+          final picked = await _pick(context, value);
+          if (picked == null) return;
+          onPicked(picked);
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 36, height: 36,
+                decoration: BoxDecoration(
+                  color: AppColors.greenPale,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(Icons.alarm_rounded,
+                    size: 18, color: AppColors.green),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(label,
+                        style: GoogleFonts.cairo(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: isDark ? AppColors.darkText : AppColors.text,
+                        )),
+                    const SizedBox(height: 2),
+                    Text(
+                      value == null ? placeholder : _formatDate(value),
+                      style: GoogleFonts.cairo(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: value == null
+                            ? AppColors.text3
+                            : AppColors.green,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (value != null)
+                IconButton(
+                  tooltip: loc == 'ar' ? 'حذف' : 'Effacer',
+                  icon: const Icon(Icons.close_rounded,
+                      size: 16, color: AppColors.text3),
+                  onPressed: () => onPicked(null),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final dueLabel = loc == 'ar' ? 'تاريخ استحقاق الزكاة'
+        : loc == 'es' ? 'Fecha de vencimiento de la Zakat'
+        : loc == 'en' ? 'Zakat due date'
+        : "Date d'échéance de la Zakât";
+    final r1Label = loc == 'ar' ? 'التذكير الأول'
+        : loc == 'es' ? 'Primer recordatorio'
+        : loc == 'en' ? 'First reminder'
+        : 'Premier rappel';
+    final r2Label = loc == 'ar' ? 'التذكير الثاني'
+        : loc == 'es' ? 'Segundo recordatorio'
+        : loc == 'en' ? 'Second reminder'
+        : 'Deuxième rappel';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _row(
+          context: context,
+          label: dueLabel,
+          value: p.zakatDueDate,
+          onPicked: p.setZakatDueDate,
+        ),
+        _row(
+          context: context,
+          label: r1Label,
+          value: p.zakatReminder1,
+          onPicked: p.setZakatReminder1,
+        ),
+        _row(
+          context: context,
+          label: r2Label,
+          value: p.zakatReminder2,
+          onPicked: p.setZakatReminder2,
+        ),
+      ],
     );
   }
 }
