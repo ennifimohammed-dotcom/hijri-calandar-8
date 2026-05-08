@@ -622,6 +622,14 @@ class AppProvider extends ChangeNotifier {
     return base.add(Duration(days: hijriDayOffset));
   }
 
+  /// Gregorian → Hijri, applying the region offset (inverse of
+  /// [hijriToGregorian]). Pickers / converters use this to display
+  /// the Hijri date the user actually perceives in their region.
+  HijriDate gregorianToHijri(DateTime g) {
+    final shifted = g.subtract(Duration(days: hijriDayOffset));
+    return HijriDate.fromGregorian(shifted);
+  }
+
   bool isToday(int day, int month, int year) =>
       day == _today.hDay && month == _today.hMonth && year == _today.hYear;
   bool isSelected(int day, int month, int year) {

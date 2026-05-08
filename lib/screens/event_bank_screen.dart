@@ -4,6 +4,7 @@ import '../data/islamic_events.dart';
 import '../providers/app_provider.dart';
 import '../utils/hijri_utils.dart';
 import '../theme.dart';
+import '../widgets/calendar_grid_picker.dart';
 
 class EventBankScreen extends StatefulWidget {
   const EventBankScreen({super.key});
@@ -836,11 +837,13 @@ class _ZakatConfigBlock extends StatelessWidget {
 
   Future<DateTime?> _pick(BuildContext ctx, DateTime? initial) async {
     final base = initial ?? DateTime.now().add(const Duration(days: 7));
-    final date = await showDatePicker(
+    // Hijri-first calendar-grid picker — matches the monthly view.
+    final date = await showCalendarGridPicker(
       context: ctx,
-      initialDate: base,
-      firstDate: DateTime(2020),
-      lastDate: DateTime(2100),
+      initial: base,
+      useHijri: true,
+      locale: loc,
+      provider: p,
     );
     if (date == null) return null;
     final time = await showTimePicker(

@@ -2,12 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:uuid/uuid.dart';
-import '../data/hijri_months.dart';
 import '../models/event_model.dart';
 import '../providers/app_provider.dart';
 import '../utils/hijri_utils.dart';
 import '../utils/text_format.dart';
 import '../theme.dart';
+import '../widgets/calendar_grid_picker.dart';
 
 /// Add / Edit Event screen — Time + Recurrence + Notifications input.
 ///
@@ -56,9 +56,19 @@ class _AddEventScreenState extends State<AddEventScreen> {
   /// `health` / `religious`). Maps to the [AppEvent.category] field.
   String _category = 'personal';
 
-  /// When `true` the start/end date pickers open the Hijri spinner;
-  /// otherwise the standard Gregorian [showDatePicker] is shown.
-  bool _useHijriPicker = false;
+  /// Optional emoji picked from the curated [_kEventEmojis] list.
+  /// Empty string = no emoji. Persisted via [AppEvent.emoji].
+  String _emoji = '';
+
+  /// Date-system used by the start/end pickers. Hijri is the default
+  /// per the app's Islamic-first identity, and the chosen system is
+  /// applied to BOTH the start and the end date inputs. The picker
+  /// stays synchronized with the user's selected region: Hijri month
+  /// names are read from [AppProvider.getHijriMonthName] and the
+  /// Hijri ↔ Gregorian conversions go through the provider's
+  /// [hijriToGregorian] / [hijriDayOffset], so the displayed grid
+  /// matches the monthly calendar view in every region.
+  bool _useHijriPicker = true;
 
   late _EventDraft _draft;
 
@@ -77,6 +87,7 @@ class _AddEventScreenState extends State<AddEventScreen> {
         _color = _kEventColors.first;
       }
       _category = existing.category.isEmpty ? 'personal' : existing.category;
+      _emoji = existing.emoji;
       _draft = _EventDraft.fromExisting(existing);
     } else if (widget.initialStart != null) {
       _draft = _EventDraft.atHour(widget.initialStart!);
@@ -111,29 +122,23 @@ class _AddEventScreenState extends State<AddEventScreen> {
     setState(() => _draft.setEnd(picked));
   }
 
-  /// Picks a date (Hijri or Gregorian per [_useHijriPicker]). When the
-  /// event is timed, an additional time picker is shown afterwards.
+  /// Picks a date (Hijri or Gregorian per [_useHijriPicker]) using
+  /// the calendar-grid dialog — visually and functionally identical
+  /// to the monthly calendar view, region-synchronized via the
+  /// provider, Western digits only. When the event is timed, an
+  /// additional time picker is shown afterwards.
   Future<DateTime?> _pickDateMaybeTime({
     required DateTime initial,
     required String locale,
   }) async {
-    DateTime? date;
-    if (_useHijriPicker) {
-      final picked = await _showHijriDatePicker(
-        context: context,
-        initial: HijriDate.fromGregorian(initial),
-        locale: locale,
-      );
-      if (picked == null) return null;
-      date = HijriDate.hijriToGregorian(picked.hYear, picked.hMonth, picked.hDay);
-    } else {
-      date = await showDatePicker(
-        context: context,
-        initialDate: initial,
-        firstDate: DateTime(1970),
-        lastDate: DateTime(2200),
-      );
-    }
+    final provider = context.read<AppProvider>();
+    final date = await showCalendarGridPicker(
+      context: context,
+      initial: initial,
+      useHijri: _useHijriPicker,
+      locale: locale,
+      provider: provider,
+    );
     if (date == null) return null;
     if (_draft.isAllDay) {
       return DateTime(date.year, date.month, date.day);
@@ -180,10 +185,12 @@ class _AddEventScreenState extends State<AddEventScreen> {
         : _draft.end;
 
     // Hijri reference for the start date (used by Hijri-aware queries
-    // and the Islamic events bank).
+    // and the Islamic events bank). Region-aware: if the user picked
+    // 1 Ramadan in Morocco, persist 1 Ramadan — not the UAQ baseline
+    // shifted by the offset.
     HijriDate? hijri;
     try {
-      hijri = HijriDate.fromGregorian(startStorage);
+      hijri = provider.gregorianToHijri(startStorage);
     } catch (_) {}
 
     final desc = _descCtrl.text.trim();
@@ -212,7 +219,7 @@ class _AddEventScreenState extends State<AddEventScreen> {
       reminders: _draft.reminders,
       type: EventType.personal,
       color: _color,
-      emoji: '',
+      emoji: _emoji,
       category: _category,
       location: '',
       priority: EventPriority.medium,
@@ -351,6 +358,12 @@ class _AddEventScreenState extends State<AddEventScreen> {
               selected: _color,
               locale: locale,
               onSelected: (c) => setState(() => _color = c),
+            ),
+            const SizedBox(height: 12),
+            _EmojiPicker(
+              selected: _emoji,
+              locale: locale,
+              onSelected: (e) => setState(() => _emoji = e),
             ),
             const SizedBox(height: 12),
             _NotificationsSection(
@@ -814,9 +827,136 @@ const List<(String, String, _Tr)> _kCategories = <(String, String, _Tr)>[
   ('family', '👨‍👩‍👧', _Tr.catFamily),
   ('social', '🎉', _Tr.catSocial),
   ('work', '💼', _Tr.catWork),
-  ('health', '🏥', _Tr.catHealth),
+  // Health: previously '🏥' (hospital — typically rendered with a
+  // red cross by major fonts which clashes with the app's Islamic
+  // identity). Replaced with '🌿' (a neutral leaf, in line with the
+  // app's overall visual language).
+  ('health', '🌿', _Tr.catHealth),
   ('religious', '🕌', _Tr.catReligious),
 ];
+
+// ─── Curated event-emoji palette ────────────────────────────────────
+//
+// Hand-picked to keep with the app's Islamic identity: nothing tied
+// to alcohol, gambling, music idols, faces of figural worship,
+// astrology, or other contested symbolism. The list deliberately
+// avoids: 🍷 🍺 🎰 🎴 ✝️ ☪️ (kept inside _kCategories where it
+// already maps to "religious"), 🏥 (cross-bearing hospital), 🎶,
+// 🎤, 🎻, 🥂, 💍 (often seen as wedding-ring iconography).
+//
+// Five rows × ~8 columns covering the common life domains the app
+// already supports through categories: spiritual, family, study,
+// work, travel, food (halal-neutral), nature, time.
+const List<String> _kEventEmojis = <String>[
+  // Spiritual / acts of worship
+  '🕌', '🕋', '📿', '🤲', '📖', '🌙', '⭐', '✨',
+  // Family & people
+  '👤', '👨‍👩‍👧', '👶', '🤝', '💌', '🌷', '🌻', '🌼',
+  // Study & work
+  '📚', '🖋', '📝', '🎓', '💼', '📊', '🧮', '💡',
+  // Travel, places, time
+  '✈️', '🧳', '🗺', '🧭', '📍', '⏰', '🗓', '⏳',
+  // Food (halal-neutral) & home
+  '🍵', '☕', '🍽', '🍯', '🌿', '🌳', '🏠', '🛏',
+];
+
+class _EmojiPicker extends StatelessWidget {
+  final String selected;
+  final String locale;
+  final ValueChanged<String> onSelected;
+  const _EmojiPicker({
+    required this.selected,
+    required this.locale,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _Card(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.emoji_emotions_outlined,
+                  size: 20, color: AppColors.text3),
+              const SizedBox(width: 12),
+              Text(
+                _Tr.emoji.value(locale),
+                style: appFont(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.text,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              // "None" option to clear the chosen emoji.
+              GestureDetector(
+                onTap: () => onSelected(''),
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 150),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: selected.isEmpty
+                        ? AppColors.green
+                        : Colors.transparent,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                      color: selected.isEmpty
+                          ? AppColors.green
+                          : AppColors.border,
+                    ),
+                  ),
+                  child: Text(
+                    _Tr.emojiNone.value(locale),
+                    style: appFont(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: selected.isEmpty
+                          ? Colors.white
+                          : AppColors.text2,
+                    ),
+                  ),
+                ),
+              ),
+              for (final e in _kEventEmojis)
+                GestureDetector(
+                  onTap: () => onSelected(e),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: e == selected
+                          ? AppColors.greenPale
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(
+                        color: e == selected
+                            ? AppColors.green
+                            : AppColors.border,
+                      ),
+                    ),
+                    child: Center(
+                      child: Text(e,
+                          style: const TextStyle(fontSize: 20)),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _CategoryPicker extends StatelessWidget {
   final String selected;
@@ -914,13 +1054,16 @@ class _TimeSection extends StatelessWidget {
     required this.onEndTap,
   });
 
-  String _format(DateTime d) {
+  String _format(BuildContext context, DateTime d) {
     if (useHijriPicker) {
-      // Hijri rendering — month name from kHijriMonths (canonical),
-      // digits forced Western per the global text-format rule.
-      final h = HijriDate.fromGregorian(d);
+      // Region-aware Hijri rendering: route the conversion through
+      // the provider so the displayed Hijri label matches what the
+      // calendar grid showed for the same instant in the user's
+      // currently-selected region.
+      final p = Provider.of<AppProvider>(context, listen: false);
+      final h = p.gregorianToHijri(d);
       final hijri = TextFormat.toWesternDigits(
-        '${h.hDay} ${hijriMonthName(h.hMonth, locale)} ${h.hYear}',
+        '${h.hDay} ${p.getHijriMonthName(h.hMonth, locale)} ${h.hYear}',
       );
       if (draft.isAllDay) return hijri;
       String two(int n) => n.toString().padLeft(2, '0');
@@ -1023,13 +1166,13 @@ class _TimeSection extends StatelessWidget {
           const Divider(height: 1, color: AppColors.border, indent: 14),
           _TimeRow(
             label: _Tr.start.value(locale),
-            value: _format(draft.start),
+            value: _format(context, draft.start),
             onTap: onStartTap,
           ),
           const Divider(height: 1, color: AppColors.border, indent: 14),
           _TimeRow(
             label: _Tr.end.value(locale),
-            value: _format(draft.end),
+            value: _format(context, draft.end),
             onTap: onEndTap,
             last: true,
           ),
@@ -1407,218 +1550,6 @@ class _CalendarSystemToggle extends StatelessWidget {
   }
 }
 
-// ─── Hijri date picker dialog ───────────────────────────────────────
-
-Future<HijriDate?> _showHijriDatePicker({
-  required BuildContext context,
-  required HijriDate initial,
-  required String locale,
-}) {
-  return showDialog<HijriDate>(
-    context: context,
-    barrierDismissible: true,
-    builder: (_) => _HijriDatePickerDialog(initial: initial, locale: locale),
-  );
-}
-
-class _HijriDatePickerDialog extends StatefulWidget {
-  final HijriDate initial;
-  final String locale;
-  const _HijriDatePickerDialog({required this.initial, required this.locale});
-
-  @override
-  State<_HijriDatePickerDialog> createState() => _HijriDatePickerDialogState();
-}
-
-class _HijriDatePickerDialogState extends State<_HijriDatePickerDialog> {
-  late int _year;
-  late int _month;
-  late int _day;
-
-  @override
-  void initState() {
-    super.initState();
-    _year = widget.initial.hYear;
-    _month = widget.initial.hMonth;
-    _day = widget.initial.hDay;
-  }
-
-  void _setMonth(int m) {
-    setState(() {
-      // wrap year if month rolls over
-      if (m < 1) {
-        _month = 12;
-        _year -= 1;
-      } else if (m > 12) {
-        _month = 1;
-        _year += 1;
-      } else {
-        _month = m;
-      }
-      _day = _day.clamp(1, HijriDate.daysInMonth(_year, _month));
-    });
-  }
-
-  void _setYear(int y) {
-    setState(() {
-      _year = y.clamp(1300, 1700);
-      _day = _day.clamp(1, HijriDate.daysInMonth(_year, _month));
-    });
-  }
-
-  void _setDay(int d) {
-    final max = HijriDate.daysInMonth(_year, _month);
-    setState(() {
-      if (d < 1) {
-        d = max;
-      } else if (d > max) {
-        d = 1;
-      }
-      _day = d;
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final loc = widget.locale;
-    return Dialog(
-      backgroundColor: AppColors.white,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              _Tr.hijriDateTitle.value(loc),
-              style: appFont(
-                fontSize: 14,
-                fontWeight: FontWeight.w800,
-                color: AppColors.text,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-              children: [
-                _Spinner(
-                  label: _Tr.hijriDay.value(loc),
-                  value: TextFormat.toWesternDigits('$_day'),
-                  onUp: () => _setDay(_day + 1),
-                  onDown: () => _setDay(_day - 1),
-                ),
-                _Spinner(
-                  label: _Tr.hijriMonth.value(loc),
-                  value: hijriMonthName(_month, loc),
-                  big: true,
-                  onUp: () => _setMonth(_month + 1),
-                  onDown: () => _setMonth(_month - 1),
-                ),
-                _Spinner(
-                  label: _Tr.hijriYear.value(loc),
-                  value: TextFormat.toWesternDigits('$_year'),
-                  onUp: () => _setYear(_year + 1),
-                  onDown: () => _setYear(_year - 1),
-                ),
-              ],
-            ),
-            const SizedBox(height: 18),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: Text(
-                    _Tr.cancel.value(loc),
-                    style: appFont(
-                      color: AppColors.text2,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.green,
-                    foregroundColor: Colors.white,
-                    elevation: 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10),
-                    ),
-                  ),
-                  onPressed: () => Navigator.pop(
-                    context,
-                    HijriDate(_year, _month, _day),
-                  ),
-                  child: Text(
-                    _Tr.ok.value(loc),
-                    style: appFont(fontWeight: FontWeight.w800),
-                  ),
-                ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _Spinner extends StatelessWidget {
-  final String label;
-  final String value;
-  final bool big;
-  final VoidCallback onUp;
-  final VoidCallback onDown;
-  const _Spinner({
-    required this.label,
-    required this.value,
-    required this.onUp,
-    required this.onDown,
-    this.big = false,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(
-          label,
-          style: appFont(
-            fontSize: 10,
-            fontWeight: FontWeight.w700,
-            color: AppColors.text3,
-          ),
-        ),
-        const SizedBox(height: 4),
-        IconButton(
-          icon: Icon(Icons.keyboard_arrow_up_rounded,
-              color: AppColors.green, size: 26),
-          onPressed: onUp,
-        ),
-        SizedBox(
-          width: big ? 110 : 60,
-          child: Text(
-            value,
-            textAlign: TextAlign.center,
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-            style: appFont(
-              fontSize: big ? 16 : 18,
-              fontWeight: FontWeight.bold,
-              color: AppColors.navy,
-            ),
-          ),
-        ),
-        IconButton(
-          icon: Icon(Icons.keyboard_arrow_down_rounded,
-              color: AppColors.green, size: 26),
-          onPressed: onDown,
-        ),
-      ],
-    );
-  }
-}
 
 class _NotificationsSection extends StatelessWidget {
   final _EventDraft draft;
@@ -1878,10 +1809,52 @@ class _AddReminderSheet extends StatelessWidget {
             child: ListView.separated(
               shrinkWrap: true,
               padding: EdgeInsets.zero,
-              itemCount: entries.length,
+              // +1 for the trailing "Custom…" entry that opens the
+              // user-configurable builder.
+              itemCount: entries.length + 1,
               separatorBuilder: (_, __) =>
                   const Divider(height: 1, color: AppColors.border),
               itemBuilder: (_, i) {
+                if (i == entries.length) {
+                  return InkWell(
+                    onTap: () async {
+                      final picked = await showDialog<EventReminder>(
+                        context: context,
+                        builder: (_) => _CustomReminderDialog(
+                          isAllDay: isAllDay,
+                          locale: locale,
+                          idGenerator: idGenerator,
+                        ),
+                      );
+                      if (picked != null && context.mounted) {
+                        Navigator.of(context).pop(picked);
+                      }
+                    },
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 20, vertical: 14),
+                      child: Row(
+                        children: [
+                          Icon(Icons.tune_rounded,
+                              color: AppColors.green, size: 18),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              _Tr.customReminder.value(locale),
+                              style: appFont(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                                color: AppColors.green,
+                              ),
+                            ),
+                          ),
+                          Icon(Icons.chevron_right_rounded,
+                              color: AppColors.green, size: 20),
+                        ],
+                      ),
+                    ),
+                  );
+                }
                 final (reminder, label) = entries[i];
                 return InkWell(
                   onTap: () => Navigator.of(context).pop(reminder),
@@ -1914,6 +1887,304 @@ class _AddReminderSheet extends StatelessWidget {
           ),
           const SizedBox(height: 8),
         ],
+      ),
+    );
+  }
+}
+
+// ─── Custom reminder builder ───────────────────────────────────────
+//
+// Lets the user dial in:
+//   • amount   — 1..999 stepper
+//   • unit     — minutes / hours / days / weeks
+//   • at time  — only available when the unit is days or weeks
+//                (matches Google Calendar's all-day reminder model
+//                where a reminder fires at a chosen time-of-day on
+//                a specific day-offset). For minutes/hours the
+//                trigger is purely relative to the event start.
+//
+// Output mapping into the existing [EventReminder] model:
+//   • minutes → EventReminder.relative(minutesBefore: amount)
+//   • hours   → EventReminder.relative(minutesBefore: amount * 60)
+//   • days    → EventReminder.fixed(daysBefore: amount,
+//                                   hour, minute)
+//   • weeks   → EventReminder.fixed(daysBefore: amount * 7,
+//                                   hour, minute)
+class _CustomReminderDialog extends StatefulWidget {
+  final bool isAllDay;
+  final String locale;
+  final String Function() idGenerator;
+  const _CustomReminderDialog({
+    required this.isAllDay,
+    required this.locale,
+    required this.idGenerator,
+  });
+
+  @override
+  State<_CustomReminderDialog> createState() => _CustomReminderDialogState();
+}
+
+enum _CustomUnit { minutes, hours, days, weeks }
+
+class _CustomReminderDialogState extends State<_CustomReminderDialog> {
+  int _amount = 15;
+  _CustomUnit _unit = _CustomUnit.minutes;
+  TimeOfDay _time = const TimeOfDay(hour: 9, minute: 0);
+
+  bool get _supportsTime =>
+      _unit == _CustomUnit.days || _unit == _CustomUnit.weeks;
+
+  void _setAmount(int v) {
+    setState(() => _amount = v.clamp(1, 999));
+  }
+
+  Future<void> _pickTime() async {
+    final picked = await showTimePicker(
+      context: context,
+      initialTime: _time,
+    );
+    if (picked != null) setState(() => _time = picked);
+  }
+
+  EventReminder _build() {
+    switch (_unit) {
+      case _CustomUnit.minutes:
+        return EventReminder.relative(
+          id: widget.idGenerator(),
+          minutesBefore: _amount,
+        );
+      case _CustomUnit.hours:
+        return EventReminder.relative(
+          id: widget.idGenerator(),
+          minutesBefore: _amount * 60,
+        );
+      case _CustomUnit.days:
+        return EventReminder.fixed(
+          id: widget.idGenerator(),
+          daysBefore: _amount,
+          hour: _time.hour,
+          minute: _time.minute,
+        );
+      case _CustomUnit.weeks:
+        return EventReminder.fixed(
+          id: widget.idGenerator(),
+          daysBefore: _amount * 7,
+          hour: _time.hour,
+          minute: _time.minute,
+        );
+    }
+  }
+
+  String _two(int n) => n.toString().padLeft(2, '0');
+
+  String _summary(String loc) {
+    final preview = _build().label(loc);
+    return TextFormat.toWesternDigits(preview);
+  }
+
+  Widget _unitChip(_CustomUnit u, String label) {
+    final selected = _unit == u;
+    return GestureDetector(
+      onTap: () => setState(() => _unit = u),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? AppColors.green : Colors.transparent,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected ? AppColors.green : AppColors.border,
+          ),
+        ),
+        child: Text(
+          label,
+          style: appFont(
+            fontSize: 12,
+            fontWeight: FontWeight.w700,
+            color: selected ? Colors.white : AppColors.text2,
+          ),
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = widget.locale;
+    return Dialog(
+      backgroundColor: AppColors.white,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 12),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              _Tr.customReminder.value(loc),
+              textAlign: TextAlign.center,
+              style: appFont(
+                fontSize: 14,
+                fontWeight: FontWeight.w800,
+                color: AppColors.text,
+              ),
+            ),
+            const SizedBox(height: 14),
+            // Amount stepper
+            Text(
+              _Tr.customAmount.value(loc),
+              style: appFont(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: AppColors.text3,
+              ),
+            ),
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                IconButton.outlined(
+                  onPressed: () => _setAmount(_amount - 1),
+                  icon: const Icon(Icons.remove_rounded),
+                ),
+                Expanded(
+                  child: Center(
+                    child: Text(
+                      TextFormat.toWesternDigits('$_amount'),
+                      style: appFont(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                        color: AppColors.navy,
+                      ),
+                    ),
+                  ),
+                ),
+                IconButton.outlined(
+                  onPressed: () => _setAmount(_amount + 1),
+                  icon: const Icon(Icons.add_rounded),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            // Unit picker
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _unitChip(_CustomUnit.minutes,
+                    _Tr.customUnitMinutes.value(loc)),
+                _unitChip(_CustomUnit.hours,
+                    _Tr.customUnitHours.value(loc)),
+                _unitChip(_CustomUnit.days,
+                    _Tr.customUnitDays.value(loc)),
+                _unitChip(_CustomUnit.weeks,
+                    _Tr.customUnitWeeks.value(loc)),
+              ],
+            ),
+            // Time-of-day picker for day/week-based reminders.
+            if (_supportsTime) ...[
+              const SizedBox(height: 14),
+              InkWell(
+                onTap: _pickTime,
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                  decoration: BoxDecoration(
+                    color: AppColors.bg,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.schedule_rounded,
+                          size: 18, color: AppColors.green),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          _Tr.customAtTime.value(loc),
+                          style: appFont(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.text,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        TextFormat.toWesternDigits(
+                            '${_two(_time.hour)}:${_two(_time.minute)}'),
+                        style: appFont(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: AppColors.navy,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+            const SizedBox(height: 14),
+            // Live summary so the user can confirm the choice in their
+            // own language before tapping OK.
+            Container(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppColors.greenPale,
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.notifications_active_rounded,
+                      size: 16, color: AppColors.green),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _summary(loc),
+                      style: appFont(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppColors.green,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text(
+                    _Tr.cancel.value(loc),
+                    style: appFont(
+                      color: AppColors.text2,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.green,
+                    foregroundColor: Colors.white,
+                    elevation: 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  onPressed: () => Navigator.pop(context, _build()),
+                  child: Text(
+                    _Tr.ok.value(loc),
+                    style: appFont(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -2042,6 +2313,18 @@ enum _Tr {
   save,
   titleRequired,
   invalidRange,
+  // Custom-reminder builder
+  customReminder,
+  customAmount,
+  customUnitMinutes,
+  customUnitHours,
+  customUnitDays,
+  customUnitWeeks,
+  customAtTime,
+  customSummary,
+  // Emoji picker
+  emoji,
+  emojiNone,
 }
 
 extension _TrX on _Tr {
@@ -2282,6 +2565,56 @@ extension _TrX on _Tr {
             : loc == 'es' ? 'La hora de fin debe ser posterior al inicio'
             : loc == 'en' ? 'End time must be after start'
             : 'L\'heure de fin doit être après le début';
+      case _Tr.customReminder:
+        return loc == 'ar' ? 'تذكير مخصّص…'
+            : loc == 'es' ? 'Recordatorio personalizado…'
+            : loc == 'en' ? 'Custom reminder…'
+            : 'Rappel personnalisé…';
+      case _Tr.customAmount:
+        return loc == 'ar' ? 'العدد'
+            : loc == 'es' ? 'Cantidad'
+            : loc == 'en' ? 'Amount'
+            : 'Quantité';
+      case _Tr.customUnitMinutes:
+        return loc == 'ar' ? 'دقيقة'
+            : loc == 'es' ? 'min'
+            : loc == 'en' ? 'min'
+            : 'min';
+      case _Tr.customUnitHours:
+        return loc == 'ar' ? 'ساعة'
+            : loc == 'es' ? 'hora'
+            : loc == 'en' ? 'hour'
+            : 'heure';
+      case _Tr.customUnitDays:
+        return loc == 'ar' ? 'يوم'
+            : loc == 'es' ? 'día'
+            : loc == 'en' ? 'day'
+            : 'jour';
+      case _Tr.customUnitWeeks:
+        return loc == 'ar' ? 'أسبوع'
+            : loc == 'es' ? 'semana'
+            : loc == 'en' ? 'week'
+            : 'semaine';
+      case _Tr.customAtTime:
+        return loc == 'ar' ? 'الوقت'
+            : loc == 'es' ? 'Hora'
+            : loc == 'en' ? 'At time'
+            : 'À';
+      case _Tr.customSummary:
+        return loc == 'ar' ? 'ملخّص التذكير'
+            : loc == 'es' ? 'Resumen'
+            : loc == 'en' ? 'Summary'
+            : 'Résumé';
+      case _Tr.emoji:
+        return loc == 'ar' ? 'الرمز'
+            : loc == 'es' ? 'Emoji'
+            : loc == 'en' ? 'Emoji'
+            : 'Emoji';
+      case _Tr.emojiNone:
+        return loc == 'ar' ? 'بدون'
+            : loc == 'es' ? 'Ninguno'
+            : loc == 'en' ? 'None'
+            : 'Aucun';
     }
   }
 }

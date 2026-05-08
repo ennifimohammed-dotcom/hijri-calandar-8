@@ -539,8 +539,28 @@ class _DayCell extends StatelessWidget {
     final cellRadius = isToday ? BorderRadius.circular(14) : BorderRadius.circular(10);
     return GestureDetector(
       onTap: () => p.selectDay(HijriDate(year, month, day)),
-      onDoubleTap: () => Navigator.push(context,
-        MaterialPageRoute(builder: (_) => AddEventScreen())),
+      onDoubleTap: () {
+        // Double-tap on a monthly cell selects the day AND opens the
+        // New Event screen prefilled with that day. The Hijri (year,
+        // month, day) we tapped is converted via the provider so the
+        // resulting Gregorian instant honours the active region's
+        // offset (e.g. Morocco = UAQ + 1 day).
+        p.selectDay(HijriDate(year, month, day));
+        DateTime g;
+        try {
+          g = p.hijriToGregorian(year, month, day);
+        } catch (_) {
+          g = DateTime.now();
+        }
+        // Default time = 09:00 local on the picked day.
+        final start = DateTime(g.year, g.month, g.day, 9, 0);
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => AddEventScreen(initialStart: start),
+          ),
+        );
+      },
       child: Container(
         margin: isToday ? const EdgeInsets.all(2) : EdgeInsets.zero,
         decoration: BoxDecoration(
@@ -720,10 +740,27 @@ class _SelectedDayHeader extends StatelessWidget {
           shadowColor: AppColors.green.withValues(alpha: 0.4),
           child: InkWell(
             customBorder: const CircleBorder(),
-            onTap: () => Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AddEventScreen()),
-            ),
+            // The selected-day header "+" prefills the New Event
+            // screen with whichever day the user has currently
+            // selected (falls back to the regional today). The
+            // Hijri date is resolved via [hijriToGregorian] which
+            // already accounts for the active region's offset.
+            onTap: () {
+              DateTime start;
+              try {
+                start = p.hijriToGregorian(
+                    day.hYear, day.hMonth, day.hDay);
+              } catch (_) {
+                start = DateTime.now();
+              }
+              start = DateTime(start.year, start.month, start.day, 9, 0);
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AddEventScreen(initialStart: start),
+                ),
+              );
+            },
             child: const SizedBox(
               width: 34,
               height: 34,

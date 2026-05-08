@@ -5,6 +5,7 @@ import 'package:share_plus/share_plus.dart';
 import '../providers/app_provider.dart';
 import '../utils/hijri_utils.dart';
 import '../theme.dart';
+import '../widgets/calendar_grid_picker.dart';
 
 class ConverterScreen extends StatefulWidget {
   const ConverterScreen({super.key});
@@ -373,19 +374,17 @@ class _GregToHijriTab extends StatelessWidget {
       child: Column(
         children: [
           const SizedBox(height: 8),
-          // Date picker button
+          // Date picker button — uses the shared calendar-grid dialog
+          // so the picker matches the monthly view and stays
+          // synchronized with the active region.
           GestureDetector(
             onTap: () async {
-              final picked = await showDatePicker(
+              final picked = await showCalendarGridPicker(
                 context: context,
-                initialDate: gregInput,
-                firstDate: DateTime(1900),
-                lastDate: DateTime(2100),
-                builder: (ctx, child) => Theme(
-                  data: Theme.of(ctx).copyWith(
-                    colorScheme: ColorScheme.light(
-                        primary: AppColors.green)),
-                  child: child!),
+                initial: gregInput,
+                useHijri: false,
+                locale: p.locale,
+                provider: p,
               );
               if (picked != null) onDateChanged(picked);
             },
