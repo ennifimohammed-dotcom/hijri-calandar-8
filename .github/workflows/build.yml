@@ -45,9 +45,12 @@ jobs:
           cp -r $GITHUB_WORKSPACE/lib /tmp/base_project/
           cp $GITHUB_WORKSPACE/pubspec.yaml /tmp/base_project/pubspec.yaml
           # Ship the launcher-icon source asset so flutter_launcher_icons
-          # can generate every density variant for the app icon.
+          # can generate every density variant for the app icon, plus
+          # the Chabab Al Khair association logo shown on the splash
+          # screen and the welcome / onboarding flow.
           mkdir -p /tmp/base_project/assets/icon
           cp $GITHUB_WORKSPACE/assets/icon/icon.png /tmp/base_project/assets/icon/icon.png
+          cp $GITHUB_WORKSPACE/assets/icon/chabab_alkhair.jpg /tmp/base_project/assets/icon/chabab_alkhair.jpg
           rm -rf /tmp/base_project/test
 
       - name: Replace Android build.gradle
