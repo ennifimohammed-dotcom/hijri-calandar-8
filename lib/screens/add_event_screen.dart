@@ -2096,7 +2096,7 @@ class _CustomReminderDialogState extends State<_CustomReminderDialog> {
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.schedule_rounded,
+                      Icon(Icons.schedule_rounded,
                           size: 18, color: AppColors.green),
                       const SizedBox(width: 10),
                       Expanded(
