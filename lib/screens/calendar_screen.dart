@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../models/event_model.dart';
 import '../providers/app_provider.dart';
@@ -200,7 +199,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               children: [
                 Text(
                   TextFormat.toWesternDigits(monthName),
-                  style: GoogleFonts.amiri(
+                  style: appFont(
                     fontSize: 20,
                     fontWeight: FontWeight.bold,
                     color: isDark ? AppColors.darkText : AppColors.navy,
@@ -209,7 +208,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                 const SizedBox(height: 2),
                 Text(
                   gregLabel,
-                  style: GoogleFonts.cairo(
+                  style: appFont(
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                     color: isDark ? AppColors.darkText3 : AppColors.text3,
@@ -269,7 +268,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       color: active ? Colors.white : (isDark ? AppColors.darkText3 : AppColors.text3)),
                     const SizedBox(height: 2),
                     Text(m.$3,
-                      style: GoogleFonts.cairo(
+                      style: appFont(
                         fontSize: 9, fontWeight: FontWeight.w700,
                         color: active ? Colors.white : (isDark ? AppColors.darkText3 : AppColors.text3)),
                     ),
@@ -329,7 +328,7 @@ class _TodayButton extends StatelessWidget {
             const SizedBox(width: 5),
             Text(
               p.label('today'),
-              style: GoogleFonts.cairo(
+              style: appFont(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
                 color: AppColors.green,
@@ -410,7 +409,7 @@ class _MonthlyView extends StatelessWidget {
         return Expanded(
           child: Center(
             child: Text(days[i],
-              style: GoogleFonts.cairo(
+              style: appFont(
                 fontSize: 10, fontWeight: FontWeight.w700,
                 color: isFri ? AppColors.green
                     : (isDark ? AppColors.darkText3 : AppColors.text3),
@@ -563,7 +562,7 @@ class _DayCell extends StatelessWidget {
               children: [
                 Text(
                   TextFormat.toWesternDigits('$day'),
-                  style: GoogleFonts.cairo(
+                  style: appFont(
                     fontSize: isToday ? 15 : 13,
                     fontWeight: isToday ? FontWeight.w900 : FontWeight.w600,
                     color: textColor,
@@ -639,7 +638,7 @@ class _EventsList extends StatelessWidget {
                         color: isDark ? AppColors.darkText3 : AppColors.text3),
                     const SizedBox(height: 8),
                     Text(p.label('no_events'),
-                        style: GoogleFonts.cairo(fontSize: 12,
+                        style: appFont(fontSize: 12,
                             color: isDark ? AppColors.darkText3 : AppColors.text3)),
                   ],
                 ),
@@ -743,7 +742,7 @@ class _SelectedDayHeader extends StatelessWidget {
             child: Text(
               '$hijriPart  ▪  $gregPart',
               textAlign: TextAlign.center,
-              style: GoogleFonts.cairo(
+              style: appFont(
                 fontSize: 12,
                 fontWeight: FontWeight.w800,
                 color: Colors.white,
@@ -1054,7 +1053,7 @@ class _WeekPageState extends State<_WeekPage> {
                   ev.title(widget.p.locale),
                   maxLines: height < 36 ? 1 : 2,
                   overflow: TextOverflow.ellipsis,
-                  style: GoogleFonts.cairo(
+                  style: appFont(
                     fontSize: 11,
                     fontWeight: FontWeight.w800,
                     color: Colors.white,
@@ -1066,7 +1065,7 @@ class _WeekPageState extends State<_WeekPage> {
                     TextFormat.toWesternDigits(
                       '${s.hour.toString().padLeft(2, '0')}:${s.minute.toString().padLeft(2, '0')}',
                     ),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 9,
                       color: Colors.white.withValues(alpha: 0.85),
                     ),
@@ -1123,7 +1122,7 @@ class _DayHeaderStrip extends StatelessWidget {
                 children: [
                   Text(
                     dayLabels[i],
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 9,
                       fontWeight: FontWeight.w700,
                       color: isFri
@@ -1142,7 +1141,7 @@ class _DayHeaderStrip extends StatelessWidget {
                     child: Center(
                       child: Text(
                         TextFormat.toWesternDigits('${hijri.hDay}'),
-                        style: GoogleFonts.amiri(
+                        style: appFont(
                           fontSize: 13,
                           fontWeight: FontWeight.bold,
                           color: isToday
@@ -1154,7 +1153,7 @@ class _DayHeaderStrip extends StatelessWidget {
                   ),
                   Text(
                     TextFormat.toWesternDigits('${greg.day}'),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 9,
                       color: AppColors.text3,
                     ),
@@ -1210,7 +1209,7 @@ class _AllDayStrip extends StatelessWidget {
                             ? 'All day'
                             : 'Toute la j.',
                 textAlign: TextAlign.right,
-                style: GoogleFonts.cairo(
+                style: appFont(
                     fontSize: 9, color: AppColors.text3),
               ),
             ),
@@ -1242,7 +1241,7 @@ class _AllDayStrip extends StatelessWidget {
                         ev.title(p.locale),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.cairo(
+                        style: appFont(
                           fontSize: 9,
                           fontWeight: FontWeight.w700,
                           color: Colors.white,
@@ -1299,7 +1298,7 @@ class _GridBackground extends StatelessWidget {
                           '${h.toString().padLeft(2, '0')}:00',
                         ),
                         textAlign: TextAlign.right,
-                        style: GoogleFonts.cairo(
+                        style: appFont(
                           fontSize: 9,
                           color: AppColors.text3,
                         ),
@@ -1433,7 +1432,7 @@ class _AgendaViewState extends State<_AgendaView> {
                         color: isDark ? AppColors.darkText3 : AppColors.text3),
                     const SizedBox(height: 12),
                     Text(p.label('no_events'),
-                        style: GoogleFonts.cairo(fontSize: 14,
+                        style: appFont(fontSize: 14,
                             color: isDark ? AppColors.darkText3 : AppColors.text3)),
                   ],
                 ),
@@ -1458,7 +1457,7 @@ class _AgendaViewState extends State<_AgendaView> {
                 onPressed: () => setState(() => _days += 30),
                 child: Text(
                   p.locale == 'ar' ? 'تحميل المزيد' : 'Charger plus',
-                  style: GoogleFonts.cairo(color: AppColors.green,
+                  style: appFont(color: AppColors.green,
                       fontWeight: FontWeight.w700),
                 ),
               ),
@@ -1509,7 +1508,7 @@ class _DateBadge extends StatelessWidget {
         ),
         child: Text(
           '$hijriPart  ▪  $gregPart',
-          style: GoogleFonts.cairo(
+          style: appFont(
             fontSize: 13,
             fontWeight: FontWeight.w800,
             color: Colors.white,
@@ -1658,7 +1657,7 @@ class _AgendaCard extends StatelessWidget {
                         event.title(loc),
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: GoogleFonts.amiri(
+                        style: appFont(
                           fontSize: 18,
                           fontWeight: FontWeight.bold,
                           color:
@@ -1668,7 +1667,7 @@ class _AgendaCard extends StatelessWidget {
                       const SizedBox(height: 2),
                       Text(
                         _timeLabel(loc),
-                        style: GoogleFonts.cairo(
+                        style: appFont(
                           fontSize: 11,
                           color: isDark
                               ? AppColors.darkText3
@@ -1691,7 +1690,7 @@ class _AgendaCard extends StatelessWidget {
                   ),
                   child: Text(
                     _categoryLabel(loc),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
                       color: _chipFg,
@@ -1804,7 +1803,7 @@ class _EventDetailsSheet extends StatelessWidget {
                   child: Text(
                     event.title(loc),
                     textAlign: TextAlign.center,
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 18,
                       fontWeight: FontWeight.w800,
                       color: AppColors.text,
@@ -1824,7 +1823,7 @@ class _EventDetailsSheet extends StatelessWidget {
                 const SizedBox(width: 6),
                 Text(
                   _timeLabel(loc),
-                  style: GoogleFonts.cairo(
+                  style: appFont(
                     fontSize: 14,
                     fontWeight: FontWeight.w600,
                     color: AppColors.text2,
@@ -1847,7 +1846,7 @@ class _EventDetailsSheet extends StatelessWidget {
                     onPressed: () => Navigator.pop(context),
                     child: Text(
                       _closeLabel(loc),
-                      style: GoogleFonts.cairo(
+                      style: appFont(
                         color: AppColors.text2,
                         fontWeight: FontWeight.w700,
                       ),
@@ -1880,7 +1879,7 @@ class _EventDetailsSheet extends StatelessWidget {
                       icon: const Icon(Icons.edit_rounded, size: 16),
                       label: Text(
                         _editLabel(loc),
-                        style: GoogleFonts.cairo(
+                        style: appFont(
                           fontWeight: FontWeight.w800,
                         ),
                       ),

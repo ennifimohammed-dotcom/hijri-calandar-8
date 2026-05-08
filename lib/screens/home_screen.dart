@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
@@ -46,9 +45,9 @@ class _HomeScreenState extends State<HomeScreen> {
       selectedItemColor: AppColors.green,
       unselectedItemColor: isDark ? AppColors.darkText3 : AppColors.text3,
       type: BottomNavigationBarType.fixed,
-      selectedLabelStyle: GoogleFonts.cairo(
+      selectedLabelStyle: appFont(
           fontSize: 10, fontWeight: FontWeight.w700),
-      unselectedLabelStyle: GoogleFonts.cairo(fontSize: 10),
+      unselectedLabelStyle: appFont(fontSize: 10),
       elevation: 8,
       items: [
         BottomNavigationBarItem(

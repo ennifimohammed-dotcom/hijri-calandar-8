@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../providers/app_provider.dart';
@@ -92,7 +91,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     _page < 2
                         ? (_selectedLang == 'ar' ? 'التالي →' : 'Suivant →')
                         : (_selectedLang == 'ar' ? '✓ ابدأ' : '✓ Commencer'),
-                    style: GoogleFonts.cairo(fontSize: 16, fontWeight: FontWeight.w800,
+                    style: appFont(fontSize: 16, fontWeight: FontWeight.w800,
                         color: Colors.white),
                   )),
                 ),
@@ -119,16 +118,16 @@ class _Page1 extends StatelessWidget {
           const Text('🗓', style: TextStyle(fontSize: 48)),
           const SizedBox(height: 32),
           Text('تقويم الهجري',
-            style: GoogleFonts.amiri(fontSize: 36, fontWeight: FontWeight.bold,
+            style: appFont(fontSize: 36, fontWeight: FontWeight.bold,
                 color: AppColors.navy),
             textAlign: TextAlign.center),
           const SizedBox(height: 12),
           Text('احتفل بمواسم الإسلام',
-            style: GoogleFonts.amiri(fontSize: 20, color: AppColors.text2),
+            style: appFont(fontSize: 20, color: AppColors.text2),
             textAlign: TextAlign.center),
           const SizedBox(height: 8),
           Text('Hijri Calendar — Calendrier Islamique',
-            style: GoogleFonts.cairo(fontSize: 13, color: AppColors.text3),
+            style: appFont(fontSize: 13, color: AppColors.text3),
             textAlign: TextAlign.center),
           const SizedBox(height: 32),
           _FeaturePill(emoji: '🕌', text: 'أحداث إسلامية'),
@@ -156,7 +155,7 @@ class _FeaturePill extends StatelessWidget {
       children: [
         Text(emoji, style: const TextStyle(fontSize: 18)),
         const SizedBox(width: 10),
-        Text(text, style: GoogleFonts.cairo(fontSize: 14,
+        Text(text, style: appFont(fontSize: 14,
             fontWeight: FontWeight.w700, color: AppColors.green)),
       ],
     ),
@@ -182,11 +181,11 @@ class _Page2 extends StatelessWidget {
       child: Column(
         children: [
           Text('اختر لغتك',
-            style: GoogleFonts.amiri(fontSize: 30, fontWeight: FontWeight.bold,
+            style: appFont(fontSize: 30, fontWeight: FontWeight.bold,
                 color: AppColors.navy)),
           const SizedBox(height: 6),
           Text('Choose your language',
-            style: GoogleFonts.cairo(fontSize: 14, color: AppColors.text3)),
+            style: appFont(fontSize: 14, color: AppColors.text3)),
           const SizedBox(height: 28),
           GridView.count(
             crossAxisCount: 2, shrinkWrap: true,
@@ -213,7 +212,7 @@ class _Page2 extends StatelessWidget {
                     children: [
                       Text(l.$2, style: const TextStyle(fontSize: 28)),
                       const SizedBox(height: 4),
-                      Text(l.$3, style: GoogleFonts.cairo(
+                      Text(l.$3, style: appFont(
                           fontSize: 13, fontWeight: FontWeight.w700,
                           color: active ? Colors.white : AppColors.text)),
                     ],
@@ -260,12 +259,12 @@ class _Page3State extends State<_Page3> {
       child: Column(
         children: [
           Text('فعّل الأحداث الإسلامية',
-            style: GoogleFonts.amiri(fontSize: 26, fontWeight: FontWeight.bold,
+            style: appFont(fontSize: 26, fontWeight: FontWeight.bold,
                 color: AppColors.navy),
             textAlign: TextAlign.center),
           const SizedBox(height: 6),
           Text('Activer les événements islamiques',
-            style: GoogleFonts.cairo(fontSize: 13, color: AppColors.text3)),
+            style: appFont(fontSize: 13, color: AppColors.text3)),
           const SizedBox(height: 20),
           ..._events.entries.map((e) {
             final lbl = _labels[e.key]!;
@@ -282,7 +281,7 @@ class _Page3State extends State<_Page3> {
                   Text(lbl.$1, style: const TextStyle(fontSize: 22)),
                   const SizedBox(width: 12),
                   Expanded(child: Text(lbl.$2,
-                    style: GoogleFonts.cairo(fontSize: 13, fontWeight: FontWeight.w700,
+                    style: appFont(fontSize: 13, fontWeight: FontWeight.w700,
                         color: AppColors.text))),
                   _SmToggle(
                     value: e.value,

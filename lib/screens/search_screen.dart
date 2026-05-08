@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/event_model.dart';
@@ -58,8 +57,10 @@ class _SearchScreenState extends State<SearchScreen> {
       all.add(ev);
     }
 
-    // Islamic events (from bank)
-    final today = HijriDate.now();
+    // Islamic events (from bank). Region-aware: use the provider's
+    // today so search dates land on the same Hijri days the calendar
+    // is showing.
+    final today = p.today;
     for (int monthOffset = 0; monthOffset < 12; monthOffset++) {
       final m = today.addMonths(monthOffset);
       final days = HijriDate.daysInMonth(m.hYear, m.hMonth);
@@ -102,14 +103,14 @@ class _SearchScreenState extends State<SearchScreen> {
           autofocus: true,
           onChanged: (v) => setState(() => _query = v),
           onSubmitted: (v) => _saveRecent(v),
-          style: GoogleFonts.cairo(fontSize: 15,
+          style: appFont(fontSize: 15,
               color: isDark ? AppColors.darkText : AppColors.text),
           decoration: InputDecoration(
             border: InputBorder.none,
             hintText: loc == 'ar' ? 'بحث في الأحداث...'
                 : loc == 'fr' ? 'Rechercher des événements...'
                 : 'Search events...',
-            hintStyle: GoogleFonts.cairo(color: AppColors.text3)),
+            hintStyle: appFont(color: AppColors.text3)),
         ),
         actions: [
           if (_query.isNotEmpty)
@@ -134,7 +135,10 @@ class _SearchScreenState extends State<SearchScreen> {
               : _ResultsList(results: results, p: p, isDark: isDark,
                   onTap: (ev) {
                     _saveRecent(_query);
-                    p.selectDay(HijriDate(ev.hijriYear ?? HijriDate.now().hYear, ev.hijriMonth ?? HijriDate.now().hMonth, ev.hijriDay ?? HijriDate.now().hDay));
+                    p.selectDay(HijriDate(
+                      ev.hijriYear ?? p.today.hYear,
+                      ev.hijriMonth ?? p.today.hMonth,
+                      ev.hijriDay ?? p.today.hDay));
                     Navigator.pop(context);
                   }),
     );
@@ -172,7 +176,7 @@ class _FilterRow extends StatelessWidget {
                 borderRadius: BorderRadius.circular(20),
                 border: Border.all(
                     color: active ? AppColors.green : AppColors.border)),
-              child: Text(o.$2, style: GoogleFonts.cairo(
+              child: Text(o.$2, style: appFont(
                   fontSize: 11, fontWeight: FontWeight.w700,
                   color: active ? Colors.white
                       : (isDark ? AppColors.darkText3 : AppColors.text3))),
@@ -199,12 +203,12 @@ class _RecentSearches extends StatelessWidget {
       children: [
         Text(loc == 'ar' ? 'عمليات البحث الأخيرة'
             : loc == 'fr' ? 'Recherches récentes' : 'Recent searches',
-          style: GoogleFonts.cairo(fontSize: 11, fontWeight: FontWeight.w700,
+          style: appFont(fontSize: 11, fontWeight: FontWeight.w700,
               color: AppColors.text3, letterSpacing: 2)),
         const SizedBox(height: 8),
         ...recent.map((s) => ListTile(
           leading: const Icon(Icons.history_rounded, color: AppColors.text3, size: 18),
-          title: Text(s, style: GoogleFonts.cairo(fontSize: 13,
+          title: Text(s, style: appFont(fontSize: 13,
               color: isDark ? AppColors.darkText : AppColors.text)),
           onTap: () => onTap(s),
         )),
@@ -227,7 +231,7 @@ class _EmptyHint extends StatelessWidget {
         const SizedBox(height: 12),
         Text(loc == 'ar' ? 'ابحث عن أحداثك'
             : loc == 'fr' ? 'Recherchez vos événements' : 'Search your events',
-          style: GoogleFonts.cairo(fontSize: 14, color: AppColors.text3)),
+          style: appFont(fontSize: 14, color: AppColors.text3)),
       ],
     ),
   );
@@ -247,7 +251,7 @@ class _EmptyState extends StatelessWidget {
         const SizedBox(height: 12),
         Text(loc == 'ar' ? 'لا توجد نتائج'
             : loc == 'fr' ? 'Aucun résultat' : 'No results',
-          style: GoogleFonts.cairo(fontSize: 14, color: AppColors.text3)),
+          style: appFont(fontSize: 14, color: AppColors.text3)),
       ],
     ),
   );
@@ -295,10 +299,10 @@ class _ResultsList extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(ev.title(p.locale), style: GoogleFonts.cairo(
+                        Text(ev.title(p.locale), style: appFont(
                             fontSize: 13, fontWeight: FontWeight.w700,
                             color: isDark ? AppColors.darkText : AppColors.text)),
-                        Text(dateStr, style: GoogleFonts.cairo(
+                        Text(dateStr, style: appFont(
                             fontSize: 10, color: AppColors.text3)),
                       ],
                     ),
@@ -311,7 +315,7 @@ class _ResultsList extends StatelessWidget {
                           color: ev.isIslamic ? AppColors.goldPale : AppColors.greenPale,
                           borderRadius: BorderRadius.circular(6)),
                       child: Text(ev.isIslamic ? p.label('islamic') : p.label('personal'),
-                        style: GoogleFonts.cairo(fontSize: 8, fontWeight: FontWeight.w700,
+                        style: appFont(fontSize: 8, fontWeight: FontWeight.w700,
                             color: ev.isIslamic ? AppColors.gold : AppColors.green)),
                     ),
                   ),

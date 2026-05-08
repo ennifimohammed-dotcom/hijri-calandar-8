@@ -48,9 +48,9 @@ class _SectionTitle extends StatelessWidget {
       padding: EdgeInsets.fromLTRB(16, large ? 12 : 16, 16, large ? 4 : 6),
       child: Text(text,
         style: large
-          ? GoogleFonts.amiri(fontSize: 26, fontWeight: FontWeight.bold,
+          ? appFont(fontSize: 26, fontWeight: FontWeight.bold,
               color: isDark ? AppColors.darkText : AppColors.navy)
-          : GoogleFonts.cairo(fontSize: 10, fontWeight: FontWeight.w700,
+          : appFont(fontSize: 10, fontWeight: FontWeight.w700,
               color: AppColors.text3, letterSpacing: 2)),
     );
   }
@@ -100,10 +100,10 @@ class _SettRow extends StatelessWidget {
             Expanded(child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(title, style: GoogleFonts.cairo(fontSize: 12,
+                Text(title, style: appFont(fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: isDark ? AppColors.darkText : AppColors.text)),
-                if (sub.isNotEmpty) Text(sub, style: GoogleFonts.cairo(
+                if (sub.isNotEmpty) Text(sub, style: appFont(
                     fontSize: 9, color: AppColors.text3)),
               ],
             )),
@@ -151,8 +151,12 @@ class _ProfileCard extends StatelessWidget {
   const _ProfileCard({required this.isDark, required this.p});
   @override
   Widget build(BuildContext context) {
-    final today = HijriDate.now();
-    final greg = DateTime.now();
+    // Region-aware: read today's Hijri from the provider so the card
+    // follows the regional offset (Morocco = UAQ + 1 day, etc.). The
+    // displayed Gregorian is the regional Hijri's matching civil
+    // date so the two stay paired when the user switches region.
+    final today = p.today;
+    final greg = today.toGregorian();
     final loc = p.locale;
     final appTitle = loc == 'ar' ? 'بدر | badr' : 'بدر | badr';
     final hijriLine = TextFormat.toWesternDigits(
@@ -182,13 +186,13 @@ class _ProfileCard extends StatelessWidget {
               Expanded(child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(appTitle, style: GoogleFonts.amiri(
+                  Text(appTitle, style: appFont(
                       fontSize: 18, fontWeight: FontWeight.bold,
                       color: isDark ? AppColors.darkText : AppColors.navy)),
                   Text(hijriLine,
-                    style: GoogleFonts.cairo(fontSize: 11, color: AppColors.green,
+                    style: appFont(fontSize: 11, color: AppColors.green,
                         fontWeight: FontWeight.w700)),
-                  Text(gregStr, style: GoogleFonts.cairo(fontSize: 10, color: AppColors.text3)),
+                  Text(gregStr, style: appFont(fontSize: 10, color: AppColors.text3)),
                 ],
               )),
               Container(
@@ -196,10 +200,10 @@ class _ProfileCard extends StatelessWidget {
                 decoration: BoxDecoration(
                   color: AppColors.greenPale, borderRadius: BorderRadius.circular(12)),
                 child: Column(children: [
-                  Text('${today.hYear}', style: GoogleFonts.amiri(
+                  Text('${today.hYear}', style: appFont(
                       fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.green)),
                   Text(p.locale == 'ar' ? 'هـ' : 'AH',
-                    style: GoogleFonts.cairo(fontSize: 8, color: AppColors.green)),
+                    style: appFont(fontSize: 8, color: AppColors.green)),
                 ])),
             ],
           ),
@@ -266,7 +270,7 @@ class _LanguageSection extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(loc == 'ar' ? 'اللغة' : 'Langue',
-                style: GoogleFonts.cairo(fontSize: 10, fontWeight: FontWeight.w700,
+                style: appFont(fontSize: 10, fontWeight: FontWeight.w700,
                     color: AppColors.text3, letterSpacing: 2)),
               const SizedBox(height: 8),
               Row(
@@ -289,7 +293,7 @@ class _LanguageSection extends StatelessWidget {
                       child: Column(children: [
                         Text(l.$2, style: const TextStyle(fontSize: 16)),
                         const SizedBox(height: 2),
-                        Text(l.$3, style: GoogleFonts.cairo(fontSize: 10,
+                        Text(l.$3, style: appFont(fontSize: 10,
                             fontWeight: FontWeight.w700,
                             color: active ? Colors.white
                                 : (isDark ? AppColors.darkText3 : AppColors.text3))),
@@ -303,7 +307,7 @@ class _LanguageSection extends StatelessWidget {
                   : loc == 'fr' ? 'Région'
                   : loc == 'es' ? 'Región'
                   : 'Region',
-                style: GoogleFonts.cairo(fontSize: 10, fontWeight: FontWeight.w700,
+                style: appFont(fontSize: 10, fontWeight: FontWeight.w700,
                     color: AppColors.text3, letterSpacing: 2)),
               const SizedBox(height: 8),
               Wrap(
@@ -325,7 +329,7 @@ class _LanguageSection extends StatelessWidget {
                       child: Row(mainAxisSize: MainAxisSize.min, children: [
                         Text(r.$2, style: const TextStyle(fontSize: 12)),
                         const SizedBox(width: 5),
-                        Text(r.$3, style: GoogleFonts.cairo(
+                        Text(r.$3, style: appFont(
                             fontSize: 10,
                             fontWeight: FontWeight.w700,
                             color: active
@@ -377,7 +381,7 @@ class _AppearanceSection extends StatelessWidget {
                 title: p.label('theme'),
                 sub: 'Thème de l\'application',
                 trailing: Text(themeLabel,
-                  style: GoogleFonts.cairo(fontSize: 11, fontWeight: FontWeight.w700,
+                  style: appFont(fontSize: 11, fontWeight: FontWeight.w700,
                       color: AppColors.green)),
                 isDark: isDark,
                 onTap: () => p.setThemeMode(
@@ -417,7 +421,7 @@ class _ChipRow extends StatelessWidget {
           color: active ? AppColors.navy : Colors.transparent,
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: active ? AppColors.navy : AppColors.border)),
-        child: Text(o, style: GoogleFonts.cairo(fontSize: 9, fontWeight: FontWeight.w700,
+        child: Text(o, style: appFont(fontSize: 9, fontWeight: FontWeight.w700,
             color: active ? Colors.white : AppColors.text3)),
       );
     }).toList(),
@@ -427,22 +431,18 @@ class _ChipRow extends StatelessWidget {
 // ═══════════════════════════════════════════════════════════
 // 4. CALENDAR SETTINGS
 // ═══════════════════════════════════════════════════════════
-class _CalendarSection extends StatefulWidget {
+//
+// Note: the former "Show / Afficher / إظهار" subsection — which
+// hosted toggles for Ayyam Al-Bid, Ramadan, Gregorian date, dual
+// header and Friday highlight — was removed per spec. The Calendar
+// card now contains only the default-view picker.
+class _CalendarSection extends StatelessWidget {
   final AppProvider p;
   final bool isDark;
   const _CalendarSection({required this.p, required this.isDark});
-  @override
-  State<_CalendarSection> createState() => _CalendarSectionState();
-}
-
-class _CalendarSectionState extends State<_CalendarSection> {
-  bool showAyyam = true, showRamadan = true, showGreg = true,
-       showDualHeader = true, showMonthNames = false, showFriday = true;
 
   @override
   Widget build(BuildContext context) {
-    final p = widget.p;
-    final isDark = widget.isDark;
     final loc = p.locale;
 
     return Column(
@@ -458,40 +458,16 @@ class _CalendarSectionState extends State<_CalendarSection> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Default view — actually drives provider.viewMode and
-              // is persisted in SharedPreferences.
+              // Default view — drives provider.viewMode and is
+              // persisted in SharedPreferences.
               Text(loc == 'ar' ? 'العرض الافتراضي'
                   : loc == 'fr' ? 'Vue par défaut'
                   : loc == 'es' ? 'Vista por defecto'
                   : 'Default view',
-                style: GoogleFonts.cairo(fontSize: 10, fontWeight: FontWeight.w700,
+                style: appFont(fontSize: 10, fontWeight: FontWeight.w700,
                     color: AppColors.text3)),
               const SizedBox(height: 8),
               _ViewModePicker(p: p, isDark: isDark),
-              const SizedBox(height: 14),
-              Text(loc == 'ar' ? 'إظهار' : loc == 'fr' ? 'Afficher' : 'Show',
-                style: GoogleFonts.cairo(fontSize: 10, fontWeight: FontWeight.w700,
-                    color: AppColors.text3)),
-              const SizedBox(height: 8),
-              ...[
-                (loc == 'ar' ? 'الأيام البيض' : 'Ayyam Al-Bid', showAyyam,
-                 (bool v) => setState(() => showAyyam = v)),
-                (loc == 'ar' ? 'أيام رمضان' : 'Jours Ramadan', showRamadan,
-                 (bool v) => setState(() => showRamadan = v)),
-                (loc == 'ar' ? 'التاريخ الميلادي' : 'Date grégorienne', showGreg,
-                 (bool v) => setState(() => showGreg = v)),
-                (loc == 'ar' ? 'العنوان مزدوج' : 'En-tête double', showDualHeader,
-                 (bool v) => setState(() => showDualHeader = v)),
-                (loc == 'ar' ? 'تمييز الجمعة' : 'Marquer vendredi', showFriday,
-                 (bool v) => setState(() => showFriday = v)),
-              ].map((item) => Padding(
-                padding: const EdgeInsets.only(bottom: 4),
-                child: Row(children: [
-                  Expanded(child: Text(item.$1, style: GoogleFonts.cairo(
-                      fontSize: 12, color: isDark ? AppColors.darkText : AppColors.text))),
-                  _SmToggle(value: item.$2, onChanged: item.$3),
-                ]),
-              )),
             ],
           ),
         ),
@@ -550,6 +526,12 @@ class _NotificationsSectionState extends State<_NotificationsSection> {
         _Card(
           isDark: isDark,
           child: Column(children: [
+            // Single entry into the agenda notification screen.
+            // Volume and lock-screen rows used to live here too —
+            // they were moved out of the main Settings so this surface
+            // stays focused. Both options remain available inside
+            // the agenda notification settings screen and the
+            // per-event reminder settings.
             _SettRow(
               emoji: '🔔',
               bg: AppColors.greenPale,
@@ -565,45 +547,6 @@ class _NotificationsSectionState extends State<_NotificationsSection> {
                   (cur) => cur.copyWith(enabled: v),
                 ),
               ),
-              isDark: isDark,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const NotificationSettingsScreen(),
-                ),
-              ),
-            ),
-            _SettRow(
-              emoji: '🎚',
-              bg: AppColors.bluePale,
-              title: loc == 'ar' ? 'مستوى الصوت' : 'Volume',
-              sub: '${(settings.volume * 100).round()} %',
-              trailing: const Icon(
-                Icons.tune_rounded,
-                size: 16,
-                color: AppColors.text3,
-              ),
-              isDark: isDark,
-              onTap: () => Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => const NotificationSettingsScreen(),
-                ),
-              ),
-            ),
-            _SettRow(
-              emoji: '🔒',
-              bg: AppColors.goldPale,
-              title: loc == 'ar'
-                  ? 'إعدادات شاشة القفل'
-                  : 'Écran de verrouillage',
-              sub: settings.lockScreenVisibility ==
-                      LockScreenVisibility.doNotShow
-                  ? (loc == 'ar'
-                      ? 'لا تُظهر الإشعارات'
-                      : 'Ne pas afficher les notifications')
-                  : (loc == 'ar' ? 'إخفاء المحتوى' : 'Masquer le contenu'),
-              trailing: const SizedBox.shrink(),
               isDark: isDark,
               last: true,
               onTap: () => Navigator.push(
@@ -689,14 +632,14 @@ class _AboutSection extends StatelessWidget {
       builder: (_) => AlertDialog(
         title: Text(
           loc == 'ar' ? 'حول بدر | badr' : 'À propos de بدر | badr',
-          style: GoogleFonts.amiri(fontWeight: FontWeight.bold),
+          style: appFont(fontWeight: FontWeight.bold),
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('Version $_appVersion',
-                style: GoogleFonts.cairo(fontWeight: FontWeight.w700)),
+                style: appFont(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             Text(
               loc == 'ar'
@@ -706,7 +649,7 @@ class _AboutSection extends StatelessWidget {
                       : loc == 'es'
                           ? 'بدر — calendario hégira (Marruecos y Umm al-Qura), adhkâr, virtudes islámicas y eventos personales con notificaciones configurables.'
                           : 'بدر — Hijri calendar (Morocco and Umm al-Qura regions), adhkâr, Islamic virtues and personal events with fully configurable notifications.',
-              style: GoogleFonts.cairo(fontSize: 12),
+              style: appFont(fontSize: 12),
             ),
           ],
         ),
@@ -729,14 +672,14 @@ class _AboutSection extends StatelessWidget {
               : loc == 'fr' ? 'Effacer tous les événements ?'
               : loc == 'es' ? '¿Eliminar todos los eventos?'
               : 'Delete all events?',
-          style: GoogleFonts.amiri(fontWeight: FontWeight.bold),
+          style: appFont(fontWeight: FontWeight.bold),
         ),
         content: Text(
           loc == 'ar' ? 'لا يمكن التراجع عن هذا الإجراء.'
               : loc == 'fr' ? 'Cette action est irréversible.'
               : loc == 'es' ? 'Esta acción es irreversible.'
               : 'This action cannot be undone.',
-          style: GoogleFonts.cairo(),
+          style: appFont(),
         ),
         actions: [
           TextButton(
@@ -781,7 +724,7 @@ class _AboutSection extends StatelessWidget {
                   : loc == 'es' ? 'Versión'
                   : 'Version',
               sub: 'بدر | badr',
-              trailing: Text(_appVersion, style: GoogleFonts.cairo(
+              trailing: Text(_appVersion, style: appFont(
                   fontSize: 11, color: AppColors.text3)),
               isDark: isDark,
               onTap: () => _showVersionDialog(context, loc),
@@ -903,12 +846,12 @@ class _HijriAdjustRow extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(label,
-                  style: GoogleFonts.cairo(
+                  style: appFont(
                       fontSize: 11,
                       fontWeight: FontWeight.w700,
                       color: isDark ? AppColors.darkText : AppColors.text)),
               Text(hint,
-                  style: GoogleFonts.cairo(
+                  style: appFont(
                       fontSize: 9, color: AppColors.text3)),
             ],
           ),
@@ -928,7 +871,7 @@ class _HijriAdjustRow extends StatelessWidget {
                 borderRadius: BorderRadius.circular(10)),
             child: Text(
               adj == 0 ? '0' : (adj > 0 ? '+$adj' : '$adj'),
-              style: GoogleFonts.cairo(
+              style: appFont(
                   fontSize: 13,
                   fontWeight: FontWeight.w800,
                   color: AppColors.green),
@@ -978,7 +921,7 @@ class _ViewModePicker extends StatelessWidget {
             ),
             child: Text(
               m.$2,
-              style: GoogleFonts.cairo(
+              style: appFont(
                 fontSize: 11,
                 fontWeight: FontWeight.w700,
                 color: active ? Colors.white : AppColors.text2,
@@ -1038,7 +981,7 @@ class _AccentColorRow extends StatelessWidget {
                           : loc == 'en'
                               ? 'App color'
                               : "Couleur d'accent",
-                  style: GoogleFonts.cairo(
+                  style: appFont(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: isDark ? AppColors.darkText : AppColors.text,
@@ -1131,7 +1074,7 @@ class _FontScaleRow extends StatelessWidget {
                   : loc == 'es' ? 'Tamaño de fuente'
                   : loc == 'en' ? 'Font size'
                   : 'Taille de police',
-              style: GoogleFonts.cairo(
+              style: appFont(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
                 color: isDark ? AppColors.darkText : AppColors.text,
@@ -1157,7 +1100,7 @@ class _FontScaleRow extends StatelessWidget {
                   ),
                   child: Text(
                     o.$1,
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 10,
                       fontWeight: FontWeight.w800,
                       color: active ? Colors.white : AppColors.text2,
@@ -1240,7 +1183,7 @@ class _CalendarDensityRow extends StatelessWidget {
                   : loc == 'es' ? 'Densidad del calendario'
                   : loc == 'en' ? 'Calendar density'
                   : 'Densité du calendrier',
-              style: GoogleFonts.cairo(
+              style: appFont(
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
                 color: isDark ? AppColors.darkText : AppColors.text,
@@ -1266,7 +1209,7 @@ class _CalendarDensityRow extends StatelessWidget {
                   ),
                   child: Text(
                     _label(d, loc),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 10,
                       fontWeight: FontWeight.w800,
                       color: active ? Colors.white : AppColors.text2,
@@ -1307,6 +1250,11 @@ class _FontFamilyRow extends StatelessWidget {
     }
   }
 
+  // Each pill in the picker must render in its OWN font so the user
+  // can preview the choice. These calls are the only place in the
+  // app that intentionally bypasses [appFont] / [AppTheme] — every
+  // other style point routes through [appFont] and therefore follows
+  // the user's selection.
   TextStyle _previewStyle(String key) {
     switch (key) {
       case 'cairo':        return GoogleFonts.cairo(fontWeight: FontWeight.w800);
@@ -1351,7 +1299,7 @@ class _FontFamilyRow extends StatelessWidget {
                       : loc == 'es' ? 'Tipo de fuente'
                       : loc == 'en' ? 'Font type'
                       : 'Type de police',
-                  style: GoogleFonts.cairo(
+                  style: appFont(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: isDark ? AppColors.darkText : AppColors.text,

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../data/islamic_events.dart';
 import '../providers/app_provider.dart';
@@ -84,10 +83,10 @@ class _BankHeader extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(title,
-                    style: GoogleFonts.amiri(fontSize: 20,
+                    style: appFont(fontSize: 20,
                         fontWeight: FontWeight.bold, color: Colors.white)),
                   Text(subtitle,
-                    style: GoogleFonts.cairo(fontSize: 10, color: Colors.white70)),
+                    style: appFont(fontSize: 10, color: Colors.white70)),
                 ],
               )),
               const Text('🕌', style: TextStyle(fontSize: 26)),
@@ -111,12 +110,12 @@ class _BankHeader extends StatelessWidget {
                 Expanded(
                   child: TextField(
                     onChanged: onSearchChanged,
-                    style: GoogleFonts.cairo(fontSize: 13, color: Colors.white),
+                    style: appFont(fontSize: 13, color: Colors.white),
                     decoration: InputDecoration(
                       border: InputBorder.none, isDense: true,
                       hintText: loc == 'ar' ? 'بحث...'
                           : loc == 'fr' ? 'Rechercher...' : 'Search...',
-                      hintStyle: GoogleFonts.cairo(color: Colors.white54, fontSize: 13),
+                      hintStyle: appFont(color: Colors.white54, fontSize: 13),
                     ),
                   ),
                 ),
@@ -152,10 +151,10 @@ class _ActivateAllRow extends StatelessWidget {
         child: Row(
           children: [
             Expanded(child: Text(p.label('activate_all'),
-              style: GoogleFonts.cairo(fontSize: 12,
+              style: appFont(fontSize: 12,
                   fontWeight: FontWeight.w700, color: Colors.white))),
             Text('${IslamicEventsData.events.length}',
-              style: GoogleFonts.cairo(fontSize: 10, color: Colors.white54)),
+              style: appFont(fontSize: 10, color: Colors.white54)),
             const SizedBox(width: 10),
             _Toggle(value: all, color: AppColors.green,
                 onChanged: (v) => p.toggleAllIslamicEvents(v)),
@@ -244,7 +243,7 @@ class _SectionDivider extends StatelessWidget {
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 8),
             child: Text('$icon  $label',
-              style: GoogleFonts.cairo(fontSize: 10, fontWeight: FontWeight.w700,
+              style: appFont(fontSize: 10, fontWeight: FontWeight.w700,
                   color: AppColors.text3, letterSpacing: 2)),
           ),
           Expanded(child: Divider(
@@ -271,10 +270,12 @@ class _EventRow extends StatelessWidget {
   }
 
   /// Days until the next ACTUAL occurrence of this event (uses the
-  /// `actual*` fields, not the reminder fields).
+  /// `actual*` fields, not the reminder fields). Region-aware via
+  /// [AppProvider.today], which already accounts for the user's
+  /// region offset.
   int? _daysUntilActual() {
     try {
-      final today = HijriDate.now();
+      final today = p.today;
       final todayG = today.toGregorian();
       if (cfg.isDaily) return 0;
       if (cfg.isWeekly) {
@@ -393,7 +394,7 @@ class _EventRow extends StatelessWidget {
                       children: [
                         Text(
                           cfg.name(p.locale),
-                          style: GoogleFonts.amiri(
+                          style: appFont(
                             fontSize: 18,
                             fontWeight: FontWeight.bold,
                             color: isDark ? AppColors.darkText : AppColors.text,
@@ -402,7 +403,7 @@ class _EventRow extends StatelessWidget {
                         const SizedBox(height: 2),
                         Text(
                           _subtitle(),
-                          style: GoogleFonts.cairo(
+                          style: appFont(
                             fontSize: 11,
                             color: isDark
                                 ? AppColors.darkText3
@@ -423,7 +424,7 @@ class _EventRow extends StatelessWidget {
                     ),
                     child: Text(
                       pillText,
-                      style: GoogleFonts.cairo(
+                      style: appFont(
                         fontSize: 11,
                         fontWeight: FontWeight.w800,
                         color: AppColors.green,
@@ -582,11 +583,11 @@ class _EventDetailSheetState extends State<_EventDetailSheet> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(cfg.name(loc),
-                        style: GoogleFonts.amiri(fontSize: 20,
+                        style: appFont(fontSize: 20,
                             fontWeight: FontWeight.bold,
                             color: isDark ? AppColors.darkText : AppColors.navy)),
                       Text(cfg.name('fr'),
-                        style: GoogleFonts.cairo(fontSize: 11, color: AppColors.text3)),
+                        style: appFont(fontSize: 11, color: AppColors.text3)),
                     ],
                   ),
                 ),
@@ -628,7 +629,7 @@ class _EventDetailSheetState extends State<_EventDetailSheet> {
                   _enabled
                       ? (loc == 'ar' ? 'مفعّل ✓' : loc == 'fr' ? 'Activé ✓' : 'Enabled ✓')
                       : (loc == 'ar' ? 'غير مفعّل' : loc == 'fr' ? 'Désactivé' : 'Disabled'),
-                  style: GoogleFonts.cairo(fontSize: 14, fontWeight: FontWeight.w700,
+                  style: appFont(fontSize: 14, fontWeight: FontWeight.w700,
                       color: Colors.white)),
               ),
             ),
@@ -662,11 +663,11 @@ class _InfoBlock extends StatelessWidget {
           Row(children: [
             Icon(icon, size: 14, color: c),
             const SizedBox(width: 6),
-            Text(title, style: GoogleFonts.cairo(fontSize: 10,
+            Text(title, style: appFont(fontSize: 10,
                 fontWeight: FontWeight.w700, color: c, letterSpacing: 1)),
           ]),
           const SizedBox(height: 8),
-          Text(content, style: GoogleFonts.cairo(fontSize: 13,
+          Text(content, style: appFont(fontSize: 13,
               color: isDark ? AppColors.darkText : AppColors.text,
               height: 1.7)),
         ],
@@ -767,7 +768,7 @@ class _TimeRow extends StatelessWidget {
                         : loc == 'es' ? 'Hora del recordatorio'
                         : loc == 'en' ? 'Reminder time'
                         : 'Heure du rappel',
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                       color: isDark ? AppColors.darkText : AppColors.text,
@@ -782,7 +783,7 @@ class _TimeRow extends StatelessWidget {
                             : loc == 'en'
                                 ? 'Tap to change'
                                 : 'Touchez pour modifier',
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 9,
                       color: AppColors.text3,
                     ),
@@ -798,7 +799,7 @@ class _TimeRow extends StatelessWidget {
               ),
               child: Text(
                 '${_two(t.hour)}:${_two(t.minute)}',
-                style: GoogleFonts.cairo(
+                style: appFont(
                   fontSize: 14,
                   fontWeight: FontWeight.w800,
                   color: Colors.white,
@@ -892,7 +893,7 @@ class _ZakatConfigBlock extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(label,
-                        style: GoogleFonts.cairo(
+                        style: appFont(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                           color: isDark ? AppColors.darkText : AppColors.text,
@@ -900,7 +901,7 @@ class _ZakatConfigBlock extends StatelessWidget {
                     const SizedBox(height: 2),
                     Text(
                       value == null ? placeholder : _formatDate(value),
-                      style: GoogleFonts.cairo(
+                      style: appFont(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
                         color: value == null

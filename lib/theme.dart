@@ -1,6 +1,155 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+/// Resolves a `TextStyle` for the user's currently chosen font family.
+///
+/// Every screen in the app calls [appFont] in place of the underlying
+/// `GoogleFonts.amiri(...)` / `GoogleFonts.cairo(...)` / etc. so the
+/// font picker in Settings instantly retypes the entire UI without any
+/// per-callsite rewrites. The active family is pushed once per build
+/// from `main.dart` via [AppTheme.setActiveFontFamily], so calling
+/// [appFont] inside a widget's `build()` method automatically picks
+/// up the latest selection on the next rebuild (which Provider's
+/// notifyListeners triggers).
+///
+/// The signature mirrors `GoogleFonts.<family>` so the migration is
+/// a pure name swap.
+TextStyle appFont({
+  TextStyle? textStyle,
+  Color? color,
+  Color? backgroundColor,
+  double? fontSize,
+  FontWeight? fontWeight,
+  FontStyle? fontStyle,
+  double? letterSpacing,
+  double? wordSpacing,
+  TextBaseline? textBaseline,
+  double? height,
+  Locale? locale,
+  Paint? foreground,
+  Paint? background,
+  List<Shadow>? shadows,
+  List<FontFeature>? fontFeatures,
+  TextDecoration? decoration,
+  Color? decorationColor,
+  TextDecorationStyle? decorationStyle,
+  double? decorationThickness,
+}) {
+  switch (AppTheme.activeFontFamily) {
+    case 'cairo':
+      return GoogleFonts.cairo(
+        textStyle: textStyle,
+        color: color,
+        backgroundColor: backgroundColor,
+        fontSize: fontSize,
+        fontWeight: fontWeight,
+        fontStyle: fontStyle,
+        letterSpacing: letterSpacing,
+        wordSpacing: wordSpacing,
+        textBaseline: textBaseline,
+        height: height,
+        locale: locale,
+        foreground: foreground,
+        background: background,
+        shadows: shadows,
+        fontFeatures: fontFeatures,
+        decoration: decoration,
+        decorationColor: decorationColor,
+        decorationStyle: decorationStyle,
+        decorationThickness: decorationThickness,
+      );
+    case 'tajawal':
+      return GoogleFonts.tajawal(
+        textStyle: textStyle,
+        color: color,
+        backgroundColor: backgroundColor,
+        fontSize: fontSize,
+        fontWeight: fontWeight,
+        fontStyle: fontStyle,
+        letterSpacing: letterSpacing,
+        wordSpacing: wordSpacing,
+        textBaseline: textBaseline,
+        height: height,
+        locale: locale,
+        foreground: foreground,
+        background: background,
+        shadows: shadows,
+        fontFeatures: fontFeatures,
+        decoration: decoration,
+        decorationColor: decorationColor,
+        decorationStyle: decorationStyle,
+        decorationThickness: decorationThickness,
+      );
+    case 'merriweather':
+      return GoogleFonts.merriweather(
+        textStyle: textStyle,
+        color: color,
+        backgroundColor: backgroundColor,
+        fontSize: fontSize,
+        fontWeight: fontWeight,
+        fontStyle: fontStyle,
+        letterSpacing: letterSpacing,
+        wordSpacing: wordSpacing,
+        textBaseline: textBaseline,
+        height: height,
+        locale: locale,
+        foreground: foreground,
+        background: background,
+        shadows: shadows,
+        fontFeatures: fontFeatures,
+        decoration: decoration,
+        decorationColor: decorationColor,
+        decorationStyle: decorationStyle,
+        decorationThickness: decorationThickness,
+      );
+    case 'roboto':
+      return GoogleFonts.roboto(
+        textStyle: textStyle,
+        color: color,
+        backgroundColor: backgroundColor,
+        fontSize: fontSize,
+        fontWeight: fontWeight,
+        fontStyle: fontStyle,
+        letterSpacing: letterSpacing,
+        wordSpacing: wordSpacing,
+        textBaseline: textBaseline,
+        height: height,
+        locale: locale,
+        foreground: foreground,
+        background: background,
+        shadows: shadows,
+        fontFeatures: fontFeatures,
+        decoration: decoration,
+        decorationColor: decorationColor,
+        decorationStyle: decorationStyle,
+        decorationThickness: decorationThickness,
+      );
+    case 'amiri':
+    default:
+      return GoogleFonts.amiri(
+        textStyle: textStyle,
+        color: color,
+        backgroundColor: backgroundColor,
+        fontSize: fontSize,
+        fontWeight: fontWeight,
+        fontStyle: fontStyle,
+        letterSpacing: letterSpacing,
+        wordSpacing: wordSpacing,
+        textBaseline: textBaseline,
+        height: height,
+        locale: locale,
+        foreground: foreground,
+        background: background,
+        shadows: shadows,
+        fontFeatures: fontFeatures,
+        decoration: decoration,
+        decorationColor: decorationColor,
+        decorationStyle: decorationStyle,
+        decorationThickness: decorationThickness,
+      );
+  }
+}
+
 /// One swatch in the theme-color picker.
 class AccentSwatch {
   final int index;
@@ -142,66 +291,34 @@ class AppColors {
 }
 
 class AppTheme {
-  /// Resolves a Google-Fonts `TextStyle` for one of the supported
-  /// font-family identifiers. Read by [_textTheme] so the user's
-  /// chosen font (set via [AppProvider.setFontFamily]) flows through
-  /// the whole [Theme.of(context).textTheme] tree.
-  static TextStyle _font(
-    String family, {
-    double? fontSize,
-    FontWeight? fontWeight,
-    Color? color,
-  }) {
-    switch (family) {
-      case 'cairo':
-        return GoogleFonts.cairo(
-            fontSize: fontSize, fontWeight: fontWeight, color: color);
-      case 'tajawal':
-        return GoogleFonts.tajawal(
-            fontSize: fontSize, fontWeight: fontWeight, color: color);
-      case 'merriweather':
-        return GoogleFonts.merriweather(
-            fontSize: fontSize, fontWeight: fontWeight, color: color);
-      case 'roboto':
-        return GoogleFonts.roboto(
-            fontSize: fontSize, fontWeight: fontWeight, color: color);
-      case 'amiri':
-      default:
-        return GoogleFonts.amiri(
-            fontSize: fontSize, fontWeight: fontWeight, color: color);
-    }
-  }
-
   /// Active font family — pushed by [HijriCalendarApp] every time
   /// MaterialApp rebuilds (provider notifies). Defaults to `amiri`.
   static String _activeFontFamily = 'amiri';
 
+  /// Public accessor used by the top-level [appFont] resolver.
+  static String get activeFontFamily => _activeFontFamily;
+
   /// Called from main.dart's MaterialApp builder. The setter mutates
   /// a static so [lightTheme] / [darkTheme] (which are getters) pick
-  /// up the new font on the next ThemeData read.
+  /// up the new font on the next ThemeData read, and so any widget
+  /// calling [appFont] in its build picks up the new family on its
+  /// next rebuild.
   static void setActiveFontFamily(String family) {
     _activeFontFamily = family;
   }
 
   static TextTheme _textTheme(bool dark) {
     final c = dark ? AppColors.darkText : AppColors.text;
-    final f = _activeFontFamily;
     return TextTheme(
-      displayLarge:
-          _font(f, fontSize: 32, fontWeight: FontWeight.bold, color: c),
-      displayMedium:
-          _font(f, fontSize: 26, fontWeight: FontWeight.bold, color: c),
-      displaySmall:
-          _font(f, fontSize: 22, fontWeight: FontWeight.bold, color: c),
-      headlineMedium:
-          _font(f, fontSize: 18, fontWeight: FontWeight.w800, color: c),
-      headlineSmall:
-          _font(f, fontSize: 16, fontWeight: FontWeight.w700, color: c),
-      titleLarge:
-          _font(f, fontSize: 14, fontWeight: FontWeight.w700, color: c),
-      bodyLarge: _font(f, fontSize: 14, color: c),
-      bodyMedium: _font(f, fontSize: 12, color: c),
-      bodySmall: _font(f, fontSize: 10,
+      displayLarge: appFont(fontSize: 32, fontWeight: FontWeight.bold, color: c),
+      displayMedium: appFont(fontSize: 26, fontWeight: FontWeight.bold, color: c),
+      displaySmall: appFont(fontSize: 22, fontWeight: FontWeight.bold, color: c),
+      headlineMedium: appFont(fontSize: 18, fontWeight: FontWeight.w800, color: c),
+      headlineSmall: appFont(fontSize: 16, fontWeight: FontWeight.w700, color: c),
+      titleLarge: appFont(fontSize: 14, fontWeight: FontWeight.w700, color: c),
+      bodyLarge: appFont(fontSize: 14, color: c),
+      bodyMedium: appFont(fontSize: 12, color: c),
+      bodySmall: appFont(fontSize: 10,
           color: dark ? AppColors.darkText3 : AppColors.text3),
     );
   }
@@ -224,7 +341,7 @@ class AppTheme {
           foregroundColor: AppColors.navy,
           elevation: 0,
           centerTitle: true,
-          titleTextStyle: _font(_activeFontFamily,
+          titleTextStyle: appFont(
               fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.navy),
         ),
         bottomNavigationBarTheme: BottomNavigationBarThemeData(
@@ -259,8 +376,9 @@ class AppTheme {
           foregroundColor: AppColors.darkText,
           elevation: 0,
           centerTitle: true,
-          titleTextStyle: _font(_activeFontFamily,
-              fontSize: 20, fontWeight: FontWeight.bold, color: AppColors.darkText),
+          titleTextStyle: appFont(
+              fontSize: 20, fontWeight: FontWeight.bold,
+              color: AppColors.darkText),
         ),
         bottomNavigationBarTheme: BottomNavigationBarThemeData(
           backgroundColor: AppColors.darkSurface,

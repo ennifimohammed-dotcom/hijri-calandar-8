@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:uuid/uuid.dart';
@@ -385,7 +384,7 @@ class _AddEventScreenState extends State<AddEventScreen> {
         widget.existingEvent != null
             ? _Tr.editEvent.value(locale)
             : _Tr.addEvent.value(locale),
-        style: GoogleFonts.cairo(
+        style: appFont(
           fontSize: 16,
           fontWeight: FontWeight.w800,
           color: AppColors.navy,
@@ -667,7 +666,7 @@ class _TitleField extends StatelessWidget {
     return _Card(
       child: TextField(
         controller: controller,
-        style: GoogleFonts.cairo(
+        style: appFont(
           fontSize: 16,
           fontWeight: FontWeight.w700,
           color: AppColors.text,
@@ -676,7 +675,7 @@ class _TitleField extends StatelessWidget {
           border: InputBorder.none,
           isDense: true,
           hintText: _Tr.titleHint.value(locale),
-          hintStyle: GoogleFonts.cairo(
+          hintStyle: appFont(
             fontSize: 16,
             color: AppColors.text3,
           ),
@@ -701,7 +700,7 @@ class _DescriptionField extends StatelessWidget {
         maxLines: 3,
         minLines: 1,
         textInputAction: TextInputAction.newline,
-        style: GoogleFonts.cairo(
+        style: appFont(
           fontSize: 14,
           color: AppColors.text,
         ),
@@ -714,7 +713,7 @@ class _DescriptionField extends StatelessWidget {
             size: 20,
           ),
           hintText: _Tr.descriptionHint.value(locale),
-          hintStyle: GoogleFonts.cairo(
+          hintStyle: appFont(
             fontSize: 14,
             color: AppColors.text3,
           ),
@@ -762,7 +761,7 @@ class _ColorPicker extends StatelessWidget {
               const SizedBox(width: 12),
               Text(
                 _Tr.color.value(locale),
-                style: GoogleFonts.cairo(
+                style: appFont(
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
                   color: AppColors.text,
@@ -842,7 +841,7 @@ class _CategoryPicker extends StatelessWidget {
               const SizedBox(width: 12),
               Text(
                 _Tr.category.value(locale),
-                style: GoogleFonts.cairo(
+                style: appFont(
                   fontSize: 14,
                   fontWeight: FontWeight.w700,
                   color: AppColors.text,
@@ -877,7 +876,7 @@ class _CategoryPicker extends StatelessWidget {
                       const SizedBox(width: 6),
                       Text(
                         c.$3.value(locale),
-                        style: GoogleFonts.cairo(
+                        style: appFont(
                           fontSize: 12,
                           fontWeight: FontWeight.w700,
                           color: isSelected
@@ -963,7 +962,7 @@ class _TimeSection extends StatelessWidget {
                 Expanded(
                   child: Text(
                     _Tr.sectionTime.value(locale),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
                       color: AppColors.text,
@@ -982,7 +981,7 @@ class _TimeSection extends StatelessWidget {
                 Expanded(
                   child: Text(
                     _Tr.allDay.value(locale),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                       color: AppColors.text,
@@ -1006,7 +1005,7 @@ class _TimeSection extends StatelessWidget {
                 Expanded(
                   child: Text(
                     _Tr.calendarSystem.value(locale),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                       color: AppColors.text,
@@ -1063,7 +1062,7 @@ class _TimeRow extends StatelessWidget {
             Expanded(
               child: Text(
                 label,
-                style: GoogleFonts.cairo(
+                style: appFont(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
                   color: AppColors.text,
@@ -1072,7 +1071,7 @@ class _TimeRow extends StatelessWidget {
             ),
             Text(
               value,
-              style: GoogleFonts.cairo(
+              style: appFont(
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
                 color: AppColors.green,
@@ -1133,7 +1132,7 @@ class _RecurrenceSection extends StatelessWidget {
                 Expanded(
                   child: Text(
                     _Tr.sectionRecurrence.value(locale),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
                       color: AppColors.text,
@@ -1188,7 +1187,7 @@ class _PropertyRow extends StatelessWidget {
             Expanded(
               child: Text(
                 label,
-                style: GoogleFonts.cairo(
+                style: appFont(
                   fontSize: 14,
                   fontWeight: FontWeight.w600,
                   color: AppColors.text,
@@ -1199,7 +1198,7 @@ class _PropertyRow extends StatelessWidget {
               child: Text(
                 value,
                 textAlign: TextAlign.right,
-                style: GoogleFonts.cairo(
+                style: appFont(
                   fontSize: 13,
                   fontWeight: FontWeight.w700,
                   color: AppColors.green,
@@ -1284,7 +1283,7 @@ class _OptionsSheet<T> extends StatelessWidget {
               children: [
                 Text(
                   title,
-                  style: GoogleFonts.cairo(
+                  style: appFont(
                     fontSize: 14,
                     fontWeight: FontWeight.w800,
                     color: AppColors.text,
@@ -1305,7 +1304,7 @@ class _OptionsSheet<T> extends StatelessWidget {
                     Expanded(
                       child: Text(
                         labelOf(option),
-                        style: GoogleFonts.cairo(
+                        style: appFont(
                           fontSize: 14,
                           fontWeight: FontWeight.w600,
                           color: AppColors.text,
@@ -1397,7 +1396,7 @@ class _CalendarSystemToggle extends StatelessWidget {
         ),
         child: Text(
           label,
-          style: GoogleFonts.cairo(
+          style: appFont(
             fontSize: 12,
             fontWeight: FontWeight.w700,
             color: selected ? Colors.white : AppColors.text2,
@@ -1492,7 +1491,7 @@ class _HijriDatePickerDialogState extends State<_HijriDatePickerDialog> {
           children: [
             Text(
               _Tr.hijriDateTitle.value(loc),
-              style: GoogleFonts.cairo(
+              style: appFont(
                 fontSize: 14,
                 fontWeight: FontWeight.w800,
                 color: AppColors.text,
@@ -1531,7 +1530,7 @@ class _HijriDatePickerDialogState extends State<_HijriDatePickerDialog> {
                   onPressed: () => Navigator.pop(context),
                   child: Text(
                     _Tr.cancel.value(loc),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       color: AppColors.text2,
                       fontWeight: FontWeight.w700,
                     ),
@@ -1553,7 +1552,7 @@ class _HijriDatePickerDialogState extends State<_HijriDatePickerDialog> {
                   ),
                   child: Text(
                     _Tr.ok.value(loc),
-                    style: GoogleFonts.cairo(fontWeight: FontWeight.w800),
+                    style: appFont(fontWeight: FontWeight.w800),
                   ),
                 ),
               ],
@@ -1585,7 +1584,7 @@ class _Spinner extends StatelessWidget {
       children: [
         Text(
           label,
-          style: GoogleFonts.cairo(
+          style: appFont(
             fontSize: 10,
             fontWeight: FontWeight.w700,
             color: AppColors.text3,
@@ -1604,7 +1603,7 @@ class _Spinner extends StatelessWidget {
             textAlign: TextAlign.center,
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
-            style: GoogleFonts.amiri(
+            style: appFont(
               fontSize: big ? 16 : 18,
               fontWeight: FontWeight.bold,
               color: AppColors.navy,
@@ -1665,7 +1664,7 @@ class _NotificationsSection extends StatelessWidget {
                 Expanded(
                   child: Text(
                     _Tr.sectionNotifications.value(locale),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 14,
                       fontWeight: FontWeight.w700,
                       color: AppColors.text,
@@ -1684,7 +1683,7 @@ class _NotificationsSection extends StatelessWidget {
                 Expanded(
                   child: Text(
                     _Tr.enableNotifications.value(locale),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
                       color: AppColors.text,
@@ -1728,7 +1727,7 @@ class _NotificationsSection extends StatelessWidget {
                         canAdd
                             ? _Tr.addReminder.value(locale)
                             : _Tr.reminderLimit.value(locale),
-                        style: GoogleFonts.cairo(
+                        style: appFont(
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
                           color:
@@ -1773,7 +1772,7 @@ class _ReminderRow extends StatelessWidget {
           Expanded(
             child: Text(
               reminder.label(locale),
-              style: GoogleFonts.cairo(
+              style: appFont(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
                 color: AppColors.text,
@@ -1846,7 +1845,7 @@ class _AddReminderSheet extends StatelessWidget {
               children: [
                 Text(
                   _Tr.addReminder.value(locale),
-                  style: GoogleFonts.cairo(
+                  style: appFont(
                     fontSize: 14,
                     fontWeight: FontWeight.w800,
                     color: AppColors.text,
@@ -1864,7 +1863,7 @@ class _AddReminderSheet extends StatelessWidget {
                     isAllDay
                         ? _Tr.allDayPresets.value(locale)
                         : _Tr.timedPresets.value(locale),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
                       color: AppColors.green,
@@ -1894,7 +1893,7 @@ class _AddReminderSheet extends StatelessWidget {
                         Expanded(
                           child: Text(
                             label,
-                            style: GoogleFonts.cairo(
+                            style: appFont(
                               fontSize: 14,
                               fontWeight: FontWeight.w600,
                               color: AppColors.text,
@@ -1947,7 +1946,7 @@ class _SaveBar extends StatelessWidget {
           ),
           child: Text(
             _Tr.save.value(locale),
-            style: GoogleFonts.cairo(
+            style: appFont(
               fontSize: 14,
               fontWeight: FontWeight.w800,
               letterSpacing: 0.4,

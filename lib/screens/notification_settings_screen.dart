@@ -1,10 +1,10 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import '../models/notification_settings.dart';
 import '../providers/app_provider.dart';
 import '../services/notification_service.dart';
+import '../theme.dart';
 
 /// Notification settings screen.
 /// UI strictly matches the provided iOS-style screenshots:
@@ -51,7 +51,7 @@ class _NotificationSettingsScreenState
         iconTheme: const IconThemeData(color: _label),
         title: Text(
           _t(loc, _Tr.title),
-          style: GoogleFonts.cairo(
+          style: appFont(
             color: _label,
             fontWeight: FontWeight.w700,
             fontSize: 16,
@@ -128,6 +128,13 @@ class _NotificationSettingsScreenState
               const _Divider(),
               _soundRow(p, s, loc),
               const _Divider(),
+              // Volume slider — restored here so it remains
+              // available for both the agenda notification surface
+              // and the per-event reminder surface (both routes
+              // open this screen). It was previously removed from
+              // the main app Settings only.
+              _volumeRow(p, s, loc),
+              const _Divider(),
               _row(
                 title: _t(loc, _Tr.vibrator),
                 trailing: _iosSwitch(
@@ -137,6 +144,10 @@ class _NotificationSettingsScreenState
                   ),
                 ),
               ),
+              const _Divider(),
+              // Lock-screen visibility selector — restored alongside
+              // the volume slider for the same reason.
+              _lockScreenRow(p, s, loc),
             ],
           ),
         ),
@@ -162,7 +173,7 @@ class _NotificationSettingsScreenState
                 children: [
                   Text(
                     _t(loc, _Tr.sound),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 16,
                       color: _label,
                       fontWeight: FontWeight.w500,
@@ -171,7 +182,7 @@ class _NotificationSettingsScreenState
                   const SizedBox(height: 2),
                   Text(
                     label,
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 13,
                       color: _blue,
                       fontWeight: FontWeight.w600,
@@ -208,7 +219,7 @@ class _NotificationSettingsScreenState
               Expanded(
                 child: Text(
                   _t(loc, _Tr.volume),
-                  style: GoogleFonts.cairo(
+                  style: appFont(
                     fontSize: 16,
                     color: _label,
                     fontWeight: FontWeight.w500,
@@ -217,7 +228,7 @@ class _NotificationSettingsScreenState
               ),
               Text(
                 '${(s.volume * 100).round()}%',
-                style: GoogleFonts.cairo(
+                style: appFont(
                   fontSize: 13,
                   color: _sub,
                   fontWeight: FontWeight.w600,
@@ -278,7 +289,7 @@ class _NotificationSettingsScreenState
                 children: [
                   Text(
                     _t(loc, _Tr.lockScreen),
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 16,
                       color: _label,
                       fontWeight: FontWeight.w500,
@@ -287,7 +298,7 @@ class _NotificationSettingsScreenState
                   const SizedBox(height: 2),
                   Text(
                     label,
-                    style: GoogleFonts.cairo(
+                    style: appFont(
                       fontSize: 13,
                       color: _blue,
                       fontWeight: FontWeight.w600,
@@ -317,7 +328,7 @@ class _NotificationSettingsScreenState
         icon: const Icon(Icons.notifications_active_rounded, color: _blue),
         label: Text(
           _t(loc, _Tr.sendTest),
-          style: GoogleFonts.cairo(
+          style: appFont(
             color: _blue,
             fontWeight: FontWeight.w700,
           ),
@@ -454,7 +465,7 @@ class _NotificationSettingsScreenState
           Expanded(
             child: Text(
               title,
-              style: GoogleFonts.cairo(
+              style: appFont(
                 fontSize: 16,
                 color: titleColor,
                 fontWeight: FontWeight.w600,
@@ -483,7 +494,7 @@ class _NotificationSettingsScreenState
             Expanded(
               child: Text(
                 label,
-                style: GoogleFonts.cairo(
+                style: appFont(
                   fontSize: 16,
                   color: _label,
                   fontWeight: FontWeight.w500,
@@ -549,7 +560,7 @@ class _NotificationSettingsScreenState
                     padding: const EdgeInsets.symmetric(vertical: 14),
                     child: Text(
                       title,
-                      style: GoogleFonts.cairo(
+                      style: appFont(
                         fontSize: 14,
                         fontWeight: FontWeight.w700,
                         color: _label,
@@ -585,7 +596,7 @@ class _NotificationSettingsScreenState
             Expanded(
               child: Text(
                 label,
-                style: GoogleFonts.cairo(
+                style: appFont(
                   fontSize: 15,
                   color: _label,
                   fontWeight: FontWeight.w500,
@@ -612,7 +623,7 @@ class _NotificationSettingsScreenState
             child: Center(
               child: Text(
                 _t(loc, _Tr.cancel),
-                style: GoogleFonts.cairo(
+                style: appFont(
                   fontSize: 16,
                   fontWeight: FontWeight.w800,
                   color: _label,

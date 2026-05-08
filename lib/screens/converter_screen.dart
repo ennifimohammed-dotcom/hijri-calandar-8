@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../providers/app_provider.dart';
@@ -25,12 +24,55 @@ class _ConverterScreenState extends State<ConverterScreen>
   DateTime _gregInput = DateTime.now();
   HijriDate? _hijriResult;
 
+  /// Region-aware Hijri offset, applied to every conversion below so
+  /// the converter is consistent with the rest of the app's calendar
+  /// (Morocco/Algeria run +1 day relative to Umm al-Qura, etc.).
+  /// Uses listen:false because the value is read at conversion time
+  /// rather than during build; the build method below also calls
+  /// [context.watch] so the screen still rebuilds on region change.
+  int get _offset {
+    final p = Provider.of<AppProvider>(context, listen: false);
+    return p.hijriDayOffset;
+  }
+
+  /// Today in the user's regional Hijri calendar — mirrors
+  /// [AppProvider._todayForRegion].
+  HijriDate _regionalToday() {
+    final shifted = DateTime.now().subtract(Duration(days: _offset));
+    return HijriDate.fromGregorian(shifted);
+  }
+
   @override
   void initState() {
     super.initState();
     _tabCtrl = TabController(length: 2, vsync: this);
-    final now = HijriDate.now();
-    _hDay = now.hDay; _hMonth = now.hMonth; _hYear = now.hYear;
+    // Provisional defaults — overwritten in the first
+    // [didChangeDependencies] once the provider is reachable.
+    _hDay = 1; _hMonth = 1; _hYear = 1446;
+  }
+
+  // Tracks the last region offset we used. When the user changes
+  // region in Settings the provider notifies, [didChangeDependencies]
+  // fires here, and we re-run the conversions so the displayed
+  // Hijri/Gregorian pair stays synchronized with the active region.
+  int? _lastOffset;
+  bool _seededFromRegion = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final off = Provider.of<AppProvider>(context, listen: true).hijriDayOffset;
+    if (_lastOffset == off) return;
+    _lastOffset = off;
+    if (!_seededFromRegion) {
+      final shifted = DateTime.now().subtract(Duration(days: off));
+      final today = HijriDate.fromGregorian(shifted);
+      _hDay = today.hDay;
+      _hMonth = today.hMonth;
+      _hYear = today.hYear;
+      _gregInput = DateTime.now();
+      _seededFromRegion = true;
+    }
     _convertHijriToGreg();
     _convertGregToHijri();
   }
@@ -40,20 +82,24 @@ class _ConverterScreenState extends State<ConverterScreen>
 
   void _convertHijriToGreg() {
     try {
-      final g = HijriDate.hijriToGregorian(_hYear, _hMonth, _hDay);
+      // Region offset reverses the regional shift: a regional Hijri
+      // date d corresponds to UAQ.toGregorian(d) + offset days.
+      final base = HijriDate.hijriToGregorian(_hYear, _hMonth, _hDay);
+      final g = base.add(Duration(days: _offset));
       setState(() => _gregResult = g);
     } catch (_) { setState(() => _gregResult = null); }
   }
 
   void _convertGregToHijri() {
     try {
-      final h = HijriDate.fromGregorian(_gregInput);
+      final shifted = _gregInput.subtract(Duration(days: _offset));
+      final h = HijriDate.fromGregorian(shifted);
       setState(() => _hijriResult = h);
     } catch (_) { setState(() => _hijriResult = null); }
   }
 
   void _goToToday() {
-    final now = HijriDate.now();
+    final now = _regionalToday();
     setState(() {
       _hDay = now.hDay; _hMonth = now.hMonth; _hYear = now.hYear;
       _gregInput = DateTime.now();
@@ -67,6 +113,9 @@ class _ConverterScreenState extends State<ConverterScreen>
     final p = context.watch<AppProvider>();
     final isDark = p.themeMode == ThemeMode.dark;
     final loc = p.locale;
+    // Conversions follow the active region; see
+    // [didChangeDependencies] which re-runs them when the provider
+    // notifies of a region change.
 
     return Scaffold(
       backgroundColor: isDark ? AppColors.darkBg : AppColors.bg,
@@ -76,7 +125,7 @@ class _ConverterScreenState extends State<ConverterScreen>
         title: Text(
           loc == 'ar' ? 'محوّل التواريخ'
               : loc == 'fr' ? 'Convertisseur de dates' : 'Date Converter',
-          style: GoogleFonts.amiri(fontSize: 20, fontWeight: FontWeight.bold,
+          style: appFont(fontSize: 20, fontWeight: FontWeight.bold,
               color: isDark ? AppColors.darkText : AppColors.navy)),
         centerTitle: true,
         actions: [
@@ -94,7 +143,7 @@ class _ConverterScreenState extends State<ConverterScreen>
               indicatorColor: AppColors.green,
               labelColor: AppColors.green,
               unselectedLabelColor: AppColors.text3,
-              labelStyle: GoogleFonts.cairo(fontSize: 12, fontWeight: FontWeight.w700),
+              labelStyle: appFont(fontSize: 12, fontWeight: FontWeight.w700),
               tabs: [
                 Tab(text: loc == 'ar' ? 'هجري ← ميلادي' : 'Hijri → Grégorien'),
                 Tab(text: loc == 'ar' ? 'ميلادي ← هجري' : 'Grégorien → Hijri'),
@@ -255,18 +304,18 @@ class _HijriToGregResult extends StatelessWidget {
           ),
           child: Column(
             children: [
-              Text(wd, style: GoogleFonts.cairo(fontSize: 13,
+              Text(wd, style: appFont(fontSize: 13,
                   fontWeight: FontWeight.w700, color: AppColors.green)),
               const SizedBox(height: 8),
               Text(
                 '${date.day} $gMon ${date.year}',
-                style: GoogleFonts.amiri(fontSize: 32, fontWeight: FontWeight.bold,
+                style: appFont(fontSize: 32, fontWeight: FontWeight.bold,
                     color: isDark ? AppColors.darkText : AppColors.navy),
                 textAlign: TextAlign.center),
               const SizedBox(height: 4),
               Text(
                 '$hDay ${p.getHijriMonthName(hMonth, loc)} $hYear هـ',
-                style: GoogleFonts.cairo(fontSize: 14,
+                style: appFont(fontSize: 14,
                     color: isDark ? AppColors.darkText2 : AppColors.text2),
                 textAlign: TextAlign.center),
               const SizedBox(height: 16),
@@ -350,12 +399,12 @@ class _GregToHijriTab extends StatelessWidget {
                 children: [
                   Text(loc == 'ar' ? 'التاريخ الميلادي'
                       : loc == 'fr' ? 'Date grégorienne' : 'Gregorian Date',
-                    style: GoogleFonts.cairo(fontSize: 10, color: Colors.white54,
+                    style: appFont(fontSize: 10, color: Colors.white54,
                         letterSpacing: 2, fontWeight: FontWeight.w700)),
                   const SizedBox(height: 8),
                   Text(
                     '${gregInput.day} / ${gregInput.month} / ${gregInput.year}',
-                    style: GoogleFonts.amiri(fontSize: 30, fontWeight: FontWeight.bold,
+                    style: appFont(fontSize: 30, fontWeight: FontWeight.bold,
                         color: Colors.white)),
                   const SizedBox(height: 8),
                   Container(
@@ -371,7 +420,7 @@ class _GregToHijriTab extends StatelessWidget {
                         const SizedBox(width: 6),
                         Text(loc == 'ar' ? 'اختر تاريخاً'
                             : loc == 'fr' ? 'Choisir une date' : 'Pick a date',
-                          style: GoogleFonts.cairo(fontSize: 12, color: Colors.white,
+                          style: appFont(fontSize: 12, color: Colors.white,
                               fontWeight: FontWeight.w700)),
                       ],
                     ),
@@ -403,13 +452,13 @@ class _GregToHijriTab extends StatelessWidget {
                 children: [
                   Text(
                     '${result!.hDay} ${p.getHijriMonthName(result!.hMonth, loc)} ${result!.hYear}',
-                    style: GoogleFonts.amiri(fontSize: 30, fontWeight: FontWeight.bold,
+                    style: appFont(fontSize: 30, fontWeight: FontWeight.bold,
                         color: isDark ? AppColors.darkText : AppColors.navy),
                     textAlign: TextAlign.center),
                   const SizedBox(height: 4),
                   Text(
                     '${result!.hYear} ${loc == "ar" ? "هـ" : "AH"}',
-                    style: GoogleFonts.cairo(fontSize: 13, color: AppColors.green,
+                    style: appFont(fontSize: 13, color: AppColors.green,
                         fontWeight: FontWeight.w700)),
                   const SizedBox(height: 12),
                   _ActionBtn(
@@ -469,14 +518,14 @@ class _NumberPicker extends StatelessWidget {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(label, style: GoogleFonts.cairo(fontSize: 9,
+        Text(label, style: appFont(fontSize: 9,
             color: AppColors.text3, fontWeight: FontWeight.w700)),
         const SizedBox(height: 4),
         GestureDetector(
           onTap: () => onChanged((value + 1).clamp(min, max)),
           child: Icon(Icons.keyboard_arrow_up_rounded,
               color: AppColors.green, size: 22)),
-        Text('$value', style: GoogleFonts.amiri(fontSize: 22,
+        Text('$value', style: appFont(fontSize: 22,
             fontWeight: FontWeight.bold,
             color: isDark ? AppColors.darkText : AppColors.navy)),
         GestureDetector(
@@ -503,7 +552,7 @@ class _MonthPicker extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Text(loc == 'ar' ? 'الشهر' : loc == 'fr' ? 'Mois' : 'Month',
-          style: GoogleFonts.cairo(fontSize: 9,
+          style: appFont(fontSize: 9,
               color: AppColors.text3, fontWeight: FontWeight.w700)),
         const SizedBox(height: 4),
         GestureDetector(
@@ -513,7 +562,7 @@ class _MonthPicker extends StatelessWidget {
         SizedBox(
           width: 80,
           child: Text(p.getHijriMonthName(value, loc),
-            style: GoogleFonts.amiri(fontSize: 14, fontWeight: FontWeight.bold,
+            style: appFont(fontSize: 14, fontWeight: FontWeight.bold,
                 color: isDark ? AppColors.darkText : AppColors.navy),
             textAlign: TextAlign.center,
             maxLines: 2, overflow: TextOverflow.ellipsis),
@@ -548,7 +597,7 @@ class _ActionBtn extends StatelessWidget {
         children: [
           Icon(icon, color: color, size: 16),
           const SizedBox(width: 6),
-          Text(label, style: GoogleFonts.cairo(fontSize: 12,
+          Text(label, style: appFont(fontSize: 12,
               fontWeight: FontWeight.w700, color: color)),
         ],
       ),

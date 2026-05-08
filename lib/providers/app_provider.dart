@@ -88,7 +88,12 @@ class AppProvider extends ChangeNotifier {
   /// sighting which lags Umm al-Qura by one day, so default offset
   /// = +1; Tunisia, Türkiye (Diyanet) and Indonesia normally align
   /// with Umm al-Qura calculation.
-  String _region = 'global';
+  ///
+  /// First-run default = Morocco. The user can change it from the
+  /// Language section in Settings; the choice is persisted under the
+  /// `region` key in SharedPreferences so subsequent launches restore
+  /// the user's pick.
+  String _region = 'ma';
   int _hijriManualAdjust = 0;
 
   // ── Getters ───────────────────────────────────────────────
