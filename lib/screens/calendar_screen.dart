@@ -1562,32 +1562,70 @@ class _AgendaViewState extends State<_AgendaView> {
   Widget build(BuildContext context) {
     final p = widget.p;
     final isDark = widget.isDark;
-
-    // Past block — chronological from provider, then reversed so the
-    // sliver-before-center sees `child(0) = yesterday` (closest to
-    // today) and the topmost (oldest) item at the highest index.
-    final pastItems = p
-        .getAgendaEventsRange(pastDays: _pastDays, futureDays: 0)
-        .reversed
-        .toList();
-
-    // Future block — today + days forward. We always force today as
-    // the first entry, even when it has no events, so today's date
-    // badge stays visible at the anchor and the "Today" button has
-    // a deterministic target.
-    final rawFuture = p.getAgendaEventsRange(
-        pastDays: 0, futureDays: _futureDays);
     final today = p.today;
-    final hasToday = rawFuture.isNotEmpty &&
-        rawFuture.first.key.hYear == today.hYear &&
-        rawFuture.first.key.hMonth == today.hMonth &&
-        rawFuture.first.key.hDay == today.hDay;
-    final futureItems = hasToday
-        ? rawFuture
-        : <MapEntry<HijriDate, List<AppEvent>>>[
-            MapEntry(today, const <AppEvent>[]),
-            ...rawFuture,
-          ];
+
+    // Walk the entire window in one pass and deduplicate by a Hijri
+    // (year, month, day) key. The dedup is required because the
+    // range walker maps Gregorian → Hijri using the canonical
+    // converter, while `p.today` (and the date-badge inside
+    // `_AgendaGroup`) apply the region offset (`hijriDayOffset`).
+    // For some boundary pairs that mismatch makes two consecutive
+    // Gregorian days resolve to the same Hijri (y, m, d) — which
+    // showed up as the duplicate "21 ذو القعدة 1447 — 09/05/2026"
+    // section reported in the field. Keying by Hijri (y, m, d) and
+    // dropping repeats guarantees one section per Hijri day.
+    String hijriKey(HijriDate h) => '${h.hYear}-${h.hMonth}-${h.hDay}';
+
+    final allRaw = p.getAgendaEventsRange(
+      pastDays: _pastDays,
+      futureDays: _futureDays,
+    );
+    final seen = <String>{};
+    final dedup = <MapEntry<HijriDate, List<AppEvent>>>[];
+    for (final entry in allRaw) {
+      if (seen.add(hijriKey(entry.key))) dedup.add(entry);
+    }
+
+    // Locate today inside the deduped list. If today already exists
+    // (typical case — today has at least the daily-adhkar events),
+    // we re-use it. Only when it's genuinely missing do we inject a
+    // single empty placeholder, and we insert it at the correct
+    // chronological position so the past/future split below stays
+    // sorted.
+    final todayKey = hijriKey(today);
+    int todayIdx = dedup.indexWhere((e) => hijriKey(e.key) == todayKey);
+    if (todayIdx < 0) {
+      DateTime todayGreg;
+      try {
+        todayGreg = p.hijriToGregorian(today.hYear, today.hMonth, today.hDay);
+      } catch (_) {
+        todayGreg = DateTime.now();
+      }
+      int insertAt = dedup.length;
+      for (int i = 0; i < dedup.length; i++) {
+        DateTime g;
+        try {
+          g = p.hijriToGregorian(
+              dedup[i].key.hYear, dedup[i].key.hMonth, dedup[i].key.hDay);
+        } catch (_) {
+          g = DateTime.now();
+        }
+        if (!g.isBefore(todayGreg)) {
+          insertAt = i;
+          break;
+        }
+      }
+      dedup.insert(insertAt, MapEntry(today, const <AppEvent>[]));
+      todayIdx = insertAt;
+    }
+
+    // Disjoint past / future partitions around today. Past is
+    // reversed so the sliver-before-center sees `child(0) =
+    // yesterday` (closest to today) and the oldest day at the
+    // highest index — same semantics as before, just sourced from a
+    // dedupe-clean unified list.
+    final pastItems = dedup.sublist(0, todayIdx).reversed.toList();
+    final futureItems = dedup.sublist(todayIdx);
 
     return CustomScrollView(
       controller: _scrollCtrl,
