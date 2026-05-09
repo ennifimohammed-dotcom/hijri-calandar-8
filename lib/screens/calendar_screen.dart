@@ -494,18 +494,14 @@ class _DayCell extends StatelessWidget {
     final isAyyam   = p.isAyyamAlBid(day);
     final isRamadan = p.isRamadan(month);
     // Daily adhkar (morning / evening / sleep) appear on every single
-    // day. Showing dots for them would clutter the entire month grid,
-    // so they're hidden from the monthly view's day cells. They still
-    // show up normally in the events list below the grid.
+    // day. Showing them here would clutter the entire monthly view —
+    // both the dots inside this day cell and the per-day events list
+    // below the grid — so we hide them from BOTH places. They still
+    // continue to fire notifications and show up normally in the
+    // Agenda view.
     final events = p
         .getEventsForDay(day, month, year)
-        .where((e) =>
-            e.id != 'adhkar_sabah_${year}_$month' &&
-            e.id != 'adhkar_masaa_${year}_$month' &&
-            e.id != 'adhkar_nawm_${year}_$month' &&
-            !e.id.startsWith('adhkar_sabah') &&
-            !e.id.startsWith('adhkar_masaa') &&
-            !e.id.startsWith('adhkar_nawm'))
+        .where((e) => !p.isDailyAdhkar(e.id))
         .toList();
 
     int weekday = 1;
@@ -632,7 +628,14 @@ class _EventsList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final events = p.getEventsForSelectedDay();
+    // Same exclusion as the day cells above the list: morning /
+    // evening / sleep adhkar are intentionally hidden from the
+    // monthly view to keep it uncluttered. They still fire
+    // notifications and remain visible in the Agenda view.
+    final events = p
+        .getEventsForSelectedDay()
+        .where((e) => !p.isDailyAdhkar(e.id))
+        .toList();
     final s = p.selectedDay;
     return Container(
       color: isDark ? AppColors.darkBg : AppColors.bg,
@@ -1441,22 +1444,60 @@ class _AgendaView extends StatefulWidget {
 }
 
 class _AgendaViewState extends State<_AgendaView> {
-  int _days = 60;
+  // Bidirectional window around today.
+  //   _pastDays   — how many days before today to include
+  //   _futureDays — how many days after today (inclusive) to include
+  //
+  // Pull-to-refresh at the top bumps `_pastDays` so the user can
+  // browse back through previous days and their Islamic virtues; the
+  // "load more" button at the bottom bumps `_futureDays` (preserving
+  // the old behaviour for upcoming days). Initial state mirrors the
+  // pre-existing default of 60 upcoming days, so first-paint is
+  // unchanged.
+  int _pastDays = 0;
+  int _futureDays = 60;
 
-  Future<void> _onRefresh() async {
-    setState(() => _days = 60);
-    await Future.delayed(const Duration(milliseconds: 500));
+  static const int _pageSize = 30;
+
+  /// Pull-to-refresh handler — loads 30 more past days. Awaiting a
+  /// short delay keeps the spinner visible long enough to feel
+  /// intentional (the rebuild itself is synchronous).
+  Future<void> _loadMorePast() async {
+    setState(() => _pastDays += _pageSize);
+    await Future.delayed(const Duration(milliseconds: 300));
+  }
+
+  String _loadMoreFutureLabel(String locale) {
+    switch (locale) {
+      case 'ar': return 'تحميل المزيد';
+      case 'es': return 'Cargar más';
+      case 'en': return 'Load more';
+      default:   return 'Charger plus';
+    }
+  }
+
+  String _loadMorePastLabel(String locale) {
+    switch (locale) {
+      case 'ar': return 'تحميل أيام سابقة';
+      case 'es': return 'Cargar días anteriores';
+      case 'en': return 'Load previous days';
+      default:   return 'Charger les jours précédents';
+    }
   }
 
   @override
   Widget build(BuildContext context) {
     final p = widget.p;
     final isDark = widget.isDark;
-    final items = p.getAgendaEvents(days: _days);
+    final items = p.getAgendaEventsRange(
+      pastDays: _pastDays,
+      futureDays: _futureDays,
+    );
 
     if (items.isEmpty) {
       return RefreshIndicator(
-        onRefresh: _onRefresh,
+        color: AppColors.green,
+        onRefresh: _loadMorePast,
         child: ListView(
           children: [
             SizedBox(
@@ -1480,27 +1521,56 @@ class _AgendaViewState extends State<_AgendaView> {
       );
     }
 
+    // Header (load-past button) + N day groups + footer (load-future
+    // button). Putting the load-past CTA inside the list — in
+    // addition to RefreshIndicator — gives users a discoverable,
+    // tap-able alternative on devices where pull-to-refresh isn't
+    // obvious (e.g. small screens, or after they've already scrolled
+    // away from the very top).
+    final headerCount = 1; // load-past button
+    final footerCount = 1; // load-future button
     return RefreshIndicator(
       color: AppColors.green,
-      onRefresh: _onRefresh,
+      onRefresh: _loadMorePast,
       child: ListView.builder(
         padding: const EdgeInsets.only(bottom: 80),
-        itemCount: items.length + 1,
+        itemCount: headerCount + items.length + footerCount,
         itemBuilder: (ctx, idx) {
-          if (idx == items.length) {
+          if (idx == 0) {
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Center(
+                child: TextButton.icon(
+                  onPressed: () =>
+                      setState(() => _pastDays += _pageSize),
+                  icon: const Icon(Icons.history, size: 18,
+                      color: AppColors.green),
+                  label: Text(
+                    _loadMorePastLabel(p.locale),
+                    style: appFont(
+                      color: AppColors.green,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ),
+            );
+          }
+          if (idx == headerCount + items.length) {
             return Padding(
               padding: const EdgeInsets.all(16),
               child: TextButton(
-                onPressed: () => setState(() => _days += 30),
+                onPressed: () =>
+                    setState(() => _futureDays += _pageSize),
                 child: Text(
-                  p.locale == 'ar' ? 'تحميل المزيد' : 'Charger plus',
+                  _loadMoreFutureLabel(p.locale),
                   style: appFont(color: AppColors.green,
                       fontWeight: FontWeight.w700),
                 ),
               ),
             );
           }
-          final entry = items[idx];
+          final entry = items[idx - headerCount];
           return _AgendaGroup(
               date: entry.key, events: entry.value, p: p, isDark: isDark);
         },

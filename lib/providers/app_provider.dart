@@ -327,20 +327,46 @@ class AppProvider extends ChangeNotifier {
 
   /// Agenda: returns date → events map for next [days] days
   List<MapEntry<HijriDate, List<AppEvent>>> getAgendaEvents({int days = 60}) {
+    return getAgendaEventsRange(pastDays: 0, futureDays: days);
+  }
+
+  /// Agenda — bidirectional range query.
+  ///
+  /// Walks Gregorian dates from `today - pastDays` (inclusive) to
+  /// `today + futureDays - 1` (inclusive) and returns a chronological
+  /// list of (HijriDate → events) entries for each day that has at
+  /// least one event. Powers the agenda's pull-to-load-past + button
+  /// load-more-future history navigation.
+  List<MapEntry<HijriDate, List<AppEvent>>> getAgendaEventsRange({
+    int pastDays = 0,
+    int futureDays = 60,
+  }) {
     final result = <MapEntry<HijriDate, List<AppEvent>>>[];
-    var greg = DateTime.now();
-    for (int i = 0; i < days; i++) {
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, now.day)
+        .subtract(Duration(days: pastDays));
+    final total = pastDays + futureDays;
+    for (int i = 0; i < total; i++) {
+      final greg = start.add(Duration(days: i));
       try {
         final h = HijriDate.fromGregorian(greg);
         final evs = getEventsForDay(h.hDay, h.hMonth, h.hYear);
         if (evs.isNotEmpty) result.add(MapEntry(h, evs));
       } catch (_) {}
-      greg = greg.add(const Duration(days: 1));
     }
     return result;
   }
 
   // ── Islamic events ────────────────────────────────────────
+  /// Resolves which Islamic-virtue events should be DISPLAYED on
+  /// a given Hijri day inside the calendar/agenda. Uses the cfg's
+  /// "actual occasion" date (Friday for Jumu'ah, Monday/Thursday for
+  /// the fasting, 13/14/15 for Ayyam al-Bid, 17/19/21 for Hijama, …)
+  /// — not the reminder day, which fires earlier per spec.
+  ///
+  /// The notification scheduler in [_scheduleIslamicNotifications]
+  /// deliberately stays on [IslamicEventConfig.matchesDay] so reminder
+  /// behaviour is unchanged.
   List<AppEvent> _getIslamicEventsForDay(int day, int month, int year) {
     final result = <AppEvent>[];
     DateTime greg;
@@ -351,13 +377,28 @@ class AppProvider extends ChangeNotifier {
     }
     for (final cfg in IslamicEventsData.events) {
       if (_islamicEventsEnabled[cfg.id] != true) continue;
-      if (!cfg.matchesDay(hijriDay: day, hijriMonth: month, greg: greg)) {
+      if (!cfg.matchesDisplayDay(
+          hijriDay: day, hijriMonth: month, greg: greg)) {
         continue;
       }
       result.add(_islamicConfigToEvent(cfg, day, month, year, greg));
     }
     return result;
   }
+
+  /// Daily-adhkar ids (morning / evening / sleep). The monthly view
+  /// hides these to keep the grid uncluttered, but they still appear
+  /// in the Agenda view and continue to fire notifications.
+  static const List<String> _dailyAdhkarIdPrefixes = [
+    'adhkar_sabah',
+    'adhkar_masaa',
+    'adhkar_nawm',
+  ];
+
+  /// True when [eventId] belongs to one of the always-on daily adhkar
+  /// (id is generated as `<prefix>_<year>_<month>_<day>`).
+  bool isDailyAdhkar(String eventId) =>
+      _dailyAdhkarIdPrefixes.any((p) => eventId.startsWith(p));
 
   AppEvent _islamicConfigToEvent(
       IslamicEventConfig cfg, int day, int month, int year, DateTime greg) {

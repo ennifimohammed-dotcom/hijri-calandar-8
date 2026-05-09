@@ -141,6 +141,36 @@ class IslamicEventConfig {
     // Yearly
     return hijriDay == day && hijriMonth == month;
   }
+
+  /// Whether this event's ACTUAL Islamic occasion falls on
+  /// ([hijriDay], [hijriMonth]) at the Gregorian [greg] date.
+  ///
+  /// Used by the monthly + agenda views to put dots and event cards
+  /// on the real observance day — Friday for Jumu'ah, Monday/Thursday
+  /// for the fasting, 13/14/15 for Ayyam al-Bid, 17/19/21 for Hijama,
+  /// etc. — instead of on the day the reminder fires (one day before,
+  /// per spec).
+  ///
+  /// The notification scheduler does NOT use this: it still uses
+  /// [matchesDay] so the reminder behaviour is unchanged.
+  bool matchesDisplayDay({
+    required int hijriDay,
+    required int hijriMonth,
+    required DateTime greg,
+  }) {
+    if (isDaily) return true;
+    if (isWeekly) {
+      final wds = displayWeekdays;
+      if (wds.isEmpty) return false;
+      return wds.contains(greg.weekday);
+    }
+    if (isMonthly) {
+      final days = displayMonthlyDays;
+      return days.contains(hijriDay);
+    }
+    // Yearly
+    return hijriDay == displayDay && hijriMonth == displayMonth;
+  }
 }
 
 class IslamicEventsData {
