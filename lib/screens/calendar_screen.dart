@@ -1543,7 +1543,7 @@ class _AgendaViewState extends State<_AgendaView> {
                 child: TextButton.icon(
                   onPressed: () =>
                       setState(() => _pastDays += _pageSize),
-                  icon: const Icon(Icons.history, size: 18,
+                  icon: Icon(Icons.history, size: 18,
                       color: AppColors.green),
                   label: Text(
                     _loadMorePastLabel(p.locale),
