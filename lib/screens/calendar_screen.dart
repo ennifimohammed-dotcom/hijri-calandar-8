@@ -72,6 +72,12 @@ class _CalendarScreenState extends State<CalendarScreen> {
   late int _baseMonth;
   bool _baseInitialized = false;
 
+  /// Tagged on the live [_AgendaView] so the "Today" button in the
+  /// top bar can reach into its state and trigger a smooth scroll
+  /// back to today without rebuilding the agenda.
+  final GlobalKey<_AgendaViewState> _agendaKey =
+      GlobalKey<_AgendaViewState>();
+
   @override
   void initState() {
     super.initState();
@@ -150,6 +156,13 @@ class _CalendarScreenState extends State<CalendarScreen> {
     _baseMonth = p.today.hMonth;
     if (_pageCtrl.hasClients) {
       _pageCtrl.jumpToPage(_kBaseIndex);
+    }
+    // Smooth-scroll the agenda back to today when it's the active
+    // view. Off-screen views (monthly / weekly) are unaffected; the
+    // call is a no-op when the agenda's ScrollController hasn't
+    // attached to a viewport yet.
+    if (p.viewMode == CalendarViewMode.agenda) {
+      _agendaKey.currentState?.scrollToToday();
     }
   }
 
@@ -295,7 +308,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
       case CalendarViewMode.weekly:
         return _WeeklyView(p: p, isDark: isDark);
       case CalendarViewMode.agenda:
-        return _AgendaView(p: p, isDark: isDark);
+        return _AgendaView(key: _agendaKey, p: p, isDark: isDark);
     }
   }
 }
@@ -1438,36 +1451,105 @@ class _CurrentTimeIndicator extends StatelessWidget {
 class _AgendaView extends StatefulWidget {
   final AppProvider p;
   final bool isDark;
-  const _AgendaView({required this.p, required this.isDark});
+  const _AgendaView({super.key, required this.p, required this.isDark});
   @override
   State<_AgendaView> createState() => _AgendaViewState();
 }
 
 class _AgendaViewState extends State<_AgendaView> {
-  // Bidirectional window around today.
-  //   _pastDays   — how many days before today to include
-  //   _futureDays — how many days after today (inclusive) to include
+  // Bidirectional, anchored agenda.
   //
-  // Pull-to-refresh at the top bumps `_pastDays` so the user can
-  // browse back through previous days and their Islamic virtues; the
-  // "load more" button at the bottom bumps `_futureDays` (preserving
-  // the old behaviour for upcoming days). Initial state mirrors the
-  // pre-existing default of 60 upcoming days, so first-paint is
-  // unchanged.
+  // The list renders chronologically — past on top, today in the
+  // middle, future at the bottom — but uses a [CustomScrollView]
+  // with a `center:` key sliver so the user's scroll offset is
+  // measured relative to *today*, not relative to the past edge.
+  // That means appending more past days never shifts today, never
+  // jumps the scroll position, and the "Today" button can simply
+  // animate to offset 0 to land back on today.
+  //
+  //   _pastDays   — past Gregorian days included (above center).
+  //   _futureDays — future days included (below + at center).
+  //   _pageSize   — increment used by both auto-load and "Load More".
   int _pastDays = 0;
   int _futureDays = 60;
-
   static const int _pageSize = 30;
 
-  /// Pull-to-refresh handler — loads 30 more past days. Awaiting a
-  /// short delay keeps the spinner visible long enough to feel
-  /// intentional (the rebuild itself is synchronous).
-  Future<void> _loadMorePast() async {
-    setState(() => _pastDays += _pageSize);
-    await Future.delayed(const Duration(milliseconds: 300));
+  /// Once-only auto-load: the spec asks for ONE automatic load when
+  /// the user first scrolls into the past zone, then a button drives
+  /// every subsequent expansion. Keeping this a one-shot keeps the
+  /// UX predictable (no "what just happened?" auto-jumps deep into
+  /// history) and keeps memory bounded.
+  bool _autoLoadedPast = false;
+
+  /// Lightweight reentrancy lock to swallow rapid-fire taps / scroll
+  /// callbacks while a setState is already in flight.
+  bool _busy = false;
+
+  late final ScrollController _scrollCtrl;
+
+  /// Sliver identity that [CustomScrollView.center] points at. Must
+  /// be a stable, non-rebuilt key, hence the `final` field.
+  final Key _centerKey = UniqueKey();
+
+  @override
+  void initState() {
+    super.initState();
+    _scrollCtrl = ScrollController()..addListener(_onScroll);
   }
 
-  String _loadMoreFutureLabel(String locale) {
+  @override
+  void dispose() {
+    _scrollCtrl
+      ..removeListener(_onScroll)
+      ..dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_autoLoadedPast || _busy) return;
+    if (!_scrollCtrl.hasClients) return;
+    final pos = _scrollCtrl.position;
+    // The past sliver lives ABOVE the center: dragging content
+    // downward walks `pixels` into negative territory. We trigger
+    // the one-shot auto-load only after the user has actually
+    // scrolled at least 40 px into the past zone — that confirms
+    // intent (vs. an accidental over-scroll bounce on first paint,
+    // when the empty past sliver is just the "Load More" button).
+    if (pos.pixels < -40) {
+      _autoLoadedPast = true;
+      _busy = true;
+      setState(() => _pastDays = _pageSize);
+      Future.delayed(const Duration(milliseconds: 250), () {
+        if (mounted) _busy = false;
+      });
+    }
+  }
+
+  void _loadMorePast() {
+    if (_busy) return;
+    _busy = true;
+    setState(() => _pastDays += _pageSize);
+    Future.delayed(const Duration(milliseconds: 250), () {
+      if (mounted) _busy = false;
+    });
+  }
+
+  void _loadMoreFuture() => setState(() => _futureDays += _pageSize);
+
+  /// Public — invoked by [_CalendarScreenState._jumpToToday] when the
+  /// user taps the "Today" button while the agenda view is mounted.
+  /// Animates back to offset 0 (top of the future sliver = today's
+  /// group). No rebuild, no full reload.
+  Future<void> scrollToToday() async {
+    if (!_scrollCtrl.hasClients) return;
+    await _scrollCtrl.animateTo(
+      0.0,
+      duration: const Duration(milliseconds: 450),
+      curve: Curves.easeInOutCubic,
+    );
+  }
+
+  String _loadMoreLabel(String locale) {
     switch (locale) {
       case 'ar': return 'تحميل المزيد';
       case 'es': return 'Cargar más';
@@ -1476,104 +1558,137 @@ class _AgendaViewState extends State<_AgendaView> {
     }
   }
 
-  String _loadMorePastLabel(String locale) {
-    switch (locale) {
-      case 'ar': return 'تحميل أيام سابقة';
-      case 'es': return 'Cargar días anteriores';
-      case 'en': return 'Load previous days';
-      default:   return 'Charger les jours précédents';
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final p = widget.p;
     final isDark = widget.isDark;
-    final items = p.getAgendaEventsRange(
-      pastDays: _pastDays,
-      futureDays: _futureDays,
-    );
 
-    if (items.isEmpty) {
-      return RefreshIndicator(
-        color: AppColors.green,
-        onRefresh: _loadMorePast,
-        child: ListView(
-          children: [
-            SizedBox(
-              height: 300,
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.event_note, size: 64,
-                        color: isDark ? AppColors.darkText3 : AppColors.text3),
-                    const SizedBox(height: 12),
-                    Text(p.label('no_events'),
-                        style: appFont(fontSize: 14,
-                            color: isDark ? AppColors.darkText3 : AppColors.text3)),
-                  ],
-                ),
-              ),
-            ),
-          ],
+    // Past block — chronological from provider, then reversed so the
+    // sliver-before-center sees `child(0) = yesterday` (closest to
+    // today) and the topmost (oldest) item at the highest index.
+    final pastItems = p
+        .getAgendaEventsRange(pastDays: _pastDays, futureDays: 0)
+        .reversed
+        .toList();
+
+    // Future block — today + days forward. We always force today as
+    // the first entry, even when it has no events, so today's date
+    // badge stays visible at the anchor and the "Today" button has
+    // a deterministic target.
+    final rawFuture = p.getAgendaEventsRange(
+        pastDays: 0, futureDays: _futureDays);
+    final today = p.today;
+    final hasToday = rawFuture.isNotEmpty &&
+        rawFuture.first.key.hYear == today.hYear &&
+        rawFuture.first.key.hMonth == today.hMonth &&
+        rawFuture.first.key.hDay == today.hDay;
+    final futureItems = hasToday
+        ? rawFuture
+        : <MapEntry<HijriDate, List<AppEvent>>>[
+            MapEntry(today, const <AppEvent>[]),
+            ...rawFuture,
+          ];
+
+    return CustomScrollView(
+      controller: _scrollCtrl,
+      center: _centerKey,
+      slivers: [
+        // ── PAST sliver (above center) ────────────────────────────
+        // childCount = past_groups + 1 (Load-More button).
+        // Sliver-before-center semantics: child(0) is closest to the
+        // center (visually just above today), child(N-1) is at the
+        // top of the past block — that's where the Load-More button
+        // lives.
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (ctx, idx) {
+              if (idx == pastItems.length) {
+                return _LoadMorePastButton(
+                  label: _loadMoreLabel(p.locale),
+                  onTap: _loadMorePast,
+                );
+              }
+              final e = pastItems[idx];
+              return _AgendaGroup(
+                date: e.key, events: e.value, p: p, isDark: isDark);
+            },
+            childCount: pastItems.length + 1,
+          ),
         ),
-      );
-    }
+        // ── Center anchor — empty, zero-height, identifies "today"
+        // for the bidirectional scroll math.
+        SliverToBoxAdapter(
+          key: _centerKey,
+          child: const SizedBox.shrink(),
+        ),
+        // ── FUTURE sliver (below center) ──────────────────────────
+        // child(0) = today; last child = "Load more" future button;
+        // a tail spacer keeps the bottom edge clear of the bottom
+        // navigation chrome.
+        SliverList(
+          delegate: SliverChildBuilderDelegate(
+            (ctx, idx) {
+              if (idx == futureItems.length) {
+                return _LoadMoreFutureButton(
+                  label: _loadMoreLabel(p.locale),
+                  onTap: _loadMoreFuture,
+                );
+              }
+              final e = futureItems[idx];
+              return _AgendaGroup(
+                date: e.key, events: e.value, p: p, isDark: isDark);
+            },
+            childCount: futureItems.length + 1,
+          ),
+        ),
+        const SliverToBoxAdapter(child: SizedBox(height: 80)),
+      ],
+    );
+  }
+}
 
-    // Header (load-past button) + N day groups + footer (load-future
-    // button). Putting the load-past CTA inside the list — in
-    // addition to RefreshIndicator — gives users a discoverable,
-    // tap-able alternative on devices where pull-to-refresh isn't
-    // obvious (e.g. small screens, or after they've already scrolled
-    // away from the very top).
-    final headerCount = 1; // load-past button
-    final footerCount = 1; // load-future button
-    return RefreshIndicator(
-      color: AppColors.green,
-      onRefresh: _loadMorePast,
-      child: ListView.builder(
-        padding: const EdgeInsets.only(bottom: 80),
-        itemCount: headerCount + items.length + footerCount,
-        itemBuilder: (ctx, idx) {
-          if (idx == 0) {
-            return Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Center(
-                child: TextButton.icon(
-                  onPressed: () =>
-                      setState(() => _pastDays += _pageSize),
-                  icon: Icon(Icons.history, size: 18,
-                      color: AppColors.green),
-                  label: Text(
-                    _loadMorePastLabel(p.locale),
-                    style: appFont(
-                      color: AppColors.green,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }
-          if (idx == headerCount + items.length) {
-            return Padding(
-              padding: const EdgeInsets.all(16),
-              child: TextButton(
-                onPressed: () =>
-                    setState(() => _futureDays += _pageSize),
-                child: Text(
-                  _loadMoreFutureLabel(p.locale),
-                  style: appFont(color: AppColors.green,
-                      fontWeight: FontWeight.w700),
-                ),
-              ),
-            );
-          }
-          final entry = items[idx - headerCount];
-          return _AgendaGroup(
-              date: entry.key, events: entry.value, p: p, isDark: isDark);
-        },
+class _LoadMorePastButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+  const _LoadMorePastButton({required this.label, required this.onTap});
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 18, 16, 6),
+      child: Center(
+        child: TextButton.icon(
+          onPressed: onTap,
+          icon: Icon(Icons.history, size: 18, color: AppColors.green),
+          label: Text(
+            label,
+            style: appFont(
+              color: AppColors.green,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LoadMoreFutureButton extends StatelessWidget {
+  final String label;
+  final VoidCallback onTap;
+  const _LoadMoreFutureButton({required this.label, required this.onTap});
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: TextButton(
+        onPressed: onTap,
+        child: Text(
+          label,
+          style: appFont(
+            color: AppColors.green,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
       ),
     );
   }
