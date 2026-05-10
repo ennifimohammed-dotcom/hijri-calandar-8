@@ -1589,9 +1589,19 @@ class _AgendaViewState extends State<_AgendaView> {
     // Locate today inside the deduped list. If today already exists
     // (typical case — today has at least the daily-adhkar events),
     // we re-use it. Only when it's genuinely missing do we inject a
-    // single empty placeholder, and we insert it at the correct
-    // chronological position so the past/future split below stays
-    // sorted.
+    // single placeholder, AND we attach today's actual events to it
+    // so the very first frame already shows today's section
+    // populated. The reason today can be missing on initial paint is
+    // a region-offset asymmetry: `getAgendaEventsRange` walks
+    // Gregorian dates and converts each via the canonical
+    // `HijriDate.fromGregorian`, while `p.today` (and the date badge
+    // inside `_AgendaGroup`) apply `hijriDayOffset`. With pastDays =
+    // 0 the future walk's first Hijri value can be (today + 1) under
+    // the canonical mapping, leaving today off the list. Fetching
+    // today's events explicitly via `getEventsForDay(...)` —
+    // identical to the call the walker would have made — guarantees
+    // today renders with its events without any scroll, refresh, or
+    // extra rebuild.
     final todayKey = hijriKey(today);
     int todayIdx = dedup.indexWhere((e) => hijriKey(e.key) == todayKey);
     if (todayIdx < 0) {
@@ -1615,7 +1625,9 @@ class _AgendaViewState extends State<_AgendaView> {
           break;
         }
       }
-      dedup.insert(insertAt, MapEntry(today, const <AppEvent>[]));
+      final todayEvents =
+          p.getEventsForDay(today.hDay, today.hMonth, today.hYear);
+      dedup.insert(insertAt, MapEntry(today, todayEvents));
       todayIdx = insertAt;
     }
 
