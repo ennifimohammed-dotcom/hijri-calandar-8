@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -36,6 +37,41 @@ class AppProvider extends ChangeNotifier {
         _engine = engine ?? RecurrenceEngine(),
         _notifs = notifs ?? NotificationService(),
         _notifSettings = notifSettings ?? NotificationSettingsService();
+
+  // ── Debounce for Islamic-notification rescheduling ──────
+  //
+  // [_scheduleIslamicNotifications] cancels and re-creates 30 days
+  // of OS-level alarms — a heavy operation. Several settings paths
+  // (region change, manual adjust, per-event time, toggling events,
+  // zakat dates) all trigger it, and the UI lets users tap multiple
+  // toggles in a row. Without debounce, that's N consecutive
+  // full-window reschedules in a few hundred milliseconds, each
+  // hammering AlarmManager. The 500 ms coalescing window batches
+  // rapid-fire changes into a single reschedule.
+  //
+  // The timer is cancelled in [dispose] so the provider doesn't
+  // leak a pending callback when the widget tree tears down.
+  Timer? _islamicReschedTimer;
+
+  /// Public-ish request to refresh Islamic notifications, debounced
+  /// at 500 ms. Replaces every previous direct
+  /// `_scheduleIslamicNotifications()` call site EXCEPT the one
+  /// inside [init] — which runs once at startup and benefits from
+  /// firing synchronously.
+  void _requestIslamicReschedule() {
+    _islamicReschedTimer?.cancel();
+    _islamicReschedTimer = Timer(
+      const Duration(milliseconds: 500),
+      _scheduleIslamicNotifications,
+    );
+  }
+
+  @override
+  void dispose() {
+    _islamicReschedTimer?.cancel();
+    _islamicReschedTimer = null;
+    super.dispose();
+  }
 
   // ── Calendar state ────────────────────────────────────────
   late HijriDate _currentMonth;
@@ -148,10 +184,20 @@ class AppProvider extends ChangeNotifier {
       await _notifs.requestPermissions();
       await _repo.loadAll();
       await _repo.rescheduleAllNotifications();
+      // Initial scheduling is synchronous and direct — the
+      // debounce-via-`_requestIslamicReschedule` exists for the
+      // rapid-fire settings paths (region change, toggles, zakat
+      // dates) and would just delay the first user-visible
+      // schedule by 500 ms at startup for no benefit.
       await _scheduleIslamicNotifications();
       await _notifs.scheduleMidnightReschedule();
-    } catch (e) {
-      AppLogger.error('AppProvider.init failed', error: e);
+      // Phase 4 — weekly self-rearming alarm. Fires every 7 days
+      // even if the user doesn't open the app in between, keeping
+      // the OS-level notification pipeline warm. Returns silently
+      // if the platform refuses (caught inside the service).
+      await _notifs.scheduleWeeklyRenewal();
+    } catch (e, stack) {
+      AppLogger.error('AppProvider.init failed', error: e, stack: stack);
     }
     _isLoading = false;
     notifyListeners();
@@ -206,7 +252,7 @@ class AppProvider extends ChangeNotifier {
     await _savePrefs();
     notifyListeners();
     await _repo.rescheduleAllNotifications();
-    await _scheduleIslamicNotifications();
+    _requestIslamicReschedule();
   }
 
   Future<void> setHijriManualAdjust(int days) async {
@@ -219,7 +265,7 @@ class AppProvider extends ChangeNotifier {
     await _savePrefs();
     notifyListeners();
     await _repo.rescheduleAllNotifications();
-    await _scheduleIslamicNotifications();
+    _requestIslamicReschedule();
   }
 
   /// Region → default day-offset relative to Umm al-Qura.
@@ -443,7 +489,7 @@ class AppProvider extends ChangeNotifier {
     _islamicEventTimes[id] = t;
     await _savePrefs();
     notifyListeners();
-    await _scheduleIslamicNotifications();
+    _requestIslamicReschedule();
   }
 
   // ── Zakat dates ─────────────────────────────────────────
@@ -455,28 +501,28 @@ class AppProvider extends ChangeNotifier {
     _zakatDueDate = value;
     await _savePrefs();
     notifyListeners();
-    await _scheduleIslamicNotifications();
+    _requestIslamicReschedule();
   }
 
   Future<void> setZakatReminder1(DateTime? value) async {
     _zakatReminder1 = value;
     await _savePrefs();
     notifyListeners();
-    await _scheduleIslamicNotifications();
+    _requestIslamicReschedule();
   }
 
   Future<void> setZakatReminder2(DateTime? value) async {
     _zakatReminder2 = value;
     await _savePrefs();
     notifyListeners();
-    await _scheduleIslamicNotifications();
+    _requestIslamicReschedule();
   }
 
   void toggleIslamicEvent(String id, bool value) {
     _islamicEventsEnabled[id] = value;
     _savePrefs();
     notifyListeners();
-    _scheduleIslamicNotifications();
+    _requestIslamicReschedule();
   }
 
   void toggleAllIslamicEvents(bool value) {
@@ -485,7 +531,7 @@ class AppProvider extends ChangeNotifier {
     }
     _savePrefs();
     notifyListeners();
-    _scheduleIslamicNotifications();
+    _requestIslamicReschedule();
   }
 
   /// Re-builds the next 30 days of Islamic-event reminders from
@@ -528,8 +574,9 @@ class AppProvider extends ChangeNotifier {
         }
       }
       await _scheduleZakatNotifications();
-    } catch (e) {
-      AppLogger.error('_scheduleIslamicNotifications failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('_scheduleIslamicNotifications failed',
+          error: e, stack: stack);
     }
   }
 

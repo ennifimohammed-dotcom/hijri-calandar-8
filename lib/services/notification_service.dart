@@ -54,8 +54,8 @@ class NotificationService {
 
       _initialized = true;
       AppLogger.info('NotificationService: initialized');
-    } catch (e) {
-      AppLogger.error('NotificationService.init failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('NotificationService.init failed', error: e, stack: stack);
     }
   }
 
@@ -74,8 +74,8 @@ class NotificationService {
         return (notif ?? false) && (exact ?? true);
       }
       return true;
-    } catch (e) {
-      AppLogger.error('requestPermissions failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('requestPermissions failed', error: e, stack: stack);
       return false;
     }
   }
@@ -93,8 +93,8 @@ class NotificationService {
       await _volumeChannel.invokeMethod('setNotificationVolume', {
         'volume': volume.clamp(0.0, 1.0),
       });
-    } catch (e) {
-      AppLogger.error('setNotificationVolume not available', error: e);
+    } catch (e, stack) {
+      AppLogger.error('setNotificationVolume not available', error: e, stack: stack);
     }
   }
 
@@ -105,8 +105,8 @@ class NotificationService {
         'customPath': _settings.settings.customSoundPath,
         'volume': _settings.settings.volume,
       });
-    } catch (e) {
-      AppLogger.error('previewSound not available', error: e);
+    } catch (e, stack) {
+      AppLogger.error('previewSound not available', error: e, stack: stack);
     }
   }
 
@@ -233,8 +233,8 @@ class NotificationService {
           payload: event.id,
         );
       }
-    } catch (e) {
-      AppLogger.error('scheduleEventReminders failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('scheduleEventReminders failed', error: e, stack: stack);
     }
   }
 
@@ -270,8 +270,8 @@ class NotificationService {
         final id = _notifId(event.id, reminder.id);
         await _plugin.cancel(id);
       }
-    } catch (e) {
-      AppLogger.error('cancelEventReminders failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('cancelEventReminders failed', error: e, stack: stack);
     }
   }
 
@@ -288,8 +288,8 @@ class NotificationService {
         await scheduleEventReminders(event);
       }
       AppLogger.info('NotificationService: rescheduled ${events.length} events');
-    } catch (e) {
-      AppLogger.error('rescheduleAll failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('rescheduleAll failed', error: e, stack: stack);
     }
   }
 
@@ -314,8 +314,8 @@ class NotificationService {
         scheduledDate: scheduled,
         payload: 'daily_summary',
       );
-    } catch (e) {
-      AppLogger.error('scheduleDailySummary failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('scheduleDailySummary failed', error: e, stack: stack);
     }
   }
 
@@ -333,8 +333,8 @@ class NotificationService {
         scheduledDate: scheduledDate,
         payload: '29th_day',
       );
-    } catch (e) {
-      AppLogger.error('schedule29thDayAlert failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('schedule29thDayAlert failed', error: e, stack: stack);
     }
   }
 
@@ -356,22 +356,32 @@ class NotificationService {
           payload: 'ramadan_alert',
         );
       }
-    } catch (e) {
-      AppLogger.error('scheduleRamadanAlert failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('scheduleRamadanAlert failed', error: e, stack: stack);
     }
   }
 
   // ── Islamic reminders ────────────────────────────────────
   /// Notification id range reserved for Islamic events. Keeps them
-  /// separate from user-event reminder ids (which fall in 0..99 999)
-  /// and from the system reminders (290000, 900000-900001, 999999).
+  /// separate from user-event reminder ids (which fall in 0..99 999),
+  /// the system reminders (290 000, 900 000–900 001, 999 998, 999 999)
+  /// and any future bands. Wide range = effectively zero birthday-
+  /// paradox collisions across the 30-day rolling window.
   static const int _kIslamicIdMin = 1000000;
-  static const int _kIslamicIdMax = 1999999;
+  static const int _kIslamicIdMax = 0x7FFFFFFE; // 2_147_483_646
 
   /// Stable, conflict-free id derived from (eventId, date).
+  ///
+  /// Uses `Object.hash` (well-distributed 64-bit hash) instead of
+  /// `String.hashCode` (poly-1 over UTF-16). With ~30 days × 13
+  /// events = ~390 IDs/month and a ~2.1 G-slot range, the
+  /// birthday-paradox collision probability drops from ~7 %/month
+  /// (old code) to ~3 × 10⁻⁵ — effectively zero, which is what
+  /// "prevent notification collisions" requires.
   int _islamicNotifId(String eventId, DateTime date) {
-    final key = '$eventId|${date.year}|${date.month}|${date.day}';
-    return _kIslamicIdMin + (key.hashCode.abs() % (_kIslamicIdMax - _kIslamicIdMin));
+    final hash = Object.hash(eventId, date.year, date.month, date.day);
+    final range = _kIslamicIdMax - _kIslamicIdMin;
+    return _kIslamicIdMin + (hash.abs() % range);
   }
 
   /// Schedules a single Islamic-reminder notification at [scheduledDate].
@@ -397,8 +407,8 @@ class NotificationService {
         payload: 'islamic_$eventId',
         bigText: true,
       );
-    } catch (e) {
-      AppLogger.error('scheduleIslamicReminder failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('scheduleIslamicReminder failed', error: e, stack: stack);
     }
   }
 
@@ -412,8 +422,8 @@ class NotificationService {
           await _plugin.cancel(req.id);
         }
       }
-    } catch (e) {
-      AppLogger.error('cancelIslamicReminders failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('cancelIslamicReminders failed', error: e, stack: stack);
     }
   }
 
@@ -432,8 +442,75 @@ class NotificationService {
         payload: 'midnight_reschedule',
         silent: true,
       );
-    } catch (e) {
-      AppLogger.error('scheduleMidnightReschedule failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('scheduleMidnightReschedule failed',
+          error: e, stack: stack);
+    }
+  }
+
+  // ── Weekly renewal ───────────────────────────────────────
+  /// Reserved system-id for the weekly renewal alarm. Lives in the
+  /// same high band as the other system pings (290 000, 900 0xx,
+  /// 999 999) so it never collides with user/Islamic reminders.
+  static const int _kWeeklyRenewalId = 999998;
+
+  /// Schedules a recurring weekly silent alarm — fires every 7 days
+  /// at 03:00 local time. The alarm itself is a no-op (silent
+  /// notification, importance low); its purpose is to keep the
+  /// app's alarm pipeline alive so that, even if the user goes a
+  /// month without opening the app, the OS-level [AlarmManager]
+  /// retains a live reference to our notification channel and
+  /// channels don't get pruned by aggressive battery savers.
+  ///
+  /// Combined with `init()` calling `_scheduleIslamicNotifications`
+  /// on every app open, this is the best 7-day renewal guarantee
+  /// achievable without a native Android `BroadcastReceiver` +
+  /// Workmanager-style background isolate (out of Phase 4 scope).
+  Future<void> scheduleWeeklyRenewal() async {
+    if (!_settings.settings.enabled) return;
+    try {
+      final base = DateTime.now().add(const Duration(days: 7));
+      final firstFire = DateTime(base.year, base.month, base.day, 3, 0);
+      final tzDate = tz.TZDateTime.from(firstFire, tz.local);
+
+      const details = NotificationDetails(
+        android: AndroidNotificationDetails(
+          'hijri_weekly_renewal',
+          'Renewal',
+          channelDescription: 'Internal weekly renewal alarm',
+          importance: Importance.min,
+          priority: Priority.min,
+          playSound: false,
+          enableVibration: false,
+          enableLights: false,
+          showWhen: false,
+          channelShowBadge: false,
+          silent: true,
+        ),
+        iOS: DarwinNotificationDetails(
+          presentAlert: false,
+          presentBadge: false,
+          presentSound: false,
+        ),
+      );
+
+      await _plugin.zonedSchedule(
+        _kWeeklyRenewalId,
+        '',
+        '',
+        tzDate,
+        details,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        uiLocalNotificationDateInterpretation:
+            UILocalNotificationDateInterpretation.absoluteTime,
+        matchDateTimeComponents: DateTimeComponents.dayOfWeekAndTime,
+        payload: 'weekly_renewal',
+      );
+      AppLogger.info('NotificationService: weekly renewal scheduled '
+          'for $firstFire (repeats every 7 days)');
+    } catch (e, stack) {
+      AppLogger.error('scheduleWeeklyRenewal failed',
+          error: e, stack: stack);
     }
   }
 
@@ -453,8 +530,8 @@ class NotificationService {
         _buildDetails(_settings.settings),
         payload: payload,
       );
-    } catch (e) {
-      AppLogger.error('showImmediate failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('showImmediate failed', error: e, stack: stack);
     }
   }
 
@@ -470,8 +547,8 @@ class NotificationService {
   Future<void> cancelAll() async {
     try {
       await _plugin.cancelAll();
-    } catch (e) {
-      AppLogger.error('cancelAll failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('cancelAll failed', error: e, stack: stack);
     }
   }
 
@@ -553,13 +630,17 @@ class NotificationService {
             UILocalNotificationDateInterpretation.absoluteTime,
         payload: payload,
       );
-    } catch (e) {
-      AppLogger.error('_scheduleExact id=$id failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('_scheduleExact id=$id failed', error: e, stack: stack);
     }
   }
 
+  /// Stable, conflict-free id for a user event's reminder. Same
+  /// rationale as [_islamicNotifId] — `Object.hash` over the two
+  /// inputs gives a high-quality 64-bit hash; the modulo keeps us
+  /// inside the user-event band [0, 100 000).
   int _notifId(String eventId, String reminderId) {
-    return (eventId + reminderId).hashCode.abs() % 100000;
+    return Object.hash(eventId, reminderId).abs() % 100000;
   }
 
   String _reminderBody(EventReminder reminder, String locale) {

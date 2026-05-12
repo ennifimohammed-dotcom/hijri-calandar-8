@@ -23,8 +23,8 @@ class NotificationSettingsService {
       if (raw != null && raw.isNotEmpty) {
         _settings = NotificationSettings.decode(raw);
       }
-    } catch (e) {
-      AppLogger.error('NotificationSettingsService.load failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('NotificationSettingsService.load failed', error: e, stack: stack);
     }
     _loaded = true;
     return _settings;
@@ -36,8 +36,8 @@ class NotificationSettingsService {
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kKey, settings.encode());
-    } catch (e) {
-      AppLogger.error('NotificationSettingsService.save failed', error: e);
+    } catch (e, stack) {
+      AppLogger.error('NotificationSettingsService.save failed', error: e, stack: stack);
     }
   }
 
