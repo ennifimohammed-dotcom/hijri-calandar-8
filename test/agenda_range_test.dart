@@ -112,7 +112,7 @@ void main() {
     });
 
     test('Morocco — today appears in the agenda window with events', () async {
-      SharedPreferences.setMockInitialValues({'region_code': 'ma'});
+      SharedPreferences.setMockInitialValues({'region': 'ma'});
       final p = AppProvider();
       await p.init();
 
@@ -134,7 +134,7 @@ void main() {
     });
 
     test('UAQ — today appears in the agenda window with events', () async {
-      SharedPreferences.setMockInitialValues({'region_code': 'global'});
+      SharedPreferences.setMockInitialValues({'region': 'global'});
       final p = AppProvider();
       await p.init();
 
@@ -152,7 +152,7 @@ void main() {
 
     test('Morocco — bidirectional window has no duplicate Hijri tuples',
         () async {
-      SharedPreferences.setMockInitialValues({'region_code': 'ma'});
+      SharedPreferences.setMockInitialValues({'region': 'ma'});
       final p = AppProvider();
       await p.init();
 
@@ -168,7 +168,7 @@ void main() {
     });
 
     test('getEventsForDay(today) is non-empty in Morocco', () async {
-      SharedPreferences.setMockInitialValues({'region_code': 'ma'});
+      SharedPreferences.setMockInitialValues({'region': 'ma'});
       final p = AppProvider();
       await p.init();
 
@@ -191,7 +191,7 @@ void main() {
     });
 
     test('getEventsForDay(today) is non-empty in UAQ', () async {
-      SharedPreferences.setMockInitialValues({'region_code': 'global'});
+      SharedPreferences.setMockInitialValues({'region': 'global'});
       final p = AppProvider();
       await p.init();
 
