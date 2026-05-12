@@ -275,7 +275,9 @@ class _ResultsList extends StatelessWidget {
         final surf = isDark ? AppColors.darkSurface : AppColors.white;
         String dateStr = '';
         try {
-          final g = HijriDate.hijriToGregorian(ev.hijriYear ?? DateTime.now().year, ev.hijriMonth ?? DateTime.now().month, ev.hijriDay ?? DateTime.now().day);
+          // Route through the provider so the displayed civil date
+          // matches the region-aware mapping used everywhere else.
+          final g = p.hijriToGregorian(ev.hijriYear ?? DateTime.now().year, ev.hijriMonth ?? DateTime.now().month, ev.hijriDay ?? DateTime.now().day);
           dateStr = '${ev.hijriDay ?? ''} ${p.getHijriMonthName(ev.hijriMonth ?? 1, p.locale)} — ${g.day}/${g.month}/${g.year}';
         } catch (_) {
           dateStr = '${ev.hijriDay ?? ''} ${p.getHijriMonthName(ev.hijriMonth ?? 1, p.locale)}';

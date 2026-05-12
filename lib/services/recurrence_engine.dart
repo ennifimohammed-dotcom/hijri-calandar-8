@@ -1,5 +1,6 @@
 import '../models/event_model.dart';
 import '../utils/hijri_utils.dart';
+import '../utils/hijri_kernel.dart' as kernel;
 import '../utils/app_logger.dart';
 
 /// Production-grade recurrence engine.
@@ -139,20 +140,30 @@ class RecurrenceEngine {
   // ── Islamic (Hijri-based) event expansion ──────────────
   /// Expand an Islamic event (defined by Hijri day/month) into
   /// Gregorian dates within [from]..[to].
+  ///
+  /// `hijriDayOffset` is the user's regional offset — same value
+  /// the provider exposes via [AppProvider.hijriDayOffset]. Default
+  /// 0 = Umm al-Qura; callers should pass the live region offset
+  /// so this engine sees the same Hijri↔Greg mapping the rest of
+  /// the app uses.
   List<EventInstance> expandIslamicEvent(
-      AppEvent event, DateTime from, DateTime to) {
+      AppEvent event, DateTime from, DateTime to,
+      {int hijriDayOffset = 0}) {
     if (event.hijriDay == null || event.hijriMonth == null) return [];
     final instances = <EventInstance>[];
 
-    // Search ±2 Hijri years around the range
-    final fromHijri = HijriDate.fromGregorian(from);
-    final toHijri   = HijriDate.fromGregorian(to);
+    // Search ±2 Hijri years around the range, using the kernel so
+    // every conversion (forward and back) honours the regional
+    // offset consistently.
+    final fromHijri = kernel.hijriFromGreg(from, hijriDayOffset);
+    final toHijri   = kernel.hijriFromGreg(to, hijriDayOffset);
 
     for (int y = fromHijri.hYear - 1; y <= toHijri.hYear + 1; y++) {
       try {
         final maxDay = HijriDate.daysInMonth(y, event.hijriMonth!);
         final day = event.hijriDay!.clamp(1, maxDay);
-        final greg = HijriDate.hijriToGregorian(y, event.hijriMonth!, day);
+        final greg = kernel.gregFromHijri(
+            HijriDate(y, event.hijriMonth!, day), hijriDayOffset);
         if (!greg.isBefore(from) && !greg.isAfter(to)) {
           instances.add(EventInstance(event: event, instanceDate: greg));
         }

@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../models/event_model.dart';
 import '../providers/app_provider.dart';
 import '../utils/hijri_utils.dart';
+import '../utils/hijri_kernel.dart' as hijri_kernel;
 import '../utils/text_format.dart';
 import '../theme.dart';
 import 'add_event_screen.dart';
@@ -193,7 +194,9 @@ class _CalendarScreenState extends State<CalendarScreen> {
     // beneath the Hijri header (small font, Western digits enforced).
     DateTime gregFirst;
     try {
-      gregFirst = HijriDate.hijriToGregorian(m.hYear, m.hMonth, 1);
+      // Route through the provider so the top-bar Gregorian label
+      // honours the active region offset (Morocco = UAQ + 1 day).
+      gregFirst = p.hijriToGregorian(m.hYear, m.hMonth, 1);
     } catch (_) {
       gregFirst = DateTime.now();
     }
@@ -931,10 +934,10 @@ class _WeekPageState extends State<_WeekPage> {
   }
 
   /// Hijri reference for a Gregorian day in the user's region.
-  HijriDate _hijriFor(DateTime greg) {
-    final offset = widget.p.hijriDayOffset;
-    return HijriDate.fromGregorian(greg.subtract(Duration(days: offset)));
-  }
+  /// Delegates to the kernel so the weekly view sees the same
+  /// Greg↔Hijri mapping as the monthly / agenda views.
+  HijriDate _hijriFor(DateTime greg) =>
+      hijri_kernel.hijriFromGreg(greg, widget.p.hijriDayOffset);
 
   List<AppEvent> _eventsFor(DateTime greg) {
     final h = _hijriFor(greg);

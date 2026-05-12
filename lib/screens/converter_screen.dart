@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../providers/app_provider.dart';
 import '../utils/hijri_utils.dart';
+import '../utils/hijri_kernel.dart' as kernel;
 import '../theme.dart';
 import '../widgets/calendar_grid_picker.dart';
 
@@ -37,11 +38,10 @@ class _ConverterScreenState extends State<ConverterScreen>
   }
 
   /// Today in the user's regional Hijri calendar — mirrors
-  /// [AppProvider._todayForRegion].
-  HijriDate _regionalToday() {
-    final shifted = DateTime.now().subtract(Duration(days: _offset));
-    return HijriDate.fromGregorian(shifted);
-  }
+  /// [AppProvider._todayForRegion]. Delegated to the kernel so the
+  /// converter's notion of "today" matches the rest of the app.
+  HijriDate _regionalToday() =>
+      kernel.hijriFromGreg(DateTime.now(), _offset);
 
   @override
   void initState() {
@@ -66,8 +66,7 @@ class _ConverterScreenState extends State<ConverterScreen>
     if (_lastOffset == off) return;
     _lastOffset = off;
     if (!_seededFromRegion) {
-      final shifted = DateTime.now().subtract(Duration(days: off));
-      final today = HijriDate.fromGregorian(shifted);
+      final today = kernel.hijriFromGreg(DateTime.now(), off);
       _hDay = today.hDay;
       _hMonth = today.hMonth;
       _hYear = today.hYear;
@@ -83,18 +82,17 @@ class _ConverterScreenState extends State<ConverterScreen>
 
   void _convertHijriToGreg() {
     try {
-      // Region offset reverses the regional shift: a regional Hijri
+      // Region offset is applied by the kernel: a regional Hijri
       // date d corresponds to UAQ.toGregorian(d) + offset days.
-      final base = HijriDate.hijriToGregorian(_hYear, _hMonth, _hDay);
-      final g = base.add(Duration(days: _offset));
+      final g = kernel.gregFromHijri(
+          HijriDate(_hYear, _hMonth, _hDay), _offset);
       setState(() => _gregResult = g);
     } catch (_) { setState(() => _gregResult = null); }
   }
 
   void _convertGregToHijri() {
     try {
-      final shifted = _gregInput.subtract(Duration(days: _offset));
-      final h = HijriDate.fromGregorian(shifted);
+      final h = kernel.hijriFromGreg(_gregInput, _offset);
       setState(() => _hijriResult = h);
     } catch (_) { setState(() => _hijriResult = null); }
   }

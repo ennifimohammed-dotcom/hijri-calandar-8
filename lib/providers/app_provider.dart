@@ -9,6 +9,7 @@ import '../repositories/event_repository.dart';
 import '../services/recurrence_engine.dart';
 import '../services/notification_service.dart';
 import '../utils/app_logger.dart';
+import '../utils/hijri_kernel.dart' as kernel;
 import '../services/notification_settings_service.dart';
 import '../theme.dart';
 import '../utils/hijri_utils.dart';
@@ -248,13 +249,11 @@ class AppProvider extends ChangeNotifier {
   /// Today in the user's regional Hijri calendar.
   ///
   /// Convention: `offset = +1` means the regional Hijri month starts
-  /// ONE DAY LATER than Umm al-Qura. The date the user sees today is
-  /// therefore `UAQ.fromGregorian(now − offset)`.
-  HijriDate _todayForRegion() {
-    final now = DateTime.now();
-    final shifted = now.subtract(Duration(days: hijriDayOffset));
-    return HijriDate.fromGregorian(shifted);
-  }
+  /// ONE DAY LATER than Umm al-Qura. Resolution is delegated to the
+  /// Hijri kernel so the offset application is identical to every
+  /// other Greg→Hijri conversion in the app.
+  HijriDate _todayForRegion() =>
+      kernel.hijriFromGreg(DateTime.now(), hijriDayOffset);
 
   void setViewMode(CalendarViewMode mode) {
     _viewMode = mode;
@@ -350,7 +349,11 @@ class AppProvider extends ChangeNotifier {
     for (int i = 0; i < total; i++) {
       final greg = start.add(Duration(days: i));
       try {
-        final h = HijriDate.fromGregorian(greg);
+        // Region-aware conversion via the kernel: this is what
+        // makes today's Hijri tuple line up with `p.today`. Skipping
+        // the offset here (the historical bug) was the root cause
+        // of the duplicate-today and empty-today agenda regressions.
+        final h = kernel.hijriFromGreg(greg, hijriDayOffset);
         final evs = getEventsForDay(h.hDay, h.hMonth, h.hYear);
         if (evs.isNotEmpty) result.add(MapEntry(h, evs));
       } catch (_) {}
@@ -495,9 +498,10 @@ class AppProvider extends ChangeNotifier {
       for (int dayOffset = 0; dayOffset < 30; dayOffset++) {
         final greg = DateTime(now.year, now.month, now.day)
             .add(Duration(days: dayOffset));
-        // Hijri date for this Greg date in the user's region.
-        final hShifted =
-            HijriDate.fromGregorian(greg.subtract(Duration(days: hijriDayOffset)));
+        // Hijri date for this Greg date in the user's region —
+        // delegated to the kernel so the reminder window and the
+        // calendar/agenda use the exact same Greg↔Hijri mapping.
+        final hShifted = kernel.hijriFromGreg(greg, hijriDayOffset);
         for (final cfg in IslamicEventsData.events) {
           if (_islamicEventsEnabled[cfg.id] != true) continue;
           if (cfg.isZakat) continue; // handled separately below
@@ -650,27 +654,21 @@ class AppProvider extends ChangeNotifier {
   // ── Hijri helpers ─────────────────────────────────────────
   int getDaysInMonth(int year, int month) => HijriDate.daysInMonth(year, month);
 
-  /// First weekday of a Hijri month, in the user's regional calendar.
-  /// Applies [hijriDayOffset] so the calendar grid lines up with the
-  /// region's actual moon-sighting / calculation practice.
-  int getFirstWeekdayOfMonth(int year, int month) {
-    final base = HijriDate.hijriToGregorian(year, month, 1);
-    return base.add(Duration(days: hijriDayOffset)).weekday;
-  }
+  /// First weekday of a Hijri month, in the user's regional
+  /// calendar. Routed through the kernel.
+  int getFirstWeekdayOfMonth(int year, int month) =>
+      kernel.gregFromHijri(HijriDate(year, month, 1), hijriDayOffset).weekday;
 
-  /// Hijri → Gregorian, applying the region offset.
-  DateTime hijriToGregorian(int year, int month, int day) {
-    final base = HijriDate.hijriToGregorian(year, month, day);
-    return base.add(Duration(days: hijriDayOffset));
-  }
+  /// Hijri → Gregorian, applying the region offset. Thin wrapper
+  /// around [kernel.gregFromHijri] kept on the provider for ergonomic
+  /// reasons — every screen already has `p` in scope.
+  DateTime hijriToGregorian(int year, int month, int day) =>
+      kernel.gregFromHijri(HijriDate(year, month, day), hijriDayOffset);
 
   /// Gregorian → Hijri, applying the region offset (inverse of
-  /// [hijriToGregorian]). Pickers / converters use this to display
-  /// the Hijri date the user actually perceives in their region.
-  HijriDate gregorianToHijri(DateTime g) {
-    final shifted = g.subtract(Duration(days: hijriDayOffset));
-    return HijriDate.fromGregorian(shifted);
-  }
+  /// [hijriToGregorian]). Routed through the kernel.
+  HijriDate gregorianToHijri(DateTime g) =>
+      kernel.hijriFromGreg(g, hijriDayOffset);
 
   bool isToday(int day, int month, int year) =>
       day == _today.hDay && month == _today.hMonth && year == _today.hYear;

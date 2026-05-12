@@ -277,7 +277,11 @@ class _EventRow extends StatelessWidget {
   int? _daysUntilActual() {
     try {
       final today = p.today;
-      final todayG = today.toGregorian();
+      // All conversions go through the provider so the regional
+      // offset (Morocco = UAQ + 1) is applied consistently — the
+      // computed "days until next occurrence" must match the
+      // monthly / agenda view's understanding of today.
+      final todayG = p.hijriToGregorian(today.hYear, today.hMonth, today.hDay);
       if (cfg.isDaily) return 0;
       if (cfg.isWeekly) {
         final wds = cfg.displayWeekdays;
@@ -295,19 +299,19 @@ class _EventRow extends StatelessWidget {
         final upcoming = days.where((d) => d >= today.hDay).toList()..sort();
         if (upcoming.isNotEmpty) {
           final target = upcoming.first;
-          final g = HijriDate.hijriToGregorian(today.hYear, today.hMonth, target);
+          final g = p.hijriToGregorian(today.hYear, today.hMonth, target);
           return g.difference(todayG).inDays;
         }
         final firstNext = days.reduce((a, b) => a < b ? a : b);
-        final g = HijriDate(today.hYear, today.hMonth + 1, firstNext).toGregorian();
+        final g = p.hijriToGregorian(today.hYear, today.hMonth + 1, firstNext);
         return g.difference(todayG).inDays;
       }
       // Yearly — uses displayMonth + displayDay (the actual observance).
       if (cfg.displayMonth > 0) {
         var targetYear = today.hYear;
-        var g = HijriDate.hijriToGregorian(targetYear, cfg.displayMonth, cfg.displayDay);
+        var g = p.hijriToGregorian(targetYear, cfg.displayMonth, cfg.displayDay);
         if (g.isBefore(todayG)) {
-          g = HijriDate.hijriToGregorian(targetYear + 1, cfg.displayMonth, cfg.displayDay);
+          g = p.hijriToGregorian(targetYear + 1, cfg.displayMonth, cfg.displayDay);
         }
         final diff = g.difference(todayG).inDays;
         return diff <= 60 ? diff : null;
