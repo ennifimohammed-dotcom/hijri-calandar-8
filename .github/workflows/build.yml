@@ -51,7 +51,17 @@ jobs:
           mkdir -p /tmp/base_project/assets/icon
           cp $GITHUB_WORKSPACE/assets/icon/icon.png /tmp/base_project/assets/icon/icon.png
           cp $GITHUB_WORKSPACE/assets/icon/chabab_alkhair.jpg /tmp/base_project/assets/icon/chabab_alkhair.jpg
+          # Phase 1 — Safety Net: copy our test suite (and the
+          # analysis_options.yaml at the repo root) into the staged
+          # project so `flutter analyze` and `flutter test` run
+          # against the same sources as `flutter build`.
           rm -rf /tmp/base_project/test
+          if [ -d "$GITHUB_WORKSPACE/test" ]; then
+            cp -r $GITHUB_WORKSPACE/test /tmp/base_project/test
+          fi
+          if [ -f "$GITHUB_WORKSPACE/analysis_options.yaml" ]; then
+            cp $GITHUB_WORKSPACE/analysis_options.yaml /tmp/base_project/analysis_options.yaml
+          fi
 
       - name: Replace Android build.gradle
         run: |
@@ -123,10 +133,25 @@ jobs:
         working-directory: /tmp/base_project
         run: dart run flutter_launcher_icons
 
-      - name: Analyze code
+      # Phase 1 — Safety Net.
+      # `flutter analyze` is run BEFORE `flutter build`: an analyzer
+      # failure (lint warning, dead code, const-eval error, …)
+      # blocks the APK build instead of being discovered minutes
+      # later inside Gradle. `--no-fatal-infos` keeps purely
+      # informational lints non-blocking; warnings and errors still
+      # fail the job because `continue-on-error` is no longer set.
+      - name: Analyze code (flutter analyze)
         working-directory: /tmp/base_project
         run: flutter analyze --no-fatal-infos
-        continue-on-error: true
+
+      # Phase 1 — Safety Net.
+      # `flutter test` runs the unit-test suite. If the test/
+      # directory is empty (which it is on first deploy) Flutter
+      # returns 0 without failing, so this step is safe to keep
+      # enabled from day one. Phase 3 lands real tests on top.
+      - name: Run unit tests (flutter test)
+        working-directory: /tmp/base_project
+        run: flutter test --reporter compact
 
       - name: Build release APK
         working-directory: /tmp/base_project

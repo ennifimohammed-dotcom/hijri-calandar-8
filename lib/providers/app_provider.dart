@@ -8,6 +8,7 @@ import '../data/hijri_months.dart';
 import '../repositories/event_repository.dart';
 import '../services/recurrence_engine.dart';
 import '../services/notification_service.dart';
+import '../utils/app_logger.dart';
 import '../services/notification_settings_service.dart';
 import '../theme.dart';
 import '../utils/hijri_utils.dart';
@@ -149,7 +150,7 @@ class AppProvider extends ChangeNotifier {
       await _scheduleIslamicNotifications();
       await _notifs.scheduleMidnightReschedule();
     } catch (e) {
-      debugPrint('AppProvider.init error: $e');
+      AppLogger.error('AppProvider.init failed', error: e);
     }
     _isLoading = false;
     notifyListeners();
@@ -314,7 +315,7 @@ class AppProvider extends ChangeNotifier {
       final seen = <String>{};
       return all.where((e) => seen.add(e.id)).toList();
     } catch (e) {
-      debugPrint('getEventsForDay error: $e');
+      AppLogger.error('getEventsForDay failed', error: e);
       return [];
     }
   }
@@ -524,7 +525,7 @@ class AppProvider extends ChangeNotifier {
       }
       await _scheduleZakatNotifications();
     } catch (e) {
-      debugPrint('_scheduleIslamicNotifications error: $e');
+      AppLogger.error('_scheduleIslamicNotifications failed', error: e);
     }
   }
 
@@ -766,7 +767,7 @@ class AppProvider extends ChangeNotifier {
         await prefs.remove('zakat_r2');
       }
     } catch (e) {
-      debugPrint('_savePrefs error: $e');
+      AppLogger.error('_savePrefs failed', error: e);
     }
   }
 
@@ -840,7 +841,7 @@ class AppProvider extends ChangeNotifier {
         }
       }
     } catch (e) {
-      debugPrint('_loadPrefs error: $e');
+      AppLogger.error('_loadPrefs failed', error: e);
     }
   }
 }

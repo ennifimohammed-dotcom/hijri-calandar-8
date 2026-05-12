@@ -1,6 +1,6 @@
-import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/notification_settings.dart';
+import '../utils/app_logger.dart';
 
 class NotificationSettingsService {
   static const _kKey = 'notification_settings_v1';
@@ -24,7 +24,7 @@ class NotificationSettingsService {
         _settings = NotificationSettings.decode(raw);
       }
     } catch (e) {
-      debugPrint('NotificationSettingsService.load error: $e');
+      AppLogger.error('NotificationSettingsService.load failed', error: e);
     }
     _loaded = true;
     return _settings;
@@ -37,7 +37,7 @@ class NotificationSettingsService {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kKey, settings.encode());
     } catch (e) {
-      debugPrint('NotificationSettingsService.save error: $e');
+      AppLogger.error('NotificationSettingsService.save failed', error: e);
     }
   }
 

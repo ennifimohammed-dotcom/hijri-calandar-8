@@ -1,0 +1,55 @@
+# Phase 1 — Safety Net.
+#
+# This file enables Dart/Flutter linter checks for the CalendarHijri
+# project. It layers a small set of correctness-focused rules on top
+# of the official `flutter_lints` recommended set. The goal is to
+# start catching real bugs (mistyped string comparisons, swallowed
+# futures, raw `print` calls) at `flutter analyze` time — long
+# before they reach an APK build — without blowing up the existing
+# code base with hundreds of cosmetic warnings.
+#
+# Rule tiers used here
+#   * The base `package:flutter_lints/flutter.yaml` set ships the
+#     official recommended rules — the same ones that newly-created
+#     Flutter apps get out of the box.
+#   * Selected additions live under `linter > rules`, only when:
+#       - they are correctness-oriented (not stylistic), AND
+#       - they are confidently green on the current codebase, so
+#         they can be ON from day one without blocking CI.
+#
+# CI behaviour
+#   `flutter analyze` is run in CI without `continue-on-error`, so
+#   a regression on any of the rules below blocks the APK build.
+
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    # `TODO:` comments stay as `info` — useful but non-blocking.
+    todo: info
+
+  exclude:
+    - "build/**"
+    - "**/*.g.dart"
+    - "**/*.freezed.dart"
+
+linter:
+  rules:
+    # ── Correctness additions ────────────────────────────────
+    # No raw `print()` — production logging must go through
+    # AppLogger so that release builds stay quiet and crash
+    # reports capture stack traces.
+    avoid_print: true
+
+    # Type-safety guards that catch silent bugs.
+    unrelated_type_equality_checks: true
+    avoid_returning_null_for_void: true
+
+    # Async hygiene — `StreamSubscription`s / `Sink`s must be
+    # closed, otherwise we leak handles across the app lifetime.
+    cancel_subscriptions: true
+    close_sinks: true
+
+    # Flutter color literals must be the full 8-digit hex so
+    # alpha is always explicit (avoids subtle theme bugs).
+    use_full_hex_values_for_flutter_colors: true

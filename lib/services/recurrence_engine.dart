@@ -1,6 +1,6 @@
-import 'package:flutter/foundation.dart';
 import '../models/event_model.dart';
 import '../utils/hijri_utils.dart';
+import '../utils/app_logger.dart';
 
 /// Production-grade recurrence engine.
 /// Expands recurring events lazily within a date range only.
@@ -27,7 +27,7 @@ class RecurrenceEngine {
       try {
         result.addAll(_expand(event, from, to));
       } catch (e) {
-        debugPrint('RecurrenceEngine: error expanding ${event.id}: $e');
+        AppLogger.error('RecurrenceEngine: error expanding ${event.id}', error: e);
       }
     }
     result.sort((a, b) => a.instanceDate.compareTo(b.instanceDate));
@@ -157,7 +157,7 @@ class RecurrenceEngine {
           instances.add(EventInstance(event: event, instanceDate: greg));
         }
       } catch (e) {
-        debugPrint('expandIslamicEvent year $y: $e');
+        AppLogger.error('expandIslamicEvent year $y failed', error: e);
       }
     }
     return instances;

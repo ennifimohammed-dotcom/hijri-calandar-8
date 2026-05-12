@@ -7,6 +7,7 @@ import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz_data;
 import '../models/event_model.dart';
 import '../models/notification_settings.dart';
+import '../utils/app_logger.dart';
 import 'notification_settings_service.dart';
 
 /// Production-grade notification engine.
@@ -52,14 +53,14 @@ class NotificationService {
       await _settings.load();
 
       _initialized = true;
-      debugPrint('NotificationService: initialized');
+      AppLogger.info('NotificationService: initialized');
     } catch (e) {
-      debugPrint('NotificationService.init error: $e');
+      AppLogger.error('NotificationService.init failed', error: e);
     }
   }
 
   void _onNotificationTap(NotificationResponse response) {
-    debugPrint('Notification tapped: ${response.payload}');
+    AppLogger.debug('Notification tapped: ${response.payload}');
   }
 
   // ── Permissions ──────────────────────────────────────────
@@ -74,7 +75,7 @@ class NotificationService {
       }
       return true;
     } catch (e) {
-      debugPrint('requestPermissions error: $e');
+      AppLogger.error('requestPermissions failed', error: e);
       return false;
     }
   }
@@ -93,7 +94,7 @@ class NotificationService {
         'volume': volume.clamp(0.0, 1.0),
       });
     } catch (e) {
-      debugPrint('setNotificationVolume not available: $e');
+      AppLogger.error('setNotificationVolume not available', error: e);
     }
   }
 
@@ -105,7 +106,7 @@ class NotificationService {
         'volume': _settings.settings.volume,
       });
     } catch (e) {
-      debugPrint('previewSound not available: $e');
+      AppLogger.error('previewSound not available', error: e);
     }
   }
 
@@ -233,7 +234,7 @@ class NotificationService {
         );
       }
     } catch (e) {
-      debugPrint('scheduleEventReminders error: $e');
+      AppLogger.error('scheduleEventReminders failed', error: e);
     }
   }
 
@@ -270,7 +271,7 @@ class NotificationService {
         await _plugin.cancel(id);
       }
     } catch (e) {
-      debugPrint('cancelEventReminders error: $e');
+      AppLogger.error('cancelEventReminders failed', error: e);
     }
   }
 
@@ -280,15 +281,15 @@ class NotificationService {
       await _plugin.cancelAll();
       final s = _settings.settings;
       if (!s.enabled) {
-        debugPrint('NotificationService: notifications disabled, skipping');
+        AppLogger.info('NotificationService: notifications disabled, skipping');
         return;
       }
       for (final event in events) {
         await scheduleEventReminders(event);
       }
-      debugPrint('NotificationService: rescheduled ${events.length} events');
+      AppLogger.info('NotificationService: rescheduled ${events.length} events');
     } catch (e) {
-      debugPrint('rescheduleAll error: $e');
+      AppLogger.error('rescheduleAll failed', error: e);
     }
   }
 
@@ -314,7 +315,7 @@ class NotificationService {
         payload: 'daily_summary',
       );
     } catch (e) {
-      debugPrint('scheduleDailySummary error: $e');
+      AppLogger.error('scheduleDailySummary failed', error: e);
     }
   }
 
@@ -333,7 +334,7 @@ class NotificationService {
         payload: '29th_day',
       );
     } catch (e) {
-      debugPrint('schedule29thDayAlert error: $e');
+      AppLogger.error('schedule29thDayAlert failed', error: e);
     }
   }
 
@@ -356,7 +357,7 @@ class NotificationService {
         );
       }
     } catch (e) {
-      debugPrint('scheduleRamadanAlert error: $e');
+      AppLogger.error('scheduleRamadanAlert failed', error: e);
     }
   }
 
@@ -397,7 +398,7 @@ class NotificationService {
         bigText: true,
       );
     } catch (e) {
-      debugPrint('scheduleIslamicReminder error: $e');
+      AppLogger.error('scheduleIslamicReminder failed', error: e);
     }
   }
 
@@ -412,7 +413,7 @@ class NotificationService {
         }
       }
     } catch (e) {
-      debugPrint('cancelIslamicReminders error: $e');
+      AppLogger.error('cancelIslamicReminders failed', error: e);
     }
   }
 
@@ -432,7 +433,7 @@ class NotificationService {
         silent: true,
       );
     } catch (e) {
-      debugPrint('scheduleMidnightReschedule error: $e');
+      AppLogger.error('scheduleMidnightReschedule failed', error: e);
     }
   }
 
@@ -453,7 +454,7 @@ class NotificationService {
         payload: payload,
       );
     } catch (e) {
-      debugPrint('showImmediate error: $e');
+      AppLogger.error('showImmediate failed', error: e);
     }
   }
 
@@ -470,7 +471,7 @@ class NotificationService {
     try {
       await _plugin.cancelAll();
     } catch (e) {
-      debugPrint('cancelAll error: $e');
+      AppLogger.error('cancelAll failed', error: e);
     }
   }
 
@@ -553,7 +554,7 @@ class NotificationService {
         payload: payload,
       );
     } catch (e) {
-      debugPrint('_scheduleExact id=$id error: $e');
+      AppLogger.error('_scheduleExact id=$id failed', error: e);
     }
   }
 

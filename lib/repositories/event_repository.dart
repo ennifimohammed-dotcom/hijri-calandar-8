@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/event_model.dart';
 import '../services/notification_service.dart';
+import '../utils/app_logger.dart';
 
 /// Offline-first event repository.
 /// All events stored in SharedPreferences (JSON).
@@ -26,7 +27,7 @@ class EventRepository {
         _cache = AppEvent.decodeList(json);
       }
     } catch (e) {
-      debugPrint('EventRepository.loadAll error: $e');
+      AppLogger.error('EventRepository.loadAll failed', error: e);
       _cache = [];
     }
     _loaded = true;
@@ -41,7 +42,7 @@ class EventRepository {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setString(_kEventsKey, AppEvent.encodeList(_cache));
     } catch (e) {
-      debugPrint('EventRepository._persist error: $e');
+      AppLogger.error('EventRepository._persist failed', error: e);
     }
   }
 
@@ -51,7 +52,7 @@ class EventRepository {
     _cache.add(event);
     await _persist();
     await _notifs.scheduleEventReminders(event);
-    debugPrint('EventRepository: added ${event.id}');
+    AppLogger.debug('EventRepository: added ${event.id}');
   }
 
   Future<void> update(AppEvent event) async {
@@ -62,7 +63,7 @@ class EventRepository {
     _cache[idx] = event;
     await _persist();
     await _notifs.scheduleEventReminders(event);
-    debugPrint('EventRepository: updated ${event.id}');
+    AppLogger.debug('EventRepository: updated ${event.id}');
   }
 
   Future<void> delete(String id) async {
@@ -72,7 +73,7 @@ class EventRepository {
     await _notifs.cancelEventReminders(ev);
     _cache.removeAt(idx);
     await _persist();
-    debugPrint('EventRepository: deleted $id');
+    AppLogger.debug('EventRepository: deleted $id');
   }
 
   Future<void> toggle(String id, bool enabled) async {
