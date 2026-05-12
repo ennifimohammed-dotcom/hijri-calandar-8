@@ -5,7 +5,6 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/notification_settings.dart';
 import '../providers/app_provider.dart';
-import '../utils/hijri_utils.dart';
 import '../utils/text_format.dart';
 import '../theme.dart';
 import 'notification_settings_screen.dart';
@@ -402,30 +401,6 @@ class _AppearanceSection extends StatelessWidget {
       ],
     );
   }
-}
-
-class _ChipRow extends StatelessWidget {
-  final List<String> options;
-  final String selected;
-  final bool isDark;
-  const _ChipRow({required this.options, required this.selected, required this.isDark});
-  @override
-  Widget build(BuildContext context) => Row(
-    mainAxisSize: MainAxisSize.min,
-    children: options.map((o) {
-      final active = o == selected;
-      return Container(
-        margin: const EdgeInsets.only(right: 4),
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: active ? AppColors.navy : Colors.transparent,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: active ? AppColors.navy : AppColors.border)),
-        child: Text(o, style: appFont(fontSize: 9, fontWeight: FontWeight.w700,
-            color: active ? Colors.white : AppColors.text3)),
-      );
-    }).toList(),
-  );
 }
 
 // ═══════════════════════════════════════════════════════════

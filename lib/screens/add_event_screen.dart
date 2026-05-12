@@ -467,7 +467,12 @@ class _EventDraft {
   DateTime end;
 
   _RecurrenceChoice recurrence;
-  _EditScope editScope;
+
+  /// Currently-applied edit scope. The field is mutated by the
+  /// edit-scope sheet at runtime; no constructor ever overrides
+  /// the default (so the dropped named parameter wasn't carrying
+  /// any signal — flagged by the analyzer as `unused_element_parameter`).
+  _EditScope editScope = _EditScope.thisOccurrence;
 
   /// Per-event notifications switch. Independent of the global
   /// notifications setting and of [AppEvent.isEnabled]. See
@@ -483,7 +488,6 @@ class _EventDraft {
     required this.start,
     required this.end,
     this.recurrence = _RecurrenceChoice.none,
-    this.editScope = _EditScope.thisOccurrence,
     this.notificationsEnabled = true,
     List<EventReminder>? reminders,
   }) : reminders = reminders ?? <EventReminder>[];

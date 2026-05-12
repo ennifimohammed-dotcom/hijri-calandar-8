@@ -83,11 +83,11 @@ class AppProvider extends ChangeNotifier {
   // ── Settings state ────────────────────────────────────────
   ThemeMode _themeMode = ThemeMode.light;
   String _locale = 'ar';
-  Map<String, bool> _islamicEventsEnabled = {};
+  final Map<String, bool> _islamicEventsEnabled = {};
 
   /// Per-event configurable trigger time. Key = IslamicEventConfig.id.
   /// Missing entries fall back to the cfg's defaultHour/defaultMinute.
-  Map<String, TimeOfDay> _islamicEventTimes = {};
+  final Map<String, TimeOfDay> _islamicEventTimes = {};
 
   // ── Zakat — user-configured annual due date + 2 reminders ──
   DateTime? _zakatDueDate;

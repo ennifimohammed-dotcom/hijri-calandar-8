@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/islamic_events.dart';
 import '../providers/app_provider.dart';
-import '../utils/hijri_utils.dart';
 import '../theme.dart';
 import '../widgets/calendar_grid_picker.dart';
 
