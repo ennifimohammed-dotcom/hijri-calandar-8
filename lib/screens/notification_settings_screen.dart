@@ -552,7 +552,7 @@ class _NotificationSettingsScreenState
               child: Container(
                 width: 12,
                 height: 12,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   color: _accent,
                   shape: BoxShape.circle,
                 ),
