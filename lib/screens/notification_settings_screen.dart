@@ -25,12 +25,26 @@ class NotificationSettingsScreen extends StatefulWidget {
 
 class _NotificationSettingsScreenState
     extends State<NotificationSettingsScreen> {
-  static const _bg = Color(0xFFE9EAEC);
-  static const _cardWhite = Colors.white;
-  static const _blue = Color(0xFF0A7CFF);
-  static const _separator = Color(0xFFE2E3E5);
-  static const _label = Color(0xFF1C1C1E);
-  static const _sub = Color(0xFF8E8E93);
+  /// Whether the user has dark theme enabled. Refreshed at the
+  /// top of every `build` from the live AppProvider. All the
+  /// colour getters below derive their value from this flag.
+  bool _isDark = false;
+
+  // ── Theme-aware palette ──────────────────────────────────
+  // Replaces the previous hardcoded iOS-blue/light-only palette
+  // so the Notifications screen finally lines up with the rest
+  // of the app and supports dark mode end-to-end.
+  Color get _bg        => _isDark ? AppColors.darkBg      : AppColors.bg;
+  Color get _surface   => _isDark ? AppColors.darkSurface : AppColors.white;
+  Color get _label     => _isDark ? AppColors.darkText    : AppColors.text;
+  Color get _sub       => _isDark ? AppColors.darkText3   : AppColors.text3;
+  Color get _separator => _isDark ? AppColors.darkBorder  : AppColors.border;
+
+  /// Primary brand accent. The whole notification screen used
+  /// to render in iOS-blue (`0xFF0A7CFF`) — now it picks up the
+  /// app's regional/theme-aware green so every screen reads as
+  /// part of the same visual identity.
+  Color get _accent => AppColors.green;
 
   // Localized text helpers — all user-facing strings on this screen
   // route through here so the screen follows the chosen UI locale.
@@ -39,6 +53,7 @@ class _NotificationSettingsScreenState
   @override
   Widget build(BuildContext context) {
     final p = context.watch<AppProvider>();
+    _isDark = p.themeMode == ThemeMode.dark;
     final s = p.notificationSettings;
     final loc = p.locale;
     return Scaffold(
@@ -48,7 +63,7 @@ class _NotificationSettingsScreenState
         elevation: 0,
         scrolledUnderElevation: 0,
         centerTitle: true,
-        iconTheme: const IconThemeData(color: _label),
+        iconTheme: IconThemeData(color: _label),
         title: Text(
           _t(loc, _Tr.title),
           style: appFont(
@@ -79,7 +94,7 @@ class _NotificationSettingsScreenState
     return _card(
       child: _row(
         title: _t(loc, _Tr.authorization),
-        titleColor: _blue,
+        titleColor: _accent,
         trailing: _iosSwitch(
           value: s.enabled,
           onChanged: (v) => p.updateNotificationSettings(
@@ -107,7 +122,7 @@ class _NotificationSettingsScreenState
                   (cur) => cur.copyWith(mode: NotificationMode.alert),
                 ),
               ),
-              const _Divider(),
+              _Divider(color: _separator),
               _radioRow(
                 label: _t(loc, _Tr.discret),
                 selected: s.mode == NotificationMode.discret,
@@ -115,7 +130,7 @@ class _NotificationSettingsScreenState
                   (cur) => cur.copyWith(mode: NotificationMode.discret),
                 ),
               ),
-              const _Divider(),
+              _Divider(color: _separator),
               _row(
                 title: _t(loc, _Tr.popup),
                 trailing: _iosSwitch(
@@ -125,16 +140,16 @@ class _NotificationSettingsScreenState
                   ),
                 ),
               ),
-              const _Divider(),
+              _Divider(color: _separator),
               _soundRow(p, s, loc),
-              const _Divider(),
+              _Divider(color: _separator),
               // Volume slider — restored here so it remains
               // available for both the agenda notification surface
               // and the per-event reminder surface (both routes
               // open this screen). It was previously removed from
               // the main app Settings only.
               _volumeRow(p, s, loc),
-              const _Divider(),
+              _Divider(color: _separator),
               _row(
                 title: _t(loc, _Tr.vibrator),
                 trailing: _iosSwitch(
@@ -144,7 +159,7 @@ class _NotificationSettingsScreenState
                   ),
                 ),
               ),
-              const _Divider(),
+              _Divider(color: _separator),
               // Lock-screen visibility selector — restored alongside
               // the volume slider for the same reason.
               _lockScreenRow(p, s, loc),
@@ -184,14 +199,14 @@ class _NotificationSettingsScreenState
                     label,
                     style: appFont(
                       fontSize: 13,
-                      color: _blue,
+                      color: _accent,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, color: _sub),
+            Icon(Icons.chevron_right, color: _sub),
           ],
         ),
       ),
@@ -238,14 +253,14 @@ class _NotificationSettingsScreenState
           ),
           Row(
             children: [
-              const Icon(Icons.volume_down_rounded, color: _sub, size: 20),
+              Icon(Icons.volume_down_rounded, color: _sub, size: 20),
               Expanded(
                 child: SliderTheme(
                   data: SliderTheme.of(context).copyWith(
-                    activeTrackColor: _blue,
+                    activeTrackColor: _accent,
                     inactiveTrackColor: _separator,
                     thumbColor: Colors.white,
-                    overlayColor: _blue.withValues(alpha: 0.15),
+                    overlayColor: _accent.withValues(alpha: 0.15),
                     trackHeight: 3,
                     thumbShape:
                         const RoundSliderThumbShape(enabledThumbRadius: 9),
@@ -264,7 +279,7 @@ class _NotificationSettingsScreenState
                   ),
                 ),
               ),
-              const Icon(Icons.volume_up_rounded, color: _sub, size: 20),
+              Icon(Icons.volume_up_rounded, color: _sub, size: 20),
             ],
           ),
         ],
@@ -300,14 +315,14 @@ class _NotificationSettingsScreenState
                     label,
                     style: appFont(
                       fontSize: 13,
-                      color: _blue,
+                      color: _accent,
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
               ),
             ),
-            const Icon(Icons.chevron_right, color: _sub),
+            Icon(Icons.chevron_right, color: _sub),
           ],
         ),
       ),
@@ -325,11 +340,11 @@ class _NotificationSettingsScreenState
             SnackBar(content: Text(_t(loc, _Tr.testSent))),
           );
         },
-        icon: const Icon(Icons.notifications_active_rounded, color: _blue),
+        icon: Icon(Icons.notifications_active_rounded, color: _accent),
         label: Text(
           _t(loc, _Tr.sendTest),
           style: appFont(
-            color: _blue,
+            color: _accent,
             fontWeight: FontWeight.w700,
           ),
         ),
@@ -338,15 +353,28 @@ class _NotificationSettingsScreenState
   }
 
   // ── Bottom sheets ────────────────────────────────────────
+  //
+  // The sound picker has to fit 11 rows (10 built-in tones +
+  // "Custom"). The previous version called `showModalBottomSheet`
+  // with its default constraints (≤ ~50 % of screen height) and
+  // an unscrollable `Column`, so once the list overflowed the
+  // sheet, everything past the visible area was silently clipped
+  // — that's why users only saw 7 sounds and "Custom" was
+  // missing. Fix: opt in to `isScrollControlled: true`, cap at
+  // 80 % of viewport, and make the option list itself scrollable.
   void _openSoundPicker(AppProvider p, NotificationSettings s, String loc) {
+    final viewport = MediaQuery.of(context).size.height;
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      constraints: BoxConstraints(maxHeight: viewport * 0.85),
       builder: (ctx) {
         NotificationSound selected = s.sound;
         return StatefulBuilder(
           builder: (ctx, setSheet) => _sheet(
             title: _t(loc, _Tr.soundTitle),
+            scrollable: true,
             children: [
               for (final option in NotificationSound.values)
                 _sheetOption(
@@ -439,7 +467,7 @@ class _NotificationSettingsScreenState
   Widget _card({required Widget child}) {
     return Container(
       decoration: BoxDecoration(
-        color: _cardWhite,
+        color: _surface,
         borderRadius: BorderRadius.circular(14),
         boxShadow: [
           BoxShadow(
@@ -456,8 +484,9 @@ class _NotificationSettingsScreenState
   Widget _row({
     required String title,
     required Widget trailing,
-    Color titleColor = _label,
+    Color? titleColor,
   }) {
+    final resolvedColor = titleColor ?? _label;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
@@ -467,7 +496,7 @@ class _NotificationSettingsScreenState
               title,
               style: appFont(
                 fontSize: 16,
-                color: titleColor,
+                color: resolvedColor,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -514,7 +543,7 @@ class _NotificationSettingsScreenState
       decoration: BoxDecoration(
         shape: BoxShape.circle,
         border: Border.all(
-          color: selected ? _blue : _sub,
+          color: selected ? _accent : _sub,
           width: 2,
         ),
       ),
@@ -524,7 +553,7 @@ class _NotificationSettingsScreenState
                 width: 12,
                 height: 12,
                 decoration: const BoxDecoration(
-                  color: _blue,
+                  color: _accent,
                   shape: BoxShape.circle,
                 ),
               ),
@@ -538,38 +567,66 @@ class _NotificationSettingsScreenState
       value: value,
       onChanged: onChanged,
       activeColor: Colors.white,
-      activeTrackColor: _blue,
+      activeTrackColor: _accent,
     );
   }
 
-  Widget _sheet({required String title, required List<Widget> children}) {
+  Widget _sheet({
+    required String title,
+    required List<Widget> children,
+    bool scrollable = false,
+  }) {
+    // The option rows (everything except the dedicated cancel
+    // marker) get wrapped in a scroll view when the caller asks
+    // for it — that's how the 11-row sound picker stops getting
+    // its tail clipped by the modal-sheet's height constraint.
+    final options =
+        children.where((w) => w is! _SheetCancelMarker).toList();
+    final optionsBlock = scrollable
+        ? Flexible(
+            child: SingleChildScrollView(
+              padding: EdgeInsets.zero,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: options,
+              ),
+            ),
+          )
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            children: options,
+          );
+
     return SafeArea(
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    child: Text(
-                      title,
-                      style: appFont(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w700,
-                        color: _label,
+            Flexible(
+              child: Container(
+                decoration: BoxDecoration(
+                  color: _surface,
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      child: Text(
+                        title,
+                        style: appFont(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w700,
+                          color: _label,
+                        ),
                       ),
                     ),
-                  ),
-                  const _Divider(),
-                  ...children.where((w) => w is! _SheetCancelMarker),
-                ],
+                    _Divider(color: _separator),
+                    optionsBlock,
+                  ],
+                ),
               ),
             ),
             const SizedBox(height: 10),
@@ -613,7 +670,7 @@ class _NotificationSettingsScreenState
     return _SheetCancelMarker(
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: _surface,
           borderRadius: BorderRadius.circular(14),
         ),
         child: InkWell(
@@ -643,12 +700,16 @@ class _NotificationSettingsScreenState
 }
 
 class _Divider extends StatelessWidget {
-  const _Divider();
+  /// Optional override so callers can pass the theme-aware
+  /// `_separator` getter; falls back to the legacy light-mode
+  /// separator if not supplied.
+  final Color? color;
+  const _Divider({this.color});
   @override
   Widget build(BuildContext context) => Container(
         height: 1,
         margin: const EdgeInsets.only(left: 16),
-        color: const Color(0xFFE2E3E5),
+        color: color ?? const Color(0xFFE2E3E5),
       );
 }
 
