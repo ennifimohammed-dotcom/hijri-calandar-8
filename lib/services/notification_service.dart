@@ -139,30 +139,25 @@ class NotificationService {
     AndroidNotificationSound? soundResource;
     bool playSound = false;
     if (isAlert) {
-      switch (s.sound) {
-        case NotificationSound.brightline:
+      if (s.sound == NotificationSound.custom) {
+        // User-picked file. If the path is set we use it as a
+        // `content://` URI; if it's missing for any reason (file
+        // deleted, permissions revoked) we fall back to the
+        // default built-in chime so the channel never ends up
+        // silent when the user expected a sound.
+        if (s.customSoundPath != null && s.customSoundPath!.isNotEmpty) {
+          soundResource = UriAndroidNotificationSound(s.customSoundPath!);
+        } else {
           soundResource =
               const RawResourceAndroidNotificationSound('brightline');
-          playSound = true;
-          break;
-        case NotificationSound.alpha:
-          soundResource = const RawResourceAndroidNotificationSound('alpha');
-          playSound = true;
-          break;
-        case NotificationSound.arrow:
-          soundResource = const RawResourceAndroidNotificationSound('arrow');
-          playSound = true;
-          break;
-        case NotificationSound.custom:
-          if (s.customSoundPath != null && s.customSoundPath!.isNotEmpty) {
-            soundResource = UriAndroidNotificationSound(s.customSoundPath!);
-            playSound = true;
-          } else {
-            soundResource =
-                const RawResourceAndroidNotificationSound('brightline');
-            playSound = true;
-          }
-          break;
+        }
+        playSound = true;
+      } else {
+        // All 10 built-in sounds map 1:1 to their `key` (which
+        // matches the .ogg filename generated in CI under
+        // `android/app/src/main/res/raw/`).
+        soundResource = RawResourceAndroidNotificationSound(s.sound.key);
+        playSound = true;
       }
     }
 

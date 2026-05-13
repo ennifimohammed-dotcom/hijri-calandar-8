@@ -4,45 +4,83 @@ enum NotificationMode { alert, discret }
 
 enum LockScreenVisibility { hideContent, doNotShow }
 
-enum NotificationSound { brightline, alpha, arrow, custom }
+/// Built-in notification sounds shipped inside the APK.
+///
+/// 10 ringtones — generated at CI build time via ffmpeg into
+/// `android/app/src/main/res/raw/<key>.ogg` — plus the `custom`
+/// entry which lets the user pick a sound from their phone via
+/// the file picker.
+///
+/// The `key` of every enum entry is the EXACT filename (without
+/// extension) the Android plugin will look up under `res/raw`.
+/// Renaming a key without regenerating the matching `.ogg` will
+/// make the notification fall back to the system default sound.
+enum NotificationSound {
+  brightline,
+  alpha,
+  arrow,
+  chime,
+  bell,
+  ping,
+  drop,
+  crystal,
+  pulse,
+  meadow,
+  custom,
+}
 
 extension NotificationSoundX on NotificationSound {
   String get key {
     switch (this) {
-      case NotificationSound.brightline:
-        return 'brightline';
-      case NotificationSound.alpha:
-        return 'alpha';
-      case NotificationSound.arrow:
-        return 'arrow';
-      case NotificationSound.custom:
-        return 'custom';
+      case NotificationSound.brightline: return 'brightline';
+      case NotificationSound.alpha:      return 'alpha';
+      case NotificationSound.arrow:      return 'arrow';
+      case NotificationSound.chime:      return 'chime';
+      case NotificationSound.bell:       return 'bell';
+      case NotificationSound.ping:       return 'ping';
+      case NotificationSound.drop:       return 'drop';
+      case NotificationSound.crystal:    return 'crystal';
+      case NotificationSound.pulse:      return 'pulse';
+      case NotificationSound.meadow:     return 'meadow';
+      case NotificationSound.custom:     return 'custom';
     }
   }
 
+  /// Human-readable name used by the sound-picker. Brand-style
+  /// names so they read the same in every locale; the `custom`
+  /// row's label is localised separately by the UI.
   String get displayName {
     switch (this) {
-      case NotificationSound.brightline:
-        return 'Brightline';
-      case NotificationSound.alpha:
-        return 'Alpha';
-      case NotificationSound.arrow:
-        return 'Arrow';
-      case NotificationSound.custom:
-        return 'Personnalisé';
+      case NotificationSound.brightline: return 'Brightline';
+      case NotificationSound.alpha:      return 'Alpha';
+      case NotificationSound.arrow:      return 'Arrow';
+      case NotificationSound.chime:      return 'Chime';
+      case NotificationSound.bell:       return 'Bell';
+      case NotificationSound.ping:       return 'Ping';
+      case NotificationSound.drop:       return 'Drop';
+      case NotificationSound.crystal:    return 'Crystal';
+      case NotificationSound.pulse:      return 'Pulse';
+      case NotificationSound.meadow:     return 'Meadow';
+      case NotificationSound.custom:     return 'Personnalisé';
     }
   }
 
   static NotificationSound fromKey(String? key) {
     switch (key) {
-      case 'alpha':
-        return NotificationSound.alpha;
-      case 'arrow':
-        return NotificationSound.arrow;
-      case 'custom':
-        return NotificationSound.custom;
+      case 'alpha':      return NotificationSound.alpha;
+      case 'arrow':      return NotificationSound.arrow;
+      case 'chime':      return NotificationSound.chime;
+      case 'bell':       return NotificationSound.bell;
+      case 'ping':       return NotificationSound.ping;
+      case 'drop':       return NotificationSound.drop;
+      case 'crystal':    return NotificationSound.crystal;
+      case 'pulse':      return NotificationSound.pulse;
+      case 'meadow':     return NotificationSound.meadow;
+      case 'custom':     return NotificationSound.custom;
       case 'brightline':
       default:
+        // Unknown keys (older app data, future renames) fall back
+        // to the canonical default. Never throws.
         return NotificationSound.brightline;
     }
   }

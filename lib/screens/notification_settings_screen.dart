@@ -686,10 +686,10 @@ extension _TrX on _Tr {
   String value(String loc) {
     switch (this) {
       case _Tr.title:
-        return loc == 'ar' ? 'إشعارات الأجندة'
-            : loc == 'es' ? 'Notificaciones de la agenda'
-            : loc == 'en' ? 'Calendar notifications'
-            : "Notifications d'Agenda";
+        return loc == 'ar' ? 'الإشعارات'
+            : loc == 'es' ? 'Notificaciones'
+            : loc == 'en' ? 'Notifications'
+            : 'Notifications';
       case _Tr.authorization:
         return loc == 'ar' ? 'السماح بالإشعارات'
             : loc == 'es' ? 'Autorización de notificaciones'

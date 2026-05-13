@@ -511,8 +511,10 @@ class _NotificationsSectionState extends State<_NotificationsSection> {
               emoji: '🔔',
               bg: AppColors.greenPale,
               title: loc == 'ar'
-                  ? 'إشعارات الأجندة'
-                  : 'Notifications d\'Agenda',
+                  ? 'الإشعارات'
+                  : loc == 'es'
+                      ? 'Notificaciones'
+                      : 'Notifications',
               sub: settings.enabled
                   ? '${_modeLabel(settings.mode, loc)} · ${_soundLabel(settings)}'
                   : (loc == 'ar' ? 'معطّلة' : 'Désactivées'),
