@@ -51,6 +51,7 @@ jobs:
           mkdir -p /tmp/base_project/assets/icon
           cp $GITHUB_WORKSPACE/assets/icon/icon.png /tmp/base_project/assets/icon/icon.png
           cp $GITHUB_WORKSPACE/assets/icon/chabab_alkhair.jpg /tmp/base_project/assets/icon/chabab_alkhair.jpg
+          cp $GITHUB_WORKSPACE/assets/icon/splash_artwork.png /tmp/base_project/assets/icon/splash_artwork.png
           # Phase 1 — Safety Net: copy our test suite (and the
           # analysis_options.yaml at the repo root) into the staged
           # project so `flutter analyze` and `flutter test` run
