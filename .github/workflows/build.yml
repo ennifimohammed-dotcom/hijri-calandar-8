@@ -103,11 +103,12 @@ jobs:
           # / strings) into the res/ tree `flutter create` generated.
           # File-by-file copy so we ADD to — never replace — that tree.
           RES_DIR=/tmp/base_project/android/app/src/main/res
-          mkdir -p "$RES_DIR/layout" "$RES_DIR/xml" "$RES_DIR/drawable" "$RES_DIR/values"
-          cp $GITHUB_WORKSPACE/android_patches/res/layout/*   "$RES_DIR/layout/"
-          cp $GITHUB_WORKSPACE/android_patches/res/xml/*      "$RES_DIR/xml/"
-          cp $GITHUB_WORKSPACE/android_patches/res/drawable/* "$RES_DIR/drawable/"
-          cp $GITHUB_WORKSPACE/android_patches/res/values/*   "$RES_DIR/values/"
+          mkdir -p "$RES_DIR/layout" "$RES_DIR/xml" "$RES_DIR/drawable" "$RES_DIR/drawable-night" "$RES_DIR/values"
+          cp $GITHUB_WORKSPACE/android_patches/res/layout/*         "$RES_DIR/layout/"
+          cp $GITHUB_WORKSPACE/android_patches/res/xml/*            "$RES_DIR/xml/"
+          cp $GITHUB_WORKSPACE/android_patches/res/drawable/*       "$RES_DIR/drawable/"
+          cp $GITHUB_WORKSPACE/android_patches/res/drawable-night/* "$RES_DIR/drawable-night/"
+          cp $GITHUB_WORKSPACE/android_patches/res/values/*         "$RES_DIR/values/"
           echo "----- res/ tree -----"
           find "$RES_DIR" -type f | sort
 

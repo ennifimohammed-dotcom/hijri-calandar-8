@@ -1,15 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Fallback background for the "Hijri Date" widget: a royal-green
-  rounded rectangle. Only visible before the Flutter-rendered PNG
-  lands; once it does, the PNG (which carries its own rounded
-  corners) covers this entirely.
+  Light-theme fallback background for the "Hijri Date" widget: a flat
+  light card with a hairline border, matching the app's light theme
+  (AppColors.white / AppColors.border). Only visible before the
+  Flutter-rendered PNG lands; once it does, the PNG covers it.
+
+  The dark-theme variant lives in res/drawable-night/ and the system
+  picks between them automatically.
 -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android"
     android:shape="rectangle">
     <corners android:radius="24dp" />
-    <gradient
-        android:startColor="#06231A"
-        android:endColor="#0E4A2D"
-        android:angle="135" />
+    <solid android:color="#FFFFFF" />
+    <stroke android:width="1dp" android:color="#E8E4DC" />
 </shape>
