@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:home_widget/home_widget.dart';
 
 import '../providers/app_provider.dart';
@@ -18,22 +19,22 @@ import '../widgets_home/widget_snapshot.dart';
 ///   * it only ever READS from the provider;
 ///   * it renders the premium [HijriDateWidgetView] to a PNG via
 ///     `home_widget`'s `renderFlutterWidget`;
-///   * it asks the native AppWidget to reload that PNG.
+///   * it asks the native AppWidget to reload that PNG;
+///   * it routes a widget tap to the monthly calendar view.
 ///
 /// Performance & stability contract (matches the spec's "Forbidden"
 /// list):
 ///   * Renders are DEBOUNCED — the provider notifies on nearly every
-///     interaction (month swipes, day taps, ...); a 700 ms coalescing
-///     window collapses bursts into a single render.
-///   * A [signature] check skips the render entirely when nothing the
-///     widget shows actually changed (no duplicate work).
+///     interaction; a 700 ms coalescing window collapses bursts into
+///     a single render.
+///   * A [WidgetSnapshot.signature] check skips the render entirely
+///     when nothing the widget shows actually changed.
 ///   * A `_rendering` guard plus re-arm prevents overlapping renders
 ///     and guarantees the latest state still lands (no lost update,
 ///     no infinite loop).
 ///   * Every path is wrapped in try/catch and logged through
 ///     [AppLogger]: if `home_widget` or the platform misbehaves, the
-///     host app keeps running exactly as before. Widget sync is never
-///     on a critical path.
+///     host app keeps running exactly as before.
 class WidgetSyncService {
   WidgetSyncService._();
 
@@ -53,19 +54,38 @@ class WidgetSyncService {
   /// Coalescing window for rapid-fire provider notifications.
   static const Duration _debounceWindow = Duration(milliseconds: 700);
 
+  /// Bumped every time a widget tap asks for the monthly view.
+  /// `HomeScreen` listens to this to switch its bottom-nav back to
+  /// the Calendar tab; the view mode itself is set on the provider.
+  final ValueNotifier<int> openMonthlyTick = ValueNotifier<int>(0);
+
   AppProvider? _provider;
   Timer? _debounce;
+  StreamSubscription<Uri?>? _clickSub;
   bool _rendering = false;
   String? _lastSignature;
 
   /// Wires the service to the live provider. Safe to call once, from
-  /// `main.dart`'s `initState` (post-frame). Adds a listener and
-  /// triggers an initial sync.
+  /// `main.dart`'s `initState` (post-frame). Adds a listener, triggers
+  /// an initial sync, and starts handling widget taps.
   void bind(AppProvider provider) {
     if (_provider != null) return;
     _provider = provider;
     provider.addListener(_onProviderChanged);
     requestSync();
+
+    // Warm-start taps: the app is already running and the widget is
+    // tapped. `home_widget` delivers the launch URI on this stream.
+    _clickSub = HomeWidget.widgetClicked.listen(
+      _onWidgetUri,
+      onError: (Object e, StackTrace s) => AppLogger.error(
+        'WidgetSyncService: widgetClicked stream error',
+        error: e,
+        stack: s,
+      ),
+    );
+    // Cold-start taps: the app was launched BY the widget tap.
+    unawaited(_checkColdLaunch());
   }
 
   /// Detaches the service — called from `main.dart`'s `dispose`.
@@ -74,6 +94,8 @@ class WidgetSyncService {
     _provider = null;
     _debounce?.cancel();
     _debounce = null;
+    _clickSub?.cancel();
+    _clickSub = null;
   }
 
   void _onProviderChanged() => requestSync();
@@ -85,6 +107,37 @@ class WidgetSyncService {
     _debounce?.cancel();
     _debounce = Timer(_debounceWindow, _render);
   }
+
+  // ── Widget tap → monthly view ────────────────────────────────
+
+  Future<void> _checkColdLaunch() async {
+    try {
+      _onWidgetUri(await HomeWidget.initiallyLaunchedFromHomeWidget());
+    } catch (e, s) {
+      AppLogger.error('WidgetSyncService: cold-launch check failed',
+          error: e, stack: s);
+    }
+  }
+
+  /// Handles a launch/click URI coming from the home-screen widget.
+  /// There is one widget and one action, so any non-null URI means
+  /// "open the monthly calendar view".
+  void _onWidgetUri(Uri? uri) {
+    if (uri == null) return;
+    final p = _provider;
+    if (p == null) return;
+    try {
+      p.setViewMode(CalendarViewMode.monthly);
+      // Nudge HomeScreen back to the Calendar tab (covers the
+      // warm-start case where another tab was open).
+      openMonthlyTick.value++;
+    } catch (e, s) {
+      AppLogger.error('WidgetSyncService: handling widget tap failed',
+          error: e, stack: s);
+    }
+  }
+
+  // ── Render → push ────────────────────────────────────────────
 
   Future<void> _render() async {
     final p = _provider;

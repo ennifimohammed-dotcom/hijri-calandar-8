@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
+import '../services/widget_sync_service.dart';
 import '../theme.dart';
 import 'calendar_screen.dart';
 import 'event_bank_screen.dart';
@@ -15,6 +16,27 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // A home-screen-widget tap asks for the monthly view. The view
+    // mode itself is switched on the provider by WidgetSyncService;
+    // here we only make sure the bottom nav is on the Calendar tab.
+    WidgetSyncService.instance.openMonthlyTick.addListener(_onOpenMonthly);
+  }
+
+  @override
+  void dispose() {
+    WidgetSyncService.instance.openMonthlyTick.removeListener(_onOpenMonthly);
+    super.dispose();
+  }
+
+  void _onOpenMonthly() {
+    if (mounted && _currentIndex != 0) {
+      setState(() => _currentIndex = 0);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {

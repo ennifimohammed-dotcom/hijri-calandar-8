@@ -1,30 +1,31 @@
 package com.hijricalendar.hijri_calendar
 
-import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.BitmapFactory
+import android.net.Uri
 import android.widget.RemoteViews
+import es.antonborri.home_widget.HomeWidgetLaunchIntent
 import es.antonborri.home_widget.HomeWidgetProvider
 import java.io.File
 
 /**
- * Home-screen widget: "Hijri Date" (Phase 1 of the widget system).
+ * Home-screen widget: "Hijri Date".
  *
- * The premium card itself is rendered on the Flutter side
- * (WidgetSyncService -> HijriDateWidgetView) to a PNG via
+ * The premium card is rendered on the Flutter side
+ * (WidgetSyncService -> HijriDateWidgetView) to a full-bleed PNG via
  * `home_widget`'s `renderFlutterWidget`. This provider runs in the
- * launcher's process — no Flutter engine, no app state here — and its
- * only job is to load that PNG into the widget's ImageView.
+ * launcher's process — no Flutter engine, no app state — and only
+ * loads that PNG into the widget's ImageView. The ImageView shows it
+ * with centerCrop, so it fills the whole widget with no background
+ * behind it.
  *
- * `home_widget` publishes the PNG's absolute path under the
- * "hijri_date_widget_image" key (see WidgetSyncService._imageKey) in
- * the SharedPreferences instance passed to [onUpdate] as [widgetData].
- *
- * Until the first render lands, the layout's drawable background
- * (a royal-green rounded rectangle) is shown, so a freshly-placed
- * widget never looks broken.
+ * Tapping the widget launches the app on its monthly calendar view:
+ * the click PendingIntent carries a home_widget URI which the Flutter
+ * side (WidgetSyncService) reads to switch to CalendarViewMode.monthly.
+ * The intent is explicit (it targets MainActivity directly), so no
+ * manifest intent-filter is needed.
  */
 class HijriDateWidgetProvider : HomeWidgetProvider() {
 
@@ -52,29 +53,21 @@ class HijriDateWidgetProvider : HomeWidgetProvider() {
                         }
                     }
                 } catch (e: Exception) {
-                    // Corrupt / half-written file — keep the placeholder
-                    // background rather than crash the launcher.
+                    // Corrupt / half-written file — skip; the widget
+                    // shows nothing rather than crashing the launcher.
                 }
             }
 
-            // Tapping the widget opens the app normally. Phase 1 keeps
-            // this a plain launch (no deep-link, no change to the app's
-            // boot flow); carrying the tapped date is a Phase 2 item.
-            val launchIntent = context.packageManager
-                .getLaunchIntentForPackage(context.packageName)
-            if (launchIntent != null) {
-                val pendingIntent = PendingIntent.getActivity(
-                    context,
-                    0,
-                    launchIntent,
-                    PendingIntent.FLAG_IMMUTABLE or
-                        PendingIntent.FLAG_UPDATE_CURRENT,
-                )
-                views.setOnClickPendingIntent(
-                    R.id.widget_hijri_date_root,
-                    pendingIntent,
-                )
-            }
+            // Tap -> open the app on the monthly calendar view.
+            val pendingIntent = HomeWidgetLaunchIntent.getActivity(
+                context,
+                MainActivity::class.java,
+                Uri.parse("hijribadr://widget/hijri_date?view=monthly"),
+            )
+            views.setOnClickPendingIntent(
+                R.id.widget_hijri_date_root,
+                pendingIntent,
+            )
 
             appWidgetManager.updateAppWidget(widgetId, views)
         }

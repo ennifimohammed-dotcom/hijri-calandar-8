@@ -3,19 +3,28 @@ import 'package:flutter/material.dart';
 import '../theme.dart';
 import 'widget_snapshot.dart';
 
-/// The "Hijri Date" home-screen widget — a pure, self-contained
-/// Flutter widget rendered to a PNG by `home_widget` and displayed by
-/// the native AppWidget.
+/// The premium "Hijri Date" home-screen widget — as a pure Flutter
+/// widget.
 ///
-/// It renders OUTSIDE the running app's tree, so it reads everything
-/// from [WidgetSnapshot] and supplies its own [Directionality]; every
-/// `Text` carries an explicit [appFont] style.
+/// `home_widget` renders this to a PNG via `renderFlutterWidget`, and
+/// the native `HijriDateWidgetProvider` shows that PNG with
+/// `centerCrop`. It therefore renders OUTSIDE the running app's tree,
+/// so it must be fully self-contained:
+///   * it reads everything from [WidgetSnapshot] — no `Provider`,
+///     no `Theme.of`, no `MediaQuery.of`;
+///   * it supplies its own [Directionality];
+///   * it gives every `Text` an explicit style via [appFont], so it
+///     needs no `DefaultTextStyle` / `Material` ancestor.
 ///
-/// Design: a single, flat, theme-following surface — the app's light
-/// card colour in light mode, its dark card colour in dark mode — with
-/// the active accent colour used for the Hijri date and the crescent.
-/// There is no fixed background and nothing that ignores the active
-/// theme: switch the app between light and dark and the widget follows.
+/// Visual language: a full-bleed gradient whose endpoints are BOTH
+/// derived from the app's live accent colour — so the card always
+/// follows the colour picked in Settings, in light AND dark mode —
+/// with a soft gold glow, a light glassmorphism sheen, a hand-drawn
+/// gold crescent and gold-accented typography.
+///
+/// It renders edge-to-edge (no rounded corners, no border, no
+/// transparent margin) so the native side can `centerCrop` it to
+/// fill the whole widget with nothing showing through behind it.
 class HijriDateWidgetView extends StatelessWidget {
   final WidgetSnapshot snapshot;
 
@@ -23,83 +32,131 @@ class HijriDateWidgetView extends StatelessWidget {
   /// and [WidgetSyncService] agree on one source of truth.
   static const Size canvasSize = Size(360, 168);
 
-  static const double _radius = 28;
-
   const HijriDateWidgetView({super.key, required this.snapshot});
 
   @override
   Widget build(BuildContext context) {
     final s = snapshot;
-    final bool dark = s.isDark;
 
-    // One flat surface colour, taken straight from the app's theme —
-    // the same colours its in-app cards use. No gradient, no fixed
-    // brand background.
-    final Color surface = dark ? AppColors.darkSurface : AppColors.white;
-    final Color border = dark ? AppColors.darkBorder : AppColors.border;
-    final Color textMain = dark ? AppColors.darkText : AppColors.text;
-    final Color textSoft = dark ? AppColors.darkText2 : AppColors.text2;
-    final Color accent = s.accent;
+    // Gradient endpoints, BOTH derived from the live accent so the
+    // card always follows the app's chosen colour. Nothing here is
+    // hard-coded — switch the accent (or the theme) and the whole
+    // card recolours.
+    final Color deep = s.isDark
+        ? _mix(s.accent, Colors.black, 0.72)
+        : _mix(s.accent, Colors.black, 0.62);
+    final Color mid = s.isDark
+        ? _mix(s.accent, Colors.black, 0.52)
+        : _mix(s.accent, Colors.black, 0.28);
+
+    const Color goldSoft = Color(0xFFF0D89A);
+    const Color textMain = Color(0xFFF6F1E4);
+    const Color textSoft = Color(0xFFCBD8CF);
 
     return Directionality(
       textDirection: s.isRtl ? TextDirection.rtl : TextDirection.ltr,
       child: Container(
         width: canvasSize.width,
         height: canvasSize.height,
-        padding: const EdgeInsets.fromLTRB(18, 16, 18, 16),
+        // Full-bleed: edge-to-edge gradient, no rounded corners, no
+        // border — so `centerCrop` on the native side leaves no gap
+        // and nothing behind the card to show through.
         decoration: BoxDecoration(
-          color: surface,
-          borderRadius: BorderRadius.circular(_radius),
-          border: Border.all(color: border, width: 1),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [deep, mid],
+          ),
         ),
-        child: Row(
+        child: Stack(
           children: [
-            _Crescent(size: 40, color: accent),
-            const SizedBox(width: 15),
-            Expanded(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                crossAxisAlignment: CrossAxisAlignment.start,
+            // Soft gold glow behind the date — clipped to the card by
+            // the Stack's default hard-edge clip.
+            Positioned(
+              top: -34,
+              left: s.isRtl ? -34 : null,
+              right: s.isRtl ? null : -34,
+              child: Container(
+                width: 180,
+                height: 180,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    colors: [Color(0x4FD9B45A), Color(0x00D9B45A)],
+                  ),
+                ),
+              ),
+            ),
+            // Light glassmorphism sheen — a faint top-down highlight.
+            Positioned.fill(
+              child: Container(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [
+                      Colors.white.withOpacity(0.10),
+                      Colors.white.withOpacity(0.015),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            // Content. Generous padding keeps it inside the safe zone
+            // that survives `centerCrop` on non-2:1 widget sizes.
+            Padding(
+              padding: const EdgeInsets.fromLTRB(22, 18, 22, 18),
+              child: Row(
                 children: [
-                  Row(
-                    children: [
-                      Flexible(
-                        child: Text(
-                          s.dayName,
+                  const _Crescent(size: 40),
+                  const SizedBox(width: 15),
+                  Expanded(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Flexible(
+                              child: Text(
+                                s.dayName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: appFont(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w700,
+                                  color: textMain,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            _RegionChip(label: s.regionLabel),
+                          ],
+                        ),
+                        const SizedBox(height: 7),
+                        Text(
+                          s.hijriLine,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                           style: appFont(
-                            fontSize: 20,
-                            fontWeight: FontWeight.w700,
-                            color: textMain,
+                            fontSize: 23,
+                            fontWeight: FontWeight.w800,
+                            color: goldSoft,
+                            height: 1.05,
                           ),
                         ),
-                      ),
-                      const SizedBox(width: 8),
-                      _RegionChip(label: s.regionLabel, accent: accent),
-                    ],
-                  ),
-                  const SizedBox(height: 7),
-                  Text(
-                    s.hijriLine,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: appFont(
-                      fontSize: 23,
-                      fontWeight: FontWeight.w800,
-                      color: accent,
-                      height: 1.05,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    s.gregorianLine,
-                    maxLines: 1,
-                    style: appFont(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
-                      color: textSoft,
-                      letterSpacing: 0.5,
+                        const SizedBox(height: 4),
+                        Text(
+                          s.gregorianLine,
+                          maxLines: 1,
+                          style: appFont(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w500,
+                            color: textSoft,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 ],
@@ -110,23 +167,26 @@ class HijriDateWidgetView extends StatelessWidget {
       ),
     );
   }
+
+  static Color _mix(Color a, Color b, double t) => Color.lerp(a, b, t)!;
 }
 
-/// Small accent-tinted pill showing the current region.
+/// Small gold pill showing the current region.
 class _RegionChip extends StatelessWidget {
   final String label;
-  final Color accent;
 
-  const _RegionChip({required this.label, required this.accent});
+  const _RegionChip({required this.label});
 
   @override
   Widget build(BuildContext context) {
+    const Color gold = Color(0xFFD9B45A);
+    const Color goldSoft = Color(0xFFF0D89A);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
       decoration: BoxDecoration(
-        color: accent.withOpacity(0.12),
+        color: gold.withOpacity(0.16),
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: accent.withOpacity(0.40), width: 0.8),
+        border: Border.all(color: gold.withOpacity(0.45), width: 0.8),
       ),
       child: Text(
         label,
@@ -134,35 +194,32 @@ class _RegionChip extends StatelessWidget {
         style: appFont(
           fontSize: 10,
           fontWeight: FontWeight.w700,
-          color: accent,
+          color: goldSoft,
         ),
       ),
     );
   }
 }
 
-/// A hand-drawn crescent in the active accent colour — the brand mark,
-/// kept lightweight so the off-tree render stays cheap.
+/// A hand-drawn gold crescent — the brand mark, kept lightweight so
+/// the off-tree render stays cheap.
 class _Crescent extends StatelessWidget {
   final double size;
-  final Color color;
 
-  const _Crescent({required this.size, required this.color});
+  const _Crescent({required this.size});
 
   @override
   Widget build(BuildContext context) {
     return SizedBox(
       width: size,
       height: size,
-      child: CustomPaint(painter: _CrescentPainter(color)),
+      child: const CustomPaint(painter: _CrescentPainter()),
     );
   }
 }
 
 class _CrescentPainter extends CustomPainter {
-  final Color color;
-
-  const _CrescentPainter(this.color);
+  const _CrescentPainter();
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -177,15 +234,16 @@ class _CrescentPainter extends CustomPainter {
         ),
       );
     final crescent = Path.combine(PathOperation.difference, outer, inner);
-    canvas.drawPath(
-      crescent,
-      Paint()
-        ..isAntiAlias = true
-        ..color = color,
-    );
+    final paint = Paint()
+      ..isAntiAlias = true
+      ..shader = const LinearGradient(
+        begin: Alignment.topLeft,
+        end: Alignment.bottomRight,
+        colors: [Color(0xFFF0D89A), Color(0xFFC8943A)],
+      ).createShader(Rect.fromCircle(center: Offset(r, r), radius: r));
+    canvas.drawPath(crescent, paint);
   }
 
   @override
-  bool shouldRepaint(covariant _CrescentPainter oldDelegate) =>
-      oldDelegate.color != color;
+  bool shouldRepaint(covariant _CrescentPainter oldDelegate) => false;
 }
