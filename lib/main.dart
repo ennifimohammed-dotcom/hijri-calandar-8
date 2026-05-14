@@ -5,6 +5,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'providers/app_provider.dart';
 import 'screens/splash_screen.dart';
 import 'services/notification_service.dart';
+import 'services/widget_sync_service.dart';
 import 'theme.dart';
 
 void main() async {
@@ -38,10 +39,19 @@ class _HijriCalendarAppState extends State<HijriCalendarApp>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // Bind the home-screen widget sync layer once the first frame is
+    // up, so the AppProvider is reachable via context. Best-effort —
+    // WidgetSyncService swallows and logs its own failures, so this
+    // can never affect app startup.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      WidgetSyncService.instance.bind(context.read<AppProvider>());
+    });
   }
 
   @override
   void dispose() {
+    WidgetSyncService.instance.unbind();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -52,6 +62,9 @@ class _HijriCalendarAppState extends State<HijriCalendarApp>
       // Refresh the rolling 30-day window whenever the app
       // returns to foreground (covers post-midnight transitions).
       NotificationService().scheduleMidnightReschedule();
+      // Repaint the home-screen widget too — covers a date rollover
+      // or a settings change made while the app was backgrounded.
+      WidgetSyncService.instance.requestSync();
     }
   }
 

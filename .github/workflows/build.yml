@@ -87,7 +87,7 @@ jobs:
           echo "----- AndroidManifest.xml -----"
           cat "$MANIFEST_DEST"
 
-      - name: Inject Kotlin sources (MainActivity, BootReceiver)
+      - name: Inject Kotlin sources & home-screen widget resources
         run: |
           KOTLIN_DIR=/tmp/base_project/android/app/src/main/kotlin/com/hijricalendar/hijri_calendar
           mkdir -p "$KOTLIN_DIR"
@@ -95,8 +95,21 @@ jobs:
           rm -f "$KOTLIN_DIR/MainActivity.kt"
           cp $GITHUB_WORKSPACE/android_patches/kotlin/MainActivity.kt "$KOTLIN_DIR/MainActivity.kt"
           cp $GITHUB_WORKSPACE/android_patches/kotlin/BootReceiver.kt "$KOTLIN_DIR/BootReceiver.kt"
+          # Home-screen widget provider (widget system, Phase 1).
+          cp $GITHUB_WORKSPACE/android_patches/kotlin/HijriDateWidgetProvider.kt "$KOTLIN_DIR/HijriDateWidgetProvider.kt"
           echo "----- Kotlin files -----"
           ls -la "$KOTLIN_DIR"
+          # Merge the widget's Android resources (layout / xml / drawable
+          # / strings) into the res/ tree `flutter create` generated.
+          # File-by-file copy so we ADD to — never replace — that tree.
+          RES_DIR=/tmp/base_project/android/app/src/main/res
+          mkdir -p "$RES_DIR/layout" "$RES_DIR/xml" "$RES_DIR/drawable" "$RES_DIR/values"
+          cp $GITHUB_WORKSPACE/android_patches/res/layout/*   "$RES_DIR/layout/"
+          cp $GITHUB_WORKSPACE/android_patches/res/xml/*      "$RES_DIR/xml/"
+          cp $GITHUB_WORKSPACE/android_patches/res/drawable/* "$RES_DIR/drawable/"
+          cp $GITHUB_WORKSPACE/android_patches/res/values/*   "$RES_DIR/values/"
+          echo "----- res/ tree -----"
+          find "$RES_DIR" -type f | sort
 
       - name: Generate notification sound resources
         run: |

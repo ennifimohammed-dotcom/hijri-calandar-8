@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Layout for the "Hijri Date" home-screen widget.
+
+  Intentionally minimal: the entire premium visual is a PNG rendered
+  on the Flutter side and dropped into the ImageView by
+  HijriDateWidgetProvider. The drawable background is only a fallback
+  shown before the first render lands (or if the PNG ever fails to
+  decode), so the widget never appears as an empty/transparent box.
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_hijri_date_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_hijri_date_bg">
+
+    <ImageView
+        android:id="@+id/widget_hijri_date_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="fitCenter"
+        android:adjustViewBounds="true"
+        android:contentDescription="@string/widget_hijri_date_name" />
+
+</FrameLayout>

@@ -70,6 +70,22 @@
                 <data android:scheme="package"/>
             </intent-filter>
         </receiver>
+
+        <!-- Home-screen widget: "Hijri Date" (widget system, Phase 1).
+             The premium card is rendered Flutter-side and pushed in as
+             a bitmap; this receiver only hosts the AppWidget. It does
+             not touch the notification pipeline or the boot flow. -->
+        <receiver
+            android:name=".HijriDateWidgetProvider"
+            android:exported="true"
+            android:label="@string/widget_hijri_date_name">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_hijri_date_info"/>
+        </receiver>
     </application>
 
     <queries>

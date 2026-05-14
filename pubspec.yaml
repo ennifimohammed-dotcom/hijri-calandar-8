@@ -4,7 +4,10 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  # Raised from >=3.0.0 for the home_widget plugin (needs Dart >=3.5.0).
+  # CI builds on the Flutter stable channel, which ships a Dart well
+  # past 3.5, so this only raises the documented floor.
+  sdk: '>=3.5.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -22,6 +25,10 @@ dependencies:
   timezone: ^0.9.4
   file_picker: ^8.1.4
   permission_handler: ^11.3.1
+  # Home-screen widget bridge. Used in "Flutter-to-bitmap" mode:
+  # the app renders a Flutter widget off-screen to a PNG and the
+  # native Android AppWidget displays it. See WidgetSyncService.
+  home_widget: ^0.9.1
 
 dev_dependencies:
   flutter_test:

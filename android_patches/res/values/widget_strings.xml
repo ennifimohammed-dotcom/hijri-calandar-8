@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Strings for the home-screen widgets. Kept in a dedicated file
+  (not strings.xml) so it merges cleanly into the res/values/ tree
+  that `flutter create` generates, with no risk of clobbering.
+-->
+<resources>
+    <string name="widget_hijri_date_name">بدر — التاريخ الهجري</string>
+    <string name="widget_hijri_date_desc">عرض التاريخ الهجري الحالي على الشاشة الرئيسية</string>
+</resources>
