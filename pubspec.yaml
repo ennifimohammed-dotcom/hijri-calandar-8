@@ -29,16 +29,36 @@ dev_dependencies:
   flutter_lints: ^4.0.0
   flutter_launcher_icons: ^0.14.1
 
-# flutter_launcher_icons generates Android launcher icons from
-# assets/icon/icon.png. The CI workflow runs
+# flutter_launcher_icons generates every Android launcher density
+# from the two sources below. The CI workflow runs
 # `dart run flutter_launcher_icons` after `flutter pub get`.
+#
+#   image_path              -> the legacy square icon (API 23-25 and
+#                              as a fallback). `icon.png` is the
+#                              full-bleed green rounded-square art
+#                              with the white background stripped to
+#                              transparency.
+#   adaptive_icon_foreground-> the API 26+ adaptive foreground layer.
+#                              `icon_foreground.png` is the same art
+#                              scaled to ~72% of the canvas with a
+#                              transparent margin, so the launcher's
+#                              circle / squircle / rounded mask never
+#                              clips the gold calendar artwork.
+#   adaptive_icon_background-> solid royal green sampled directly
+#                              from the artwork (#153B1B) so the
+#                              foreground square blends seamlessly
+#                              into the background with no visible
+#                              seam after masking.
+#
+# ios is intentionally false: there is no ios/ project folder — CI
+# builds an Android APK only.
 flutter_launcher_icons:
   android: true
   ios: false
   image_path: "assets/icon/icon.png"
   min_sdk_android: 23
-  adaptive_icon_background: "#0E4A2D"
-  adaptive_icon_foreground: "assets/icon/icon.png"
+  adaptive_icon_background: "#153B1B"
+  adaptive_icon_foreground: "assets/icon/icon_foreground.png"
 
 flutter:
   uses-material-design: true
