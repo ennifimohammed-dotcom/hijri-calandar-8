@@ -9,4 +9,6 @@
     <string name="widget_hijri_date_desc">عرض التاريخ الهجري الحالي على الشاشة الرئيسية</string>
     <string name="widget_islamic_day_name">بدر — اليوم الإسلامي</string>
     <string name="widget_islamic_day_desc">نظرة روحانية على اليوم: مناسبة اليوم والمناسبة القادمة</string>
+    <string name="widget_mini_calendar_name">بدر — التقويم المصغّر</string>
+    <string name="widget_mini_calendar_desc">تقويم هجري مصغّر — اضغط على يوم لفتح التطبيق على ذلك التاريخ</string>
 </resources>

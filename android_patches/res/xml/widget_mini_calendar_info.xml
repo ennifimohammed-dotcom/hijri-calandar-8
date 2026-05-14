@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  AppWidgetProviderInfo for the "Mini Calendar" widget.
+
+  Larger than the other two widgets — it hosts a full month grid, so
+  it targets a 4x3 cell footprint and is resizable. updatePeriodMillis
+  is 0 on purpose: the app (WidgetSyncService) pushes fresh data on
+  launch, on resume, and whenever a relevant setting or event changes.
+-->
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="250dp"
+    android:minHeight="180dp"
+    android:minResizeWidth="180dp"
+    android:minResizeHeight="150dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="3"
+    android:updatePeriodMillis="0"
+    android:resizeMode="horizontal|vertical"
+    android:widgetCategory="home_screen"
+    android:initialLayout="@layout/widget_mini_calendar"
+    android:previewImage="@mipmap/ic_launcher"
+    android:description="@string/widget_mini_calendar_desc" />

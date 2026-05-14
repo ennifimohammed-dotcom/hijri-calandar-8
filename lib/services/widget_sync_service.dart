@@ -6,30 +6,37 @@ import 'package:home_widget/home_widget.dart';
 import '../providers/app_provider.dart';
 import '../theme.dart';
 import '../utils/app_logger.dart';
+import '../utils/hijri_utils.dart';
 import '../widgets_home/hijri_date_widget_view.dart';
 import '../widgets_home/islamic_day_widget_view.dart';
+import '../widgets_home/mini_calendar_data.dart';
 import '../widgets_home/widget_snapshot.dart';
 
 /// Home-screen widget sync layer.
 ///
 /// Bridges the in-app [AppProvider] (the single source of truth for
 /// calendar + theme + region + font + locale + Islamic events) to the
-/// native Android home-screen widgets ("Hijri Date" and "Islamic
-/// Day") — WITHOUT creating a parallel settings system:
+/// native Android home-screen widgets — WITHOUT creating a parallel
+/// settings system:
 ///
 ///   * it only ever READS from the provider;
-///   * it renders the premium widget views to PNGs via
-///     `home_widget`'s `renderFlutterWidget`;
-///   * it asks the native AppWidgets to reload those PNGs;
-///   * it routes a widget tap to the monthly calendar view.
+///   * the "Hijri Date" and "Islamic Day" widgets are Flutter widgets
+///     rendered to PNGs via `home_widget`'s `renderFlutterWidget`;
+///   * the "Mini Calendar" widget is rendered NATIVELY from a JSON
+///     data payload (so every day cell can be tapped individually) —
+///     see [MiniCalendarData];
+///   * it asks the native AppWidgets to reload;
+///   * it routes a widget tap to the calendar (the monthly view, and
+///     for a Mini Calendar cell, to that exact day).
 ///
 /// Performance & stability contract (matches the spec's "Forbidden"
 /// list):
 ///   * Renders are DEBOUNCED — the provider notifies on nearly every
 ///     interaction; a 700 ms coalescing window collapses bursts into
 ///     a single render.
-///   * A [WidgetSnapshot.signature] check skips the render entirely
-///     when nothing the widget shows actually changed.
+///   * Change-detection (the snapshot [WidgetSnapshot.signature] for
+///     the bitmap widgets, a JSON diff for the Mini Calendar) skips
+///     work when nothing a widget shows actually changed.
 ///   * A `_rendering` guard plus re-arm prevents overlapping renders
 ///     and guarantees the latest state still lands (no lost update,
 ///     no infinite loop).
@@ -49,19 +56,21 @@ class WidgetSyncService {
       'com.hijricalendar.hijri_calendar.HijriDateWidgetProvider';
   static const String _islamicDayProvider =
       'com.hijricalendar.hijri_calendar.IslamicDayWidgetProvider';
+  static const String _miniCalendarProvider =
+      'com.hijricalendar.hijri_calendar.MiniCalendarWidgetProvider';
 
-  /// Shared-prefs keys the native providers read to locate their
-  /// rendered PNGs. MUST match the keys used in the *WidgetProvider.kt
-  /// files.
+  /// Shared-prefs keys the native providers read. MUST match the keys
+  /// used in the *WidgetProvider.kt files.
   static const String _hijriDateImageKey = 'hijri_date_widget_image';
   static const String _islamicDayImageKey = 'islamic_day_widget_image';
 
   /// Coalescing window for rapid-fire provider notifications.
   static const Duration _debounceWindow = Duration(milliseconds: 700);
 
-  /// Bumped every time a widget tap asks for the monthly view.
-  /// `HomeScreen` listens to this to switch its bottom-nav back to
-  /// the Calendar tab; the view mode itself is set on the provider.
+  /// Bumped every time a widget tap asks for the calendar. `HomeScreen`
+  /// listens to this to switch its bottom-nav back to the Calendar tab;
+  /// the view mode (and, for a Mini Calendar cell, the selected day)
+  /// is set on the provider.
   final ValueNotifier<int> openMonthlyTick = ValueNotifier<int>(0);
 
   AppProvider? _provider;
@@ -69,6 +78,7 @@ class WidgetSyncService {
   StreamSubscription<Uri?>? _clickSub;
   bool _rendering = false;
   String? _lastSignature;
+  String? _lastMiniJson;
 
   /// Wires the service to the live provider. Safe to call once, from
   /// `main.dart`'s `initState` (post-frame). Adds a listener, triggers
@@ -79,8 +89,9 @@ class WidgetSyncService {
     provider.addListener(_onProviderChanged);
     requestSync();
 
-    // Warm-start taps: the app is already running and the widget is
-    // tapped. `home_widget` delivers the launch URI on this stream.
+    // Warm-start taps: the app is already running and a widget (or a
+    // Mini Calendar day cell) is tapped. `home_widget` delivers the
+    // launch URI on this stream.
     _clickSub = HomeWidget.widgetClicked.listen(
       _onWidgetUri,
       onError: (Object e, StackTrace s) => AppLogger.error(
@@ -113,7 +124,7 @@ class WidgetSyncService {
     _debounce = Timer(_debounceWindow, _render);
   }
 
-  // ── Widget tap → monthly view ────────────────────────────────
+  // ── Widget tap → calendar ────────────────────────────────────
 
   Future<void> _checkColdLaunch() async {
     try {
@@ -124,15 +135,25 @@ class WidgetSyncService {
     }
   }
 
-  /// Handles a launch/click URI coming from the home-screen widget.
-  /// There is one widget and one action, so any non-null URI means
-  /// "open the monthly calendar view".
+  /// Handles a launch/click URI coming from a home-screen widget.
+  ///
+  /// Every widget opens the monthly calendar view. A Mini Calendar
+  /// day cell additionally carries the exact Hijri date it represents
+  /// (`?hy=&hm=&hd=`); when present, the calendar is navigated to that
+  /// month and the day is selected.
   void _onWidgetUri(Uri? uri) {
     if (uri == null) return;
     final p = _provider;
     if (p == null) return;
     try {
       p.setViewMode(CalendarViewMode.monthly);
+      final hy = int.tryParse(uri.queryParameters['hy'] ?? '');
+      final hm = int.tryParse(uri.queryParameters['hm'] ?? '');
+      final hd = int.tryParse(uri.queryParameters['hd'] ?? '');
+      if (hy != null && hm != null && hd != null) {
+        p.setCurrentMonth(hy, hm);
+        p.selectDay(HijriDate(hy, hm, hd));
+      }
       // Nudge HomeScreen back to the Calendar tab (covers the
       // warm-start case where another tab was open).
       openMonthlyTick.value++;
@@ -155,23 +176,27 @@ class WidgetSyncService {
 
     // A render is already in flight — re-arm so the latest state
     // still lands once it finishes (eventual consistency, no loop:
-    // the re-render no-ops via the signature check if unchanged).
+    // the re-render no-ops via the change checks if unchanged).
     if (_rendering) {
       requestSync();
       return;
     }
 
     WidgetSnapshot snap;
+    String miniJson;
     try {
       snap = WidgetSnapshot.fromProvider(p);
+      miniJson = MiniCalendarData.buildJson(p);
     } catch (e, s) {
       AppLogger.error('WidgetSyncService: snapshot build failed',
           error: e, stack: s);
       return;
     }
 
-    // Nothing the widget displays changed — skip the render.
-    if (snap.signature == _lastSignature) return;
+    final bool snapChanged = snap.signature != _lastSignature;
+    final bool miniChanged = miniJson != _lastMiniJson;
+    // Nothing any widget displays changed — skip all work.
+    if (!snapChanged && !miniChanged) return;
 
     _rendering = true;
     try {
@@ -179,23 +204,35 @@ class WidgetSyncService {
       // as main.dart does for the in-app tree.
       AppTheme.setActiveFontFamily(snap.fontFamily);
 
-      // Both widgets are driven by the same snapshot, so they render
-      // and refresh together.
-      await HomeWidget.renderFlutterWidget(
-        HijriDateWidgetView(snapshot: snap),
-        key: _hijriDateImageKey,
-        logicalSize: HijriDateWidgetView.canvasSize,
-        pixelRatio: 3.0,
-      );
-      await HomeWidget.renderFlutterWidget(
-        IslamicDayWidgetView(snapshot: snap),
-        key: _islamicDayImageKey,
-        logicalSize: IslamicDayWidgetView.canvasSize,
-        pixelRatio: 3.0,
-      );
-      await HomeWidget.updateWidget(qualifiedAndroidName: _hijriDateProvider);
-      await HomeWidget.updateWidget(qualifiedAndroidName: _islamicDayProvider);
-      _lastSignature = snap.signature;
+      // The two bitmap widgets are driven by the same snapshot, so
+      // they render and refresh together.
+      if (snapChanged) {
+        await HomeWidget.renderFlutterWidget(
+          HijriDateWidgetView(snapshot: snap),
+          key: _hijriDateImageKey,
+          logicalSize: HijriDateWidgetView.canvasSize,
+          pixelRatio: 3.0,
+        );
+        await HomeWidget.renderFlutterWidget(
+          IslamicDayWidgetView(snapshot: snap),
+          key: _islamicDayImageKey,
+          logicalSize: IslamicDayWidgetView.canvasSize,
+          pixelRatio: 3.0,
+        );
+        await HomeWidget.updateWidget(qualifiedAndroidName: _hijriDateProvider);
+        await HomeWidget.updateWidget(qualifiedAndroidName: _islamicDayProvider);
+        _lastSignature = snap.signature;
+      }
+
+      // The Mini Calendar is native-rendered: push the JSON data and
+      // let the native provider rebuild its grid.
+      if (miniChanged) {
+        await HomeWidget.saveWidgetData<String>(
+            MiniCalendarData.dataKey, miniJson);
+        await HomeWidget.updateWidget(
+            qualifiedAndroidName: _miniCalendarProvider);
+        _lastMiniJson = miniJson;
+      }
     } catch (e, s) {
       AppLogger.error('WidgetSyncService: render/update failed',
           error: e, stack: s);
