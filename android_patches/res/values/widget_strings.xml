@@ -7,4 +7,6 @@
 <resources>
     <string name="widget_hijri_date_name">بدر — التاريخ الهجري</string>
     <string name="widget_hijri_date_desc">عرض التاريخ الهجري الحالي على الشاشة الرئيسية</string>
+    <string name="widget_islamic_day_name">بدر — اليوم الإسلامي</string>
+    <string name="widget_islamic_day_desc">نظرة روحانية على اليوم: مناسبة اليوم والمناسبة القادمة</string>
 </resources>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Layout for the "Islamic Day" home-screen widget.
+
+  The entire premium visual is a full-bleed PNG rendered on the
+  Flutter side and dropped into the ImageView by
+  IslamicDayWidgetProvider. It is shown with scaleType="centerCrop" so
+  it fills the whole widget edge to edge — no empty margin, and no
+  FrameLayout background to show through behind it (there isn't one).
+-->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_islamic_day_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <ImageView
+        android:id="@+id/widget_islamic_day_image"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="centerCrop"
+        android:contentDescription="@string/widget_islamic_day_name" />
+
+</FrameLayout>

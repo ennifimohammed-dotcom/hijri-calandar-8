@@ -7,19 +7,20 @@ import '../providers/app_provider.dart';
 import '../theme.dart';
 import '../utils/app_logger.dart';
 import '../widgets_home/hijri_date_widget_view.dart';
+import '../widgets_home/islamic_day_widget_view.dart';
 import '../widgets_home/widget_snapshot.dart';
 
-/// Phase 0 + 1 — home-screen widget sync layer.
+/// Home-screen widget sync layer.
 ///
 /// Bridges the in-app [AppProvider] (the single source of truth for
-/// calendar + theme + region + font + locale) to the native Android
-/// "Hijri Date" home-screen widget — WITHOUT creating a parallel
-/// settings system:
+/// calendar + theme + region + font + locale + Islamic events) to the
+/// native Android home-screen widgets ("Hijri Date" and "Islamic
+/// Day") — WITHOUT creating a parallel settings system:
 ///
 ///   * it only ever READS from the provider;
-///   * it renders the premium [HijriDateWidgetView] to a PNG via
+///   * it renders the premium widget views to PNGs via
 ///     `home_widget`'s `renderFlutterWidget`;
-///   * it asks the native AppWidget to reload that PNG;
+///   * it asks the native AppWidgets to reload those PNGs;
 ///   * it routes a widget tap to the monthly calendar view.
 ///
 /// Performance & stability contract (matches the spec's "Forbidden"
@@ -41,15 +42,19 @@ class WidgetSyncService {
   /// Process-wide singleton — bound once from `main.dart`.
   static final WidgetSyncService instance = WidgetSyncService._();
 
-  /// Fully-qualified native provider class. MUST match the
-  /// `<receiver android:name=".HijriDateWidgetProvider">` entry in
+  /// Fully-qualified native provider classes. MUST match the
+  /// `<receiver android:name=".*WidgetProvider">` entries in
   /// android_patches/AndroidManifest.xml.
-  static const String _androidProvider =
+  static const String _hijriDateProvider =
       'com.hijricalendar.hijri_calendar.HijriDateWidgetProvider';
+  static const String _islamicDayProvider =
+      'com.hijricalendar.hijri_calendar.IslamicDayWidgetProvider';
 
-  /// Shared-prefs key the native provider reads to locate the
-  /// rendered PNG. MUST match the key used in HijriDateWidgetProvider.kt.
-  static const String _imageKey = 'hijri_date_widget_image';
+  /// Shared-prefs keys the native providers read to locate their
+  /// rendered PNGs. MUST match the keys used in the *WidgetProvider.kt
+  /// files.
+  static const String _hijriDateImageKey = 'hijri_date_widget_image';
+  static const String _islamicDayImageKey = 'islamic_day_widget_image';
 
   /// Coalescing window for rapid-fire provider notifications.
   static const Duration _debounceWindow = Duration(milliseconds: 700);
@@ -174,13 +179,22 @@ class WidgetSyncService {
       // as main.dart does for the in-app tree.
       AppTheme.setActiveFontFamily(snap.fontFamily);
 
+      // Both widgets are driven by the same snapshot, so they render
+      // and refresh together.
       await HomeWidget.renderFlutterWidget(
         HijriDateWidgetView(snapshot: snap),
-        key: _imageKey,
+        key: _hijriDateImageKey,
         logicalSize: HijriDateWidgetView.canvasSize,
         pixelRatio: 3.0,
       );
-      await HomeWidget.updateWidget(qualifiedAndroidName: _androidProvider);
+      await HomeWidget.renderFlutterWidget(
+        IslamicDayWidgetView(snapshot: snap),
+        key: _islamicDayImageKey,
+        logicalSize: IslamicDayWidgetView.canvasSize,
+        pixelRatio: 3.0,
+      );
+      await HomeWidget.updateWidget(qualifiedAndroidName: _hijriDateProvider);
+      await HomeWidget.updateWidget(qualifiedAndroidName: _islamicDayProvider);
       _lastSignature = snap.signature;
     } catch (e, s) {
       AppLogger.error('WidgetSyncService: render/update failed',

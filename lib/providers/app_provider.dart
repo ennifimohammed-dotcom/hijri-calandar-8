@@ -371,6 +371,13 @@ class AppProvider extends ChangeNotifier {
     return getEventsForDay(s.hDay, s.hMonth, s.hYear);
   }
 
+  /// Public, read-only access to the Islamic-events-for-a-day
+  /// resolver — used by the home-screen "Islamic Day" widget layer.
+  /// A thin pass-through to the existing private logic: no new
+  /// behaviour, and no duplication of the matching rules.
+  List<AppEvent> islamicEventsForDay(int day, int month, int year) =>
+      _getIslamicEventsForDay(day, month, year);
+
   /// Agenda: returns date → events map for next [days] days
   List<MapEntry<HijriDate, List<AppEvent>>> getAgendaEvents({int days = 60}) {
     return getAgendaEventsRange(pastDays: 0, futureDays: days);

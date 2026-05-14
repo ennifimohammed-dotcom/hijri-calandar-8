@@ -95,8 +95,9 @@ jobs:
           rm -f "$KOTLIN_DIR/MainActivity.kt"
           cp $GITHUB_WORKSPACE/android_patches/kotlin/MainActivity.kt "$KOTLIN_DIR/MainActivity.kt"
           cp $GITHUB_WORKSPACE/android_patches/kotlin/BootReceiver.kt "$KOTLIN_DIR/BootReceiver.kt"
-          # Home-screen widget provider (widget system, Phase 1).
+          # Home-screen widget providers.
           cp $GITHUB_WORKSPACE/android_patches/kotlin/HijriDateWidgetProvider.kt "$KOTLIN_DIR/HijriDateWidgetProvider.kt"
+          cp $GITHUB_WORKSPACE/android_patches/kotlin/IslamicDayWidgetProvider.kt "$KOTLIN_DIR/IslamicDayWidgetProvider.kt"
           echo "----- Kotlin files -----"
           ls -la "$KOTLIN_DIR"
           # Merge the widget's Android resources (layout / xml /
