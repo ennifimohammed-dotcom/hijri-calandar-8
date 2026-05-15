@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Mini Calendar — generic event dot. A white circle that the native
+  provider tints to the actual event colour via
+  ImageView.setColorFilter, so user-defined event colours and the
+  Islamic-event gold come through faithfully (just like _DayCell
+  paints `Container(color: e.color, shape: BoxShape.circle)`).
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    <solid android:color="#FFFFFFFF" />
+</shape>

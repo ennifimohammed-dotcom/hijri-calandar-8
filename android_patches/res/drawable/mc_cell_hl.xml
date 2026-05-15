@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Mini Calendar — per-cell highlight (today / selected / ayyam-al-bid
+  / ramadan). White rounded-rect, tinted at runtime to the right
+  palette colour via ImageView.setColorFilter so the highlight tracks
+  AccentBus without needing a drawable per swatch.
+
+  Radius 12dp is a middle ground between the app's _DayCell radii
+  (today 14, others 10) — within RemoteViews we have one drawable
+  for all highlight states.
+-->
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <corners android:radius="12dp" />
+    <solid android:color="#FFFFFFFF" />
+</shape>

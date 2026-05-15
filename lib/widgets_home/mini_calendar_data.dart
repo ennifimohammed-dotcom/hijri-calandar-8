@@ -17,6 +17,23 @@ import '../theme.dart';
 /// reads back.
 ///
 /// It only ever READS from the provider — no parallel state, no I/O.
+///
+/// Per-day visual state is taken DIRECTLY from the in-app
+/// `_DayCell` in lib/screens/calendar_screen.dart so the widget
+/// matches the real calendar 1:1 within RemoteViews' limits:
+///
+///   * background priority (matches `_DayCell`):
+///       today > selected > ayyam-al-bid > ramadan;
+///   * Friday cells get accent-coloured text when not otherwise
+///     overridden (same rule as `_DayCell`);
+///   * each cell carries up to 3 event colours, exactly like the
+///     dots painted in `_DayCell`. Daily adhkar (morning / evening /
+///     sleep) are filtered out so they don't dot every single day.
+///
+/// The accent / accent-pale / gold-pale colours are sent on every
+/// payload so the native side can recolour rounded highlights via
+/// `ImageView.setColorFilter` and follow the user's chosen swatch
+/// without having to know `AccentBus` exists.
 class MiniCalendarData {
   MiniCalendarData._();
 
@@ -29,14 +46,10 @@ class MiniCalendarData {
   static const String dataKey = 'mini_calendar_data';
 
   /// Builds the JSON payload for the month containing today.
-  ///
-  /// Layout matches the app's own monthly grid exactly
-  /// (lib/screens/calendar_screen.dart): a Monday-based week, the
-  /// same weekday header labels, Friday highlighted with the accent.
   static String buildJson(AppProvider p) {
-    final today = p.today;
-    final hy = today.hYear;
-    final hm = today.hMonth;
+    final nowH = p.today;
+    final hy = nowH.hYear;
+    final hm = nowH.hMonth;
     final loc = p.locale;
 
     final daysInMonth = p.getDaysInMonth(hy, hm);
@@ -49,6 +62,15 @@ class MiniCalendarData {
             WidgetsBinding.instance.platformDispatcher.platformBrightness ==
                 Brightness.dark);
 
+    final isRamadan = p.isRamadan(hm);
+
+    // Selected day — only paint the highlight when the user's current
+    // selection is in the month this widget is showing.
+    final selHy = p.selectedDay?.hYear;
+    final selHm = p.selectedDay?.hMonth;
+    final selHd = p.selectedDay?.hDay;
+    final hasSelectionThisMonth = selHy == hy && selHm == hm;
+
     final cells = <Map<String, dynamic>>[];
     for (int i = 0; i < _gridCells; i++) {
       final d = i - firstOffset + 1;
@@ -56,23 +78,50 @@ class MiniCalendarData {
         cells.add(const {'d': 0}); // blank cell
         continue;
       }
-      bool isl = false;
-      bool evt = false;
-      try {
-        // One query per day; `getEventsForDay` already merges Islamic
-        // + user events, so we derive both dot flags from it. Daily
-        // adhkar are excluded — they would dot every single day.
-        final events = p.getEventsForDay(d, hm, hy);
-        isl = events.any((e) => e.isIslamic && !p.isDailyAdhkar(e.id));
-        evt = events.any((e) => !e.isIslamic);
-      } catch (_) {
-        // Leave both false — a query hiccup just means no dot.
+
+      // Mirrors `_DayCell` exactly.
+      final isTodayCell = p.isToday(d, hm, hy);
+      final isSelected = hasSelectionThisMonth && selHd == d;
+      final isAyyam = p.isAyyamAlBid(d);
+      // Mon-based grid → column 4 is Friday. Avoids a Hijri→Gregorian
+      // round-trip per cell.
+      final isFri = (i % 7) == 4;
+
+      // Same priority order as `_DayCell` so the widget can't ever
+      // disagree with the app on which highlight wins.
+      String? bg;
+      if (isTodayCell) {
+        bg = 'today';
+      } else if (isSelected) {
+        bg = 'selected';
+      } else if (isAyyam) {
+        bg = 'ayyam';
+      } else if (isRamadan) {
+        bg = 'ramadan';
       }
+
+      // Up to 3 event dots — same `take(3)` as `_DayCell`. Each dot
+      // keeps the event's actual `color`, so user-defined colours and
+      // Islamic-event gold both come through faithfully. Daily adhkar
+      // are filtered so they don't appear on every day.
+      final dots = <String>[];
+      try {
+        final events = p
+            .getEventsForDay(d, hm, hy)
+            .where((e) => !p.isDailyAdhkar(e.id))
+            .take(3);
+        for (final e in events) {
+          dots.add(_hex(e.color));
+        }
+      } catch (_) {
+        // A query hiccup just means no dots for this day.
+      }
+
       cells.add(<String, dynamic>{
         'd': d,
-        if (p.isToday(d, hm, hy)) 'today': true,
-        if (isl) 'isl': true,
-        if (evt) 'evt': true,
+        if (bg != null) 'bg': bg,
+        if (isFri) 'fri': true,
+        if (dots.isNotEmpty) 'dots': dots,
       });
     }
 
@@ -91,7 +140,12 @@ class MiniCalendarData {
       'weekdays': _weekdayHeader(loc),
       'isDark': isDark,
       'isRtl': loc == 'ar',
+      'isRamadan': isRamadan,
+      // Palette — the native side recolours static white drawables
+      // with these via setColorFilter so the widget tracks AccentBus.
       'accent': _hex(AppColors.green),
+      'accentPale': _hex(AppColors.greenPale),
+      'goldPale': _hex(AppColors.goldPale),
       'visibleRows': visibleRows,
       'cells': cells,
     });
@@ -100,9 +154,7 @@ class MiniCalendarData {
   static String _pad2(int n) => n.toString().padLeft(2, '0');
 
   /// Monday-based weekday header — byte-identical to the app's
-  /// monthly grid header (`_buildWeekdayHeader`). The app uses the
-  /// French abbreviations for every non-Arabic locale; we match that
-  /// for consistency rather than introduce a new set.
+  /// monthly grid header (`_buildWeekdayHeader`).
   static List<String> _weekdayHeader(String loc) => loc == 'ar'
       ? const ['إث', 'ث', 'أر', 'خ', 'ج', 'س', 'أح']
       : const ['Lu', 'Ma', 'Me', 'Je', 'Ve', 'Sa', 'Di'];

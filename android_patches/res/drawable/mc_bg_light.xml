@@ -1,9 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Mini Calendar background — light theme (AppColors.white + border).
-     Applied by MiniCalendarWidgetProvider via setBackgroundResource. -->
-<shape xmlns:android="http://schemas.android.com/apk/res/android"
-    android:shape="rectangle">
-    <corners android:radius="24dp" />
-    <solid android:color="#FFFFFF" />
-    <stroke android:width="1dp" android:color="#E8E4DC" />
-</shape>
+<!--
+  Mini Calendar background — light theme. Layer-list with a soft
+  shadow band underneath gives the card a subtle premium lift
+  within the limits of RemoteViews (no real elevation in widgets).
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Soft shadow ground -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="22dp" />
+            <solid android:color="#12000000" />
+        </shape>
+    </item>
+    <!-- Card surface, inset bottom by 2dp to reveal a thin shadow
+         band — reads as a gentle drop shadow without needing real
+         elevation (which most launchers clip in widget containers). -->
+    <item android:bottom="2dp">
+        <shape android:shape="rectangle">
+            <corners android:radius="22dp" />
+            <solid android:color="#FFFFFF" />
+            <stroke android:width="1dp" android:color="#E8E4DC" />
+        </shape>
+    </item>
+</layer-list>
