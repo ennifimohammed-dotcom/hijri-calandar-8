@@ -150,9 +150,10 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         val textMain = if (isDark) 0xFFF0EBE0.toInt() else 0xFF1A1A1A.toInt()
         val textMuted = if (isDark) 0xFF6A7585.toInt() else 0xFF999999.toInt()
         val textOnAccent = 0xFFFFFFFF.toInt()
-        // When today is filled with accent, dots use translucent white
-        // (mirrors `_DayCell`'s `Colors.white70` for today).
-        val dotOnAccent = 0xB3FFFFFF.toInt()
+        // When today is filled with accent, secondary text (Gregorian
+        // day number) and dots use translucent white — mirrors
+        // `_DayCell`'s `Colors.white70` rule.
+        val secondaryOnAccent = 0xB3FFFFFF.toInt()
 
         // Themed rounded background. (Layout direction is set
         // STATICALLY in the XML via android:layoutDirection="locale"
@@ -185,10 +186,11 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
             val cellId = id("mc_cell_$i")
             val hlId = id("mc_hl_$i")
             val numId = id("mc_num_$i")
+            val gregId = id("mc_greg_$i")
             val dot1Id = id("mc_dot1_$i")
             val dot2Id = id("mc_dot2_$i")
             val dot3Id = id("mc_dot3_$i")
-            if (cellId == 0 || hlId == 0 || numId == 0 ||
+            if (cellId == 0 || hlId == 0 || numId == 0 || gregId == 0 ||
                 dot1Id == 0 || dot2Id == 0 || dot3Id == 0
             ) continue
             val dotIds = intArrayOf(dot1Id, dot2Id, dot3Id)
@@ -196,8 +198,11 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
             val cell = cells?.optJSONObject(i)
             val d = cell?.optInt("d", 0) ?: 0
             if (d < 1) {
-                // Blank padding cell — clear text, highlight, every dot, tap.
+                // Blank padding cell — clear text, highlight, secondary,
+                // every dot, tap.
                 views.setTextViewText(numId, "")
+                views.setTextViewText(gregId, "")
+                views.setViewVisibility(gregId, View.GONE)
                 views.setViewVisibility(hlId, View.GONE)
                 for (dotId in dotIds) views.setViewVisibility(dotId, View.GONE)
                 views.setOnClickPendingIntent(cellId, null)
@@ -236,6 +241,24 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
                 }
             }
 
+            // Gregorian secondary day number — same dual-number layout
+            // as `_DayCell`. Always muted, except on today where it
+            // turns translucent white to read on the accent fill.
+            val g = cell?.optInt("g", 0) ?: 0
+            if (g > 0) {
+                views.setTextViewText(gregId, g.toString())
+                views.setTextColor(
+                    gregId,
+                    if (isToday) secondaryOnAccent else textMuted,
+                )
+                views.setViewVisibility(gregId, View.VISIBLE)
+            } else {
+                // Hijri→Gregorian failed (region/offset edge) — hide
+                // the secondary line rather than show a stale value.
+                views.setTextViewText(gregId, "")
+                views.setViewVisibility(gregId, View.GONE)
+            }
+
             // Up to 3 event dots — tinted to the event's actual colour
             // via setColorFilter on a shared white circle drawable.
             val dots = cell?.optJSONArray("dots")
@@ -245,7 +268,7 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
                 if (k < dotCount) {
                     views.setViewVisibility(dotId, View.VISIBLE)
                     val raw = parseColor(dots!!.optString(k), accent)
-                    val tint = if (isToday) dotOnAccent else raw
+                    val tint = if (isToday) secondaryOnAccent else raw
                     views.setInt(dotId, "setColorFilter", tint)
                 } else {
                     views.setViewVisibility(dotId, View.GONE)

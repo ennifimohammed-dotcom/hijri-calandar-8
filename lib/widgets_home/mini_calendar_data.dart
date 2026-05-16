@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../providers/app_provider.dart';
 import '../theme.dart';
+import '../utils/text_format.dart';
 
 /// Builds the data payload for the native "Mini Calendar" home-screen
 /// widget.
@@ -22,6 +23,9 @@ import '../theme.dart';
 /// `_DayCell` in lib/screens/calendar_screen.dart so the widget
 /// matches the real calendar 1:1 within RemoteViews' limits:
 ///
+///   * each cell carries its Hijri day number (`d`) AND the
+///     corresponding Gregorian day number (`g`) — same dual-number
+///     layout as `_DayCell`: Hijri primary, Gregorian secondary;
 ///   * background priority (matches `_DayCell`):
 ///       today > selected > ayyam-al-bid > ramadan;
 ///   * Friday cells get accent-coloured text when not otherwise
@@ -34,6 +38,11 @@ import '../theme.dart';
 /// payload so the native side can recolour rounded highlights via
 /// `ImageView.setColorFilter` and follow the user's chosen swatch
 /// without having to know `AccentBus` exists.
+///
+/// Gregorian month name (header secondary line) is built via
+/// [TextFormat.formatGregorianMonthYear] so it reuses the app's
+/// localised short-month table for ar/fr/en/es and always uses
+/// Western digits (the project's hard requirement).
 class MiniCalendarData {
   MiniCalendarData._();
 
@@ -84,8 +93,18 @@ class MiniCalendarData {
       final isSelected = hasSelectionThisMonth && selHd == d;
       final isAyyam = p.isAyyamAlBid(d);
       // Mon-based grid → column 4 is Friday. Avoids a Hijri→Gregorian
-      // round-trip per cell.
+      // round-trip per cell just to ask the weekday.
       final isFri = (i % 7) == 4;
+
+      // Gregorian day number — same dual-number rendering as
+      // `_DayCell` (Hijri primary, Gregorian secondary).
+      int g = 0;
+      try {
+        g = p.hijriToGregorian(hy, hm, d).day;
+      } catch (_) {
+        // Region/offset edge: leave 0 → the native side hides the
+        // secondary line for this cell instead of showing nonsense.
+      }
 
       // Same priority order as `_DayCell` so the widget can't ever
       // disagree with the app on which highlight wins.
@@ -119,6 +138,7 @@ class MiniCalendarData {
 
       cells.add(<String, dynamic>{
         'd': d,
+        if (g > 0) 'g': g,
         if (bg != null) 'bg': bg,
         if (isFri) 'fri': true,
         if (dots.isNotEmpty) 'dots': dots,
@@ -128,15 +148,17 @@ class MiniCalendarData {
     // The 6th row is only needed when the month spills into it.
     final visibleRows = (firstOffset + daysInMonth) > 35 ? 6 : 5;
 
-    // Gregorian secondary label — the civil month/year around the
-    // middle of this Hijri month.
+    // Gregorian secondary header — reuse the app's localised
+    // short-month helper rather than duplicate the table. Picks the
+    // 15th of the Hijri month so the Gregorian month / year reflects
+    // the period the grid is dominated by.
     final gregMid = p.hijriToGregorian(hy, hm, 15);
 
     return jsonEncode(<String, dynamic>{
       'hy': hy,
       'hm': hm,
       'title': '${p.getHijriMonthName(hm, loc)} $hy',
-      'gregTitle': '${_pad2(gregMid.month)}/${gregMid.year}',
+      'gregTitle': TextFormat.formatGregorianMonthYear(gregMid, loc),
       'weekdays': _weekdayHeader(loc),
       'isDark': isDark,
       'isRtl': loc == 'ar',
@@ -150,8 +172,6 @@ class MiniCalendarData {
       'cells': cells,
     });
   }
-
-  static String _pad2(int n) => n.toString().padLeft(2, '0');
 
   /// Monday-based weekday header — byte-identical to the app's
   /// monthly grid header (`_buildWeekdayHeader`).
