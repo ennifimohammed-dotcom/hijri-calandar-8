@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Chevron pointing left (Material "chevron_left"). Used by the
+  "previous month" button in the Mini Calendar header.
+
+  android:autoMirrored="true" makes Android flip the path
+  horizontally when the containing view's effective layout direction
+  is RTL — so on Arabic-locale devices the same drawable visually
+  becomes a right-pointing chevron. Combined with our root
+  android:layoutDirection="locale", this means the prev/next buttons
+  swap sides AND swap arrow direction automatically — no per-locale
+  asset needed, no native code.
+
+  Tint is applied at runtime by MiniCalendarWidgetProvider via
+  ImageView.setColorFilter so the icon follows the theme.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:autoMirrored="true">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M15.41,16.59 L10.83,12 L15.41,7.41 L14,6 L8,12 L14,18 Z" />
+</vector>

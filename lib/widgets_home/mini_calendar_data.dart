@@ -19,30 +19,30 @@ import '../utils/text_format.dart';
 ///
 /// It only ever READS from the provider — no parallel state, no I/O.
 ///
-/// Per-day visual state is taken DIRECTLY from the in-app
-/// `_DayCell` in lib/screens/calendar_screen.dart so the widget
-/// matches the real calendar 1:1 within RemoteViews' limits:
+/// The payload now carries a WINDOW of months (today ± [_windowRadius])
+/// rather than just the current month, so that the in-widget month
+/// navigation arrows (and the "Today" button) can switch months
+/// PURELY natively — no Flutter callback, no app launch — by picking
+/// a different month from the cached window. This keeps month
+/// switching instant and avoids the cost of waking a Flutter isolate
+/// from the launcher's process.
 ///
-///   * each cell carries its Hijri day number (`d`) AND the
-///     corresponding Gregorian day number (`g`) — same dual-number
-///     layout as `_DayCell`: Hijri primary, Gregorian secondary;
-///   * background priority (matches `_DayCell`):
-///       today > selected > ayyam-al-bid > ramadan;
+/// Per-day visual state inside each month is taken DIRECTLY from the
+/// in-app `_DayCell` in lib/screens/calendar_screen.dart so the
+/// widget matches the real calendar 1:1 within RemoteViews' limits:
+///   * background priority: today > selected > ayyam-al-bid > ramadan;
 ///   * Friday cells get accent-coloured text when not otherwise
-///     overridden (same rule as `_DayCell`);
-///   * each cell carries up to 3 event colours, exactly like the
-///     dots painted in `_DayCell`. Daily adhkar (morning / evening /
-///     sleep) are filtered out so they don't dot every single day.
+///     overridden;
+///   * each cell carries up to 3 event colours, exactly like the dots
+///     `_DayCell` paints. Daily adhkar (morning / evening / sleep)
+///     are filtered out so they don't dot every single day;
+///   * each cell carries its Hijri day number AND the Gregorian day
+///     number — same dual-number layout as `_DayCell`.
 ///
 /// The accent / accent-pale / gold-pale colours are sent on every
 /// payload so the native side can recolour rounded highlights via
 /// `ImageView.setColorFilter` and follow the user's chosen swatch
 /// without having to know `AccentBus` exists.
-///
-/// Gregorian month name (header secondary line) is built via
-/// [TextFormat.formatGregorianMonthYear] so it reuses the app's
-/// localised short-month table for ar/fr/en/es and always uses
-/// Western digits (the project's hard requirement).
 class MiniCalendarData {
   MiniCalendarData._();
 
@@ -50,34 +50,106 @@ class MiniCalendarData {
   /// cells; the 6th row is hidden when the month doesn't reach it.
   static const int _gridCells = 42;
 
+  /// Window radius — the payload covers months [today - radius,
+  /// today + radius]. Trade-off: bigger = more navigable but heavier
+  /// to build (each extra month is one `getDaysInMonth` +
+  /// `getFirstWeekdayOfMonth` + up to 30 `getEventsForDay` calls).
+  /// 3 = a quarter forward + a quarter back, which is what users
+  /// reach for in practice; the buttons clamp at the edges natively.
+  static const int _windowRadius = 3;
+
   /// Shared-prefs key the native provider reads. MUST match the key
   /// used in MiniCalendarWidgetProvider.kt and WidgetSyncService.
   static const String dataKey = 'mini_calendar_data';
 
-  /// Builds the JSON payload for the month containing today.
+  /// Builds the JSON payload for the visible window of months
+  /// centred on today's Hijri month.
   static String buildJson(AppProvider p) {
     final nowH = p.today;
-    final hy = nowH.hYear;
-    final hm = nowH.hMonth;
     final loc = p.locale;
-
-    final daysInMonth = p.getDaysInMonth(hy, hm);
-    // getFirstWeekdayOfMonth: 1=Mon..7=Sun. The grid is Monday-based,
-    // so column 0 = Monday — identical to `_MonthPage` in the app.
-    final firstOffset = (p.getFirstWeekdayOfMonth(hy, hm) - 1) % 7;
 
     final isDark = p.themeMode == ThemeMode.dark ||
         (p.themeMode == ThemeMode.system &&
             WidgetsBinding.instance.platformDispatcher.platformBrightness ==
                 Brightness.dark);
 
-    final isRamadan = p.isRamadan(hm);
-
     // Selected day — only paint the highlight when the user's current
-    // selection is in the month this widget is showing.
+    // selection falls inside one of the windowed months.
     final selHy = p.selectedDay?.hYear;
     final selHm = p.selectedDay?.hMonth;
     final selHd = p.selectedDay?.hDay;
+
+    // Pre-compute every month in the window. The Kotlin side picks
+    // one based on the user's saved view offset; having them all in
+    // the payload means navigation is purely native.
+    final months = <Map<String, dynamic>>[];
+    for (int offset = -_windowRadius; offset <= _windowRadius; offset++) {
+      months.add(_buildMonth(
+        p: p,
+        offset: offset,
+        loc: loc,
+        baseHy: nowH.hYear,
+        baseHm: nowH.hMonth,
+        todayHy: nowH.hYear,
+        todayHm: nowH.hMonth,
+        todayHd: nowH.hDay,
+        selHy: selHy,
+        selHm: selHm,
+        selHd: selHd,
+      ));
+    }
+
+    return jsonEncode(<String, dynamic>{
+      'todayHy': nowH.hYear,
+      'todayHm': nowH.hMonth,
+      'todayHd': nowH.hDay,
+      'isDark': isDark,
+      'isRtl': loc == 'ar',
+      // Palette — the native side recolours static white drawables
+      // with these via setColorFilter so the widget tracks AccentBus.
+      'accent': _hex(AppColors.green),
+      'accentPale': _hex(AppColors.greenPale),
+      'goldPale': _hex(AppColors.goldPale),
+      'weekdays': _weekdayHeader(loc),
+      'windowRadius': _windowRadius,
+      'months': months,
+    });
+  }
+
+  /// Builds one month's worth of cells + headings, [offset] months
+  /// away from ([baseHy], [baseHm]). Mirrors `_DayCell` exactly.
+  static Map<String, dynamic> _buildMonth({
+    required AppProvider p,
+    required int offset,
+    required String loc,
+    required int baseHy,
+    required int baseHm,
+    required int todayHy,
+    required int todayHm,
+    required int todayHd,
+    required int? selHy,
+    required int? selHm,
+    required int? selHd,
+  }) {
+    // Hijri month arithmetic — same as the app's _MonthlyView /
+    // `hijriForIndex` pattern (lib/screens/calendar_screen.dart).
+    int hy = baseHy;
+    int hm = baseHm + offset;
+    while (hm < 1) {
+      hm += 12;
+      hy -= 1;
+    }
+    while (hm > 12) {
+      hm -= 12;
+      hy += 1;
+    }
+
+    final daysInMonth = p.getDaysInMonth(hy, hm);
+    // getFirstWeekdayOfMonth: 1=Mon..7=Sun. The grid is Monday-based,
+    // so column 0 = Monday — identical to `_MonthPage` in the app.
+    final firstOffset = (p.getFirstWeekdayOfMonth(hy, hm) - 1) % 7;
+
+    final isRamadan = p.isRamadan(hm);
     final hasSelectionThisMonth = selHy == hy && selHm == hm;
 
     final cells = <Map<String, dynamic>>[];
@@ -88,16 +160,12 @@ class MiniCalendarData {
         continue;
       }
 
-      // Mirrors `_DayCell` exactly.
-      final isTodayCell = p.isToday(d, hm, hy);
+      final isTodayCell =
+          todayHy == hy && todayHm == hm && todayHd == d;
       final isSelected = hasSelectionThisMonth && selHd == d;
       final isAyyam = p.isAyyamAlBid(d);
-      // Mon-based grid → column 4 is Friday. Avoids a Hijri→Gregorian
-      // round-trip per cell just to ask the weekday.
       final isFri = (i % 7) == 4;
 
-      // Gregorian day number — same dual-number rendering as
-      // `_DayCell` (Hijri primary, Gregorian secondary).
       int g = 0;
       try {
         g = p.hijriToGregorian(hy, hm, d).day;
@@ -106,8 +174,6 @@ class MiniCalendarData {
         // secondary line for this cell instead of showing nonsense.
       }
 
-      // Same priority order as `_DayCell` so the widget can't ever
-      // disagree with the app on which highlight wins.
       String? bg;
       if (isTodayCell) {
         bg = 'today';
@@ -119,10 +185,6 @@ class MiniCalendarData {
         bg = 'ramadan';
       }
 
-      // Up to 3 event dots — same `take(3)` as `_DayCell`. Each dot
-      // keeps the event's actual `color`, so user-defined colours and
-      // Islamic-event gold both come through faithfully. Daily adhkar
-      // are filtered so they don't appear on every day.
       final dots = <String>[];
       try {
         final events = p
@@ -145,32 +207,18 @@ class MiniCalendarData {
       });
     }
 
-    // The 6th row is only needed when the month spills into it.
     final visibleRows = (firstOffset + daysInMonth) > 35 ? 6 : 5;
-
-    // Gregorian secondary header — reuse the app's localised
-    // short-month helper rather than duplicate the table. Picks the
-    // 15th of the Hijri month so the Gregorian month / year reflects
-    // the period the grid is dominated by.
     final gregMid = p.hijriToGregorian(hy, hm, 15);
 
-    return jsonEncode(<String, dynamic>{
+    return <String, dynamic>{
+      'offset': offset,
       'hy': hy,
       'hm': hm,
       'title': '${p.getHijriMonthName(hm, loc)} $hy',
       'gregTitle': TextFormat.formatGregorianMonthYear(gregMid, loc),
-      'weekdays': _weekdayHeader(loc),
-      'isDark': isDark,
-      'isRtl': loc == 'ar',
-      'isRamadan': isRamadan,
-      // Palette — the native side recolours static white drawables
-      // with these via setColorFilter so the widget tracks AccentBus.
-      'accent': _hex(AppColors.green),
-      'accentPale': _hex(AppColors.greenPale),
-      'goldPale': _hex(AppColors.goldPale),
       'visibleRows': visibleRows,
       'cells': cells,
-    });
+    };
   }
 
   /// Monday-based weekday header — byte-identical to the app's

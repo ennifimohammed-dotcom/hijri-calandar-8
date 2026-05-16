@@ -1,7 +1,10 @@
 package com.hijricalendar.hijri_calendar
 
+import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Context
+import android.content.Intent
 import android.content.SharedPreferences
 import android.graphics.Color
 import android.net.Uri
@@ -9,6 +12,7 @@ import android.util.Log
 import android.view.View
 import android.widget.RemoteViews
 import es.antonborri.home_widget.HomeWidgetLaunchIntent
+import es.antonborri.home_widget.HomeWidgetPlugin
 import es.antonborri.home_widget.HomeWidgetProvider
 import org.json.JSONObject
 
@@ -22,36 +26,54 @@ import org.json.JSONObject
  * (WidgetSyncService -> MiniCalendarData) publishes under the
  * "mini_calendar_data" key.
  *
+ * Month navigation
+ * ================
+ * The payload carries a WINDOW of months (today ± windowRadius).
+ * The user's currently displayed month is an OFFSET stored in this
+ * provider's own SharedPreferences ("mini_calendar_state"). The
+ * header has three buttons:
+ *
+ *   * prev   -> shift offset by -1 (clamped at -windowRadius);
+ *   * today  -> reset offset to 0;
+ *   * next   -> shift offset by +1 (clamped at +windowRadius).
+ *
+ * Each button is a custom-action broadcast PendingIntent targeting
+ * THIS receiver (explicit Intent component). onReceive intercepts
+ * the action, updates the offset, and re-renders via onUpdate. The
+ * cached JSON window already contains all the months in range, so
+ * month switching is INSTANT — no Flutter callback, no app launch.
+ *
+ * The offset persists across launcher redraws (it lives in
+ * SharedPreferences), and survives data refreshes (which only
+ * rewrite the JSON, not our local state).
+ *
  * Visual model
  * ============
- * The cell rendering mirrors the in-app `_DayCell`
+ * Per-cell rendering mirrors the in-app `_DayCell`
  * (lib/screens/calendar_screen.dart) — same background priority
- * (today > selected > ayyam-al-bid > ramadan), same Friday rule
- * (accent text when not otherwise overridden), same dot behaviour
- * (up to 3, each painted in the event's actual colour).
+ * (today > selected > ayyam-al-bid > ramadan), same Friday rule,
+ * same dot behaviour (up to 3 dots tinted to each event's colour),
+ * same dual-number layout (Hijri primary + Gregorian secondary).
  *
- * The per-cell highlight is a single white rounded-rect ImageView
- * (`mc_cell_hl`) tinted at runtime via setColorFilter, so it follows
- * the user's chosen AccentBus swatch without baking a drawable per
- * palette. Same trick for the dots (`mc_dot_solid`).
- *
- * Crash-safety contract — onUpdate MUST NEVER throw:
+ * Crash-safety contract — onUpdate / onReceive MUST NEVER throw:
  *   * Every external call is wrapped in try/catch.
  *   * A missing, malformed, or partial payload falls back to the
  *     empty default layout — never an exception.
- *   * Failure to build a single cell's click intent is logged and
- *     skipped; the rest of the grid still renders.
  *   * A top-level Throwable catch is the last-resort net.
+ *   * Unknown actions are forwarded to super.onReceive so
+ *     APPWIDGET_UPDATE / APPWIDGET_DELETED / ENABLED / DISABLED
+ *     still dispatch correctly.
  *
- * RemoteViews compatibility notes:
+ * RemoteViews compatibility:
  *   * Only @RemoteView-annotated classes are inflated (LinearLayout,
  *     FrameLayout, TextView, ImageView), so the layout passes the
  *     RemoteViews INFLATER_FILTER check on Android 12+.
  *   * Layout direction is set statically in XML
  *     (android:layoutDirection="locale") — View.setLayoutDirection
- *     is not @RemotableViewMethod.
- *   * The highlight + dot tints use ImageView.setColorFilter, which
- *     IS @RemotableViewMethod.
+ *     is not @RemotableViewMethod. The nav chevrons carry
+ *     android:autoMirrored="true" so they flip in RTL with no extra
+ *     code.
+ *   * Tints use ImageView.setColorFilter (IS @RemotableViewMethod).
  *
  * Logcat tag: "MiniCalWidget". To watch on a device:
  *   adb logcat -s MiniCalWidget
@@ -62,15 +84,130 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         private const val TAG = "MiniCalWidget"
         private const val DATA_KEY = "mini_calendar_data"
 
+        /** Local SharedPreferences (separate from home_widget's store)
+         *  for the user's current view offset. Kept separate so the
+         *  Dart side never accidentally clobbers it during data
+         *  refreshes. */
+        private const val LOCAL_PREFS = "mini_calendar_state"
+        private const val OFFSET_KEY = "view_offset"
+
+        /** In-widget navigation actions. Namespaced under the app's
+         *  package to avoid collisions; PendingIntents are explicit
+         *  (Intent with component set) so other apps can't trigger
+         *  them even though the receiver is exported. */
+        const val ACTION_PREV: String =
+            "com.hijricalendar.hijri_calendar.MINI_CAL_PREV"
+        const val ACTION_NEXT: String =
+            "com.hijricalendar.hijri_calendar.MINI_CAL_NEXT"
+        const val ACTION_TODAY: String =
+            "com.hijricalendar.hijri_calendar.MINI_CAL_TODAY"
+
         /** Fallback accent (royal green) for missing/invalid payloads. */
         private const val FALLBACK_ACCENT: Int = 0xFF2D7D5F.toInt()
-
-        /** Fallback accent-pale companion (matches AppColors.greenPale tone). */
         private const val FALLBACK_ACCENT_PALE: Int = 0xFFE5F0E9.toInt()
-
-        /** Fallback gold-pale for Ramadan tinting (matches AppColors.goldPale). */
         private const val FALLBACK_GOLD_PALE: Int = 0xFFFDF5E8.toInt()
     }
+
+    // ── onReceive — intercept nav actions, forward the rest ─────
+
+    override fun onReceive(context: Context, intent: Intent) {
+        try {
+            when (intent.action) {
+                ACTION_PREV -> shiftOffset(context, -1)
+                ACTION_NEXT -> shiftOffset(context, +1)
+                ACTION_TODAY -> setOffset(context, 0)
+                else -> super.onReceive(context, intent)
+            }
+        } catch (t: Throwable) {
+            Log.e(TAG, "onReceive failed (suppressed)", t)
+            // Best-effort: let the default dispatcher run so an
+            // unrelated APPWIDGET_UPDATE we crashed on still tries
+            // to do its job.
+            try {
+                super.onReceive(context, intent)
+            } catch (_: Throwable) {
+                // Truly nothing we can do; never let it escape.
+            }
+        }
+    }
+
+    // ── View-offset state (local SharedPreferences) ─────────────
+
+    private fun localPrefs(context: Context): SharedPreferences =
+        context.getSharedPreferences(LOCAL_PREFS, Context.MODE_PRIVATE)
+
+    private fun readOffset(context: Context): Int =
+        try {
+            localPrefs(context).getInt(OFFSET_KEY, 0)
+        } catch (e: Exception) {
+            Log.w(TAG, "readOffset failed; using 0", e)
+            0
+        }
+
+    private fun writeOffset(context: Context, value: Int) {
+        try {
+            localPrefs(context).edit().putInt(OFFSET_KEY, value).apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "writeOffset($value) failed", e)
+        }
+    }
+
+    private fun shiftOffset(context: Context, delta: Int) {
+        val current = readOffset(context)
+        val radius = readWindowRadius(context)
+        val newOffset = (current + delta).coerceIn(-radius, radius)
+        if (newOffset == current) {
+            Log.d(TAG, "shiftOffset($delta) at edge (offset=$current), no-op")
+            return
+        }
+        writeOffset(context, newOffset)
+        Log.d(TAG, "Nav: offset $current -> $newOffset")
+        triggerSelfUpdate(context)
+    }
+
+    private fun setOffset(context: Context, value: Int) {
+        if (readOffset(context) == value) {
+            Log.d(TAG, "setOffset($value) no-op")
+            return
+        }
+        writeOffset(context, value)
+        Log.d(TAG, "Nav reset to $value")
+        triggerSelfUpdate(context)
+    }
+
+    /** Reads the window radius from the cached JSON so the native
+     *  side stays in lock-step with whatever the Dart side decided
+     *  (no hard-coded magic number to keep in sync). */
+    private fun readWindowRadius(context: Context): Int {
+        return try {
+            val prefs = HomeWidgetPlugin.getData(context)
+            val json = prefs.getString(DATA_KEY, null) ?: return 0
+            JSONObject(json).optInt("windowRadius", 0)
+        } catch (e: Exception) {
+            Log.w(TAG, "readWindowRadius failed; clamping to 0", e)
+            0
+        }
+    }
+
+    /** Re-renders all live instances of this widget without going
+     *  through Dart — used after a nav button changes the offset.
+     *  The cached JSON window already has all the months, so this
+     *  is purely a local RemoteViews refresh. */
+    private fun triggerSelfUpdate(context: Context) {
+        try {
+            val mgr = AppWidgetManager.getInstance(context)
+            val ids = mgr.getAppWidgetIds(
+                ComponentName(context, MiniCalendarWidgetProvider::class.java),
+            )
+            if (ids.isEmpty()) return
+            val prefs = HomeWidgetPlugin.getData(context)
+            onUpdate(context, mgr, ids, prefs)
+        } catch (e: Exception) {
+            Log.e(TAG, "triggerSelfUpdate failed", e)
+        }
+    }
+
+    // ── onUpdate — same crash-safe shell as before ──────────────
 
     override fun onUpdate(
         context: Context,
@@ -78,9 +215,6 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         appWidgetIds: IntArray,
         widgetData: SharedPreferences,
     ) {
-        // Top-level net: under no circumstances let an exception
-        // escape this method — the launcher would mark the widget
-        // invalid and refuse to host it on subsequent adds.
         try {
             val json = try {
                 widgetData.getString(DATA_KEY, null)
@@ -129,6 +263,8 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         }
     }
 
+    // ── Rendering ───────────────────────────────────────────────
+
     private fun renderGrid(context: Context, views: RemoteViews, data: JSONObject) {
         val pkg = context.packageName
         fun id(name: String): Int = context.resources.getIdentifier(name, "id", pkg)
@@ -137,49 +273,55 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         val accent = parseColor(data.optString("accent"), FALLBACK_ACCENT)
         val accentPale = parseColor(data.optString("accentPale"), FALLBACK_ACCENT_PALE)
         val goldPale = parseColor(data.optString("goldPale"), FALLBACK_GOLD_PALE)
-        val hy = data.optInt("hy", 0)
-        val hm = data.optInt("hm", 0)
-        val visibleRows = data.optInt("visibleRows", 6)
-
-        Log.d(
-            TAG,
-            "renderGrid: isDark=$isDark, hy=$hy, hm=$hm, visibleRows=$visibleRows",
-        )
+        val windowRadius = data.optInt("windowRadius", 0)
 
         // Theme colours — mirror lib/theme.dart (AppColors).
         val textMain = if (isDark) 0xFFF0EBE0.toInt() else 0xFF1A1A1A.toInt()
         val textMuted = if (isDark) 0xFF6A7585.toInt() else 0xFF999999.toInt()
         // Weekday header is INTENTIONALLY one step lighter than the
-        // in-app `_buildWeekdayHeader` (which uses text3 / darkText3
-        // at FontWeight.w700) — the widget header is the subdued
-        // companion: regular weight + softer grey for a quieter
-        // premium feel. Friday still picks up the accent below.
+        // in-app `_buildWeekdayHeader` — the widget header is the
+        // subdued companion: regular weight + softer grey.
         val weekdayMuted = if (isDark) 0xFF7B8595.toInt() else 0xFFB0B0B0.toInt()
         val textOnAccent = 0xFFFFFFFF.toInt()
-        // When today is filled with accent, secondary text (Gregorian
-        // day number) and dots use translucent white — mirrors
-        // `_DayCell`'s `Colors.white70` rule.
+        // Mirrors `_DayCell`'s `Colors.white70` for today.
         val secondaryOnAccent = 0xB3FFFFFF.toInt()
 
-        // Themed rounded background. (Layout direction is set
-        // STATICALLY in the XML via android:layoutDirection="locale"
-        // — View.setLayoutDirection is not @RemotableViewMethod.)
+        // Themed rounded background.
         views.setInt(
             R.id.widget_mini_calendar_root, "setBackgroundResource",
             if (isDark) R.drawable.mc_bg_dark else R.drawable.mc_bg_light,
         )
 
+        // Pick the month matching the user's current view offset.
+        // Clamp so a stale stored offset can't render an empty widget.
+        val rawOffset = readOffset(context)
+        val viewOffset = rawOffset.coerceIn(-windowRadius, windowRadius)
+        if (viewOffset != rawOffset) {
+            // Drift after a window-radius change: snap back into range.
+            writeOffset(context, viewOffset)
+        }
+        val monthData = pickMonth(data, viewOffset) ?: pickMonth(data, 0)
+        if (monthData == null) {
+            Log.w(TAG, "renderGrid: no month data in payload")
+            return
+        }
+        Log.d(
+            TAG,
+            "renderGrid: viewOffset=$viewOffset, hy=${monthData.optInt("hy")}, hm=${monthData.optInt("hm")}",
+        )
+
+        val hy = monthData.optInt("hy", 0)
+        val hm = monthData.optInt("hm", 0)
+        val visibleRows = monthData.optInt("visibleRows", 6)
+
         // Title — Hijri month/year (primary) + Gregorian (secondary).
-        views.setTextViewText(R.id.mc_title, data.optString("title"))
+        views.setTextViewText(R.id.mc_title, monthData.optString("title"))
         views.setTextColor(R.id.mc_title, textMain)
-        views.setTextViewText(R.id.mc_greg_title, data.optString("gregTitle"))
+        views.setTextViewText(R.id.mc_greg_title, monthData.optString("gregTitle"))
         views.setTextColor(R.id.mc_greg_title, textMuted)
 
         // Weekday header — Friday (index 4) gets the accent, like
-        // the app's monthly grid header. Non-Friday labels use the
-        // softer `weekdayMuted` so they read as a quiet header
-        // rather than a heavy band (XML also drops bold + bumps
-        // letter-spacing).
+        // the app's monthly grid header.
         val weekdays = data.optJSONArray("weekdays")
         for (i in 0..6) {
             val wdId = id("mc_wd_$i")
@@ -189,7 +331,54 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         }
 
         // Day cells.
-        val cells = data.optJSONArray("cells")
+        renderCells(
+            context, views, monthData, hy, hm,
+            accent, accentPale, goldPale,
+            textMain, textOnAccent, secondaryOnAccent, textMuted,
+            { name -> id(name) },
+        )
+
+        // Hide the 6th row when the month doesn't reach into it.
+        views.setViewVisibility(
+            R.id.mc_row_5,
+            if (visibleRows >= 6) View.VISIBLE else View.GONE,
+        )
+
+        // Nav controls.
+        setupNavButtons(
+            context, views,
+            currentOffset = viewOffset,
+            windowRadius = windowRadius,
+            accent = accent,
+            mutedColor = weekdayMuted,
+        )
+    }
+
+    private fun pickMonth(data: JSONObject, offset: Int): JSONObject? {
+        val months = data.optJSONArray("months") ?: return null
+        for (k in 0 until months.length()) {
+            val m = months.optJSONObject(k) ?: continue
+            if (m.optInt("offset", Int.MAX_VALUE) == offset) return m
+        }
+        return null
+    }
+
+    private fun renderCells(
+        context: Context,
+        views: RemoteViews,
+        monthData: JSONObject,
+        hy: Int,
+        hm: Int,
+        accent: Int,
+        accentPale: Int,
+        goldPale: Int,
+        textMain: Int,
+        textOnAccent: Int,
+        secondaryOnAccent: Int,
+        textMuted: Int,
+        id: (String) -> Int,
+    ) {
+        val cells = monthData.optJSONArray("cells")
         var rendered = 0
         for (i in 0..41) {
             val cellId = id("mc_cell_$i")
@@ -207,8 +396,7 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
             val cell = cells?.optJSONObject(i)
             val d = cell?.optInt("d", 0) ?: 0
             if (d < 1) {
-                // Blank padding cell — clear text, highlight, secondary,
-                // every dot, tap.
+                // Blank padding cell.
                 views.setTextViewText(numId, "")
                 views.setTextViewText(gregId, "")
                 views.setViewVisibility(gregId, View.GONE)
@@ -220,9 +408,6 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
 
             views.setTextViewText(numId, d.toString())
 
-            // Background state (mirrors _DayCell priority): today >
-            // selected > ayyam > ramadan. The highlight ImageView is
-            // a white rounded-rect tinted to the right palette colour.
             val bg = cell?.optString("bg", "") ?: ""
             val isFri = cell?.optBoolean("fri", false) ?: false
             val isToday = bg == "today"
@@ -241,7 +426,6 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
                 "ramadan" -> {
                     views.setViewVisibility(hlId, View.VISIBLE)
                     views.setInt(hlId, "setColorFilter", goldPale)
-                    // Ramadan still respects the Friday accent text rule.
                     views.setTextColor(numId, if (isFri) accent else textMain)
                 }
                 else -> {
@@ -250,9 +434,7 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
                 }
             }
 
-            // Gregorian secondary day number — same dual-number layout
-            // as `_DayCell`. Always muted, except on today where it
-            // turns translucent white to read on the accent fill.
+            // Gregorian secondary day number.
             val g = cell?.optInt("g", 0) ?: 0
             if (g > 0) {
                 views.setTextViewText(gregId, g.toString())
@@ -262,14 +444,11 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
                 )
                 views.setViewVisibility(gregId, View.VISIBLE)
             } else {
-                // Hijri→Gregorian failed (region/offset edge) — hide
-                // the secondary line rather than show a stale value.
                 views.setTextViewText(gregId, "")
                 views.setViewVisibility(gregId, View.GONE)
             }
 
-            // Up to 3 event dots — tinted to the event's actual colour
-            // via setColorFilter on a shared white circle drawable.
+            // Up to 3 event dots.
             val dots = cell?.optJSONArray("dots")
             val dotCount = dots?.length() ?: 0
             for (k in 0..2) {
@@ -285,12 +464,10 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
             }
 
             // Per-day tap — opens the app on this exact Hijri date.
-            // Each cell's URI differs, so the PendingIntents stay
-            // distinct even though HomeWidgetLaunchIntent uses
-            // requestCode 0 (the data URI is part of
-            // Intent.filterEquals).
             try {
-                val uri = Uri.parse("hijribadr://widget/mini_calendar?hy=$hy&hm=$hm&hd=$d")
+                val uri = Uri.parse(
+                    "hijribadr://widget/mini_calendar?hy=$hy&hm=$hm&hd=$d",
+                )
                 val pi = HomeWidgetLaunchIntent.getActivity(
                     context, MainActivity::class.java, uri,
                 )
@@ -300,13 +477,71 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
             }
             rendered++
         }
-        Log.d(TAG, "renderGrid: filled $rendered day cells")
+        Log.d(TAG, "renderCells: filled $rendered day cells")
+    }
 
-        // Hide the 6th row when the month doesn't reach into it.
-        views.setViewVisibility(
-            R.id.mc_row_5,
-            if (visibleRows >= 6) View.VISIBLE else View.GONE,
+    /** Wires the prev / today / next header buttons. Clamping at the
+     *  window edges is reflected visually (muted tint + no click) so
+     *  tapping a disabled arrow is a no-op rather than feeling broken.
+     *  The "today" button is muted+disabled when already on offset 0
+     *  and accent+enabled after the user has navigated away. */
+    private fun setupNavButtons(
+        context: Context,
+        views: RemoteViews,
+        currentOffset: Int,
+        windowRadius: Int,
+        accent: Int,
+        mutedColor: Int,
+    ) {
+        // Disabled tint = the muted colour at ~40% alpha — distinct
+        // from the active state without disappearing.
+        val disabledColor = (mutedColor and 0x00FFFFFF) or 0x66000000
+
+        val canGoPrev = currentOffset > -windowRadius
+        val canGoNext = currentOffset < windowRadius
+
+        views.setInt(
+            R.id.mc_btn_prev, "setColorFilter",
+            if (canGoPrev) mutedColor else disabledColor,
         )
+        views.setOnClickPendingIntent(
+            R.id.mc_btn_prev,
+            if (canGoPrev) navPendingIntent(context, ACTION_PREV) else null,
+        )
+
+        views.setInt(
+            R.id.mc_btn_next, "setColorFilter",
+            if (canGoNext) mutedColor else disabledColor,
+        )
+        views.setOnClickPendingIntent(
+            R.id.mc_btn_next,
+            if (canGoNext) navPendingIntent(context, ACTION_NEXT) else null,
+        )
+
+        // Today: muted+inactive when already on offset 0, accent+active
+        // after navigation. Always present so the header layout stays
+        // visually balanced.
+        if (currentOffset == 0) {
+            views.setInt(R.id.mc_btn_today, "setColorFilter", disabledColor)
+            views.setOnClickPendingIntent(R.id.mc_btn_today, null)
+        } else {
+            views.setInt(R.id.mc_btn_today, "setColorFilter", accent)
+            views.setOnClickPendingIntent(
+                R.id.mc_btn_today,
+                navPendingIntent(context, ACTION_TODAY),
+            )
+        }
+    }
+
+    private fun navPendingIntent(context: Context, action: String): PendingIntent {
+        // Explicit intent (component set via `Intent(context, class)`)
+        // so other apps can't trigger this even though the receiver
+        // is exported. requestCode is per-action so the three nav
+        // PendingIntents stay distinct.
+        val intent = Intent(context, MiniCalendarWidgetProvider::class.java)
+            .setAction(action)
+        val flags = PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        return PendingIntent.getBroadcast(context, action.hashCode(), intent, flags)
     }
 
     /** Parses a "#AARRGGBB" string, falling back to the supplied default. */

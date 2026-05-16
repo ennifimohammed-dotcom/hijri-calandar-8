@@ -105,6 +105,14 @@
             android:label="@string/widget_mini_calendar_name">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE"/>
+                <!-- In-widget navigation actions (prev / today / next).
+                     PendingIntents are explicit (Intent(context,
+                     MiniCalendarWidgetProvider::class.java) sets the
+                     component) so other apps can't reach this
+                     receiver even though the actions are custom. -->
+                <action android:name="com.hijricalendar.hijri_calendar.MINI_CAL_PREV"/>
+                <action android:name="com.hijricalendar.hijri_calendar.MINI_CAL_NEXT"/>
+                <action android:name="com.hijricalendar.hijri_calendar.MINI_CAL_TODAY"/>
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
