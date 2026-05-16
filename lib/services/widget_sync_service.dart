@@ -73,12 +73,41 @@ class WidgetSyncService {
   /// is set on the provider.
   final ValueNotifier<int> openMonthlyTick = ValueNotifier<int>(0);
 
+  /// Set to the prefilled start [DateTime] when a Mini Calendar day
+  /// cell is DOUBLE-TAPPED. `HomeScreen` listens and pushes the
+  /// `AddEventScreen(initialStart: ...)` route — mirrors the in-app
+  /// `_DayCell.onDoubleTap` flow exactly. Reset to null by the
+  /// listener after it consumes the value so a stale push can't
+  /// re-fire.
+  final ValueNotifier<DateTime?> openAddEventForDate =
+      ValueNotifier<DateTime?>(null);
+
+  /// How long after a single widget-day tap the green "selected"
+  /// highlight stays visible on the Mini Calendar. Cleared earlier
+  /// (via [handleAppPaused]) when the user leaves the launcher.
+  static const Duration _selectionTtl = Duration(seconds: 8);
+
+  /// Window inside which two widget-day taps on the SAME day count as
+  /// a double tap. RemoteViews can't natively detect a double tap, so
+  /// we detect it here on the Dart side from the URI delivery stream.
+  static const Duration _doubleTapWindow = Duration(milliseconds: 400);
+
   AppProvider? _provider;
   Timer? _debounce;
+  Timer? _selectionTimer;
   StreamSubscription<Uri?>? _clickSub;
   bool _rendering = false;
   String? _lastSignature;
   String? _lastMiniJson;
+  /// Whether the Mini Calendar should render the user-selected day
+  /// highlight on the current push. Off by default so the widget
+  /// never persists a "selected day" between sessions; flipped on
+  /// briefly after a widget-day tap and cleared by [handleAppPaused]
+  /// or the [_selectionTimer].
+  bool _showWidgetSelection = false;
+  /// Last widget-day tap, for double-tap detection. Cleared after
+  /// being consumed by the double-tap branch.
+  ({DateTime time, int hy, int hm, int hd})? _lastDayTap;
 
   /// Wires the service to the live provider. Safe to call once, from
   /// `main.dart`'s `initState` (post-frame). Adds a listener, triggers
@@ -110,8 +139,23 @@ class WidgetSyncService {
     _provider = null;
     _debounce?.cancel();
     _debounce = null;
+    _selectionTimer?.cancel();
+    _selectionTimer = null;
     _clickSub?.cancel();
     _clickSub = null;
+  }
+
+  /// Called from `main.dart`'s `AppLifecycleState.paused` handler so
+  /// the Mini Calendar never holds a stale "selected day" highlight
+  /// after the user leaves the launcher / opens any app. No-op when
+  /// the highlight wasn't currently being shown.
+  void handleAppPaused() {
+    if (!_showWidgetSelection) return;
+    _selectionTimer?.cancel();
+    _selectionTimer = null;
+    _showWidgetSelection = false;
+    _lastDayTap = null;
+    requestSync();
   }
 
   void _onProviderChanged() => requestSync();
@@ -139,8 +183,18 @@ class WidgetSyncService {
   ///
   /// Every widget opens the monthly calendar view. A Mini Calendar
   /// day cell additionally carries the exact Hijri date it represents
-  /// (`?hy=&hm=&hd=`); when present, the calendar is navigated to that
-  /// month and the day is selected.
+  /// (`?hy=&hm=&hd=`); when present:
+  ///   * a SINGLE tap navigates the calendar to that month and
+  ///     selects the day, and lights the widget's "selected"
+  ///     highlight briefly (cleared on the [_selectionTimer] or by
+  ///     [handleAppPaused]);
+  ///   * a DOUBLE tap (a second URI delivery for the SAME day inside
+  ///     [_doubleTapWindow]) ADDITIONALLY pushes the "New Event"
+  ///     screen prefilled with that day — same flow as the in-app
+  ///     `_DayCell.onDoubleTap` in lib/screens/calendar_screen.dart.
+  ///
+  /// RemoteViews can't report a double tap natively (each launcher
+  /// tap fires its own PendingIntent), so detection lives here.
   void _onWidgetUri(Uri? uri) {
     if (uri == null) return;
     final p = _provider;
@@ -150,9 +204,40 @@ class WidgetSyncService {
       final hy = int.tryParse(uri.queryParameters['hy'] ?? '');
       final hm = int.tryParse(uri.queryParameters['hm'] ?? '');
       final hd = int.tryParse(uri.queryParameters['hd'] ?? '');
+
       if (hy != null && hm != null && hd != null) {
-        p.setCurrentMonth(hy, hm);
-        p.selectDay(HijriDate(hy, hm, hd));
+        final now = DateTime.now();
+        final last = _lastDayTap;
+        final isDoubleTap = last != null &&
+            last.hy == hy &&
+            last.hm == hm &&
+            last.hd == hd &&
+            now.difference(last.time) <= _doubleTapWindow;
+
+        if (isDoubleTap) {
+          // Consume so a third tap can't be read as another "double".
+          _lastDayTap = null;
+          // Same sequence as `_DayCell.onDoubleTap`: select the day
+          // first, then push the new-event screen prefilled with the
+          // Gregorian instant at 09:00 local on that day. The Hijri
+          // → Gregorian conversion goes through the provider so it
+          // honours the active region's day offset.
+          p.selectDay(HijriDate(hy, hm, hd));
+          DateTime g;
+          try {
+            g = p.hijriToGregorian(hy, hm, hd);
+          } catch (_) {
+            g = DateTime.now();
+          }
+          openAddEventForDate.value =
+              DateTime(g.year, g.month, g.day, 9, 0);
+        } else {
+          _lastDayTap = (time: now, hy: hy, hm: hm, hd: hd);
+          // Single-tap behaviour preserved exactly.
+          p.setCurrentMonth(hy, hm);
+          p.selectDay(HijriDate(hy, hm, hd));
+          _activateWidgetSelection();
+        }
       }
       // Nudge HomeScreen back to the Calendar tab (covers the
       // warm-start case where another tab was open).
@@ -161,6 +246,23 @@ class WidgetSyncService {
       AppLogger.error('WidgetSyncService: handling widget tap failed',
           error: e, stack: s);
     }
+  }
+
+  /// Lights the Mini Calendar's "selected day" highlight for
+  /// [_selectionTtl] (currently 8 s), then clears it. The clear is a
+  /// safety net — in practice [handleAppPaused] kicks in first when
+  /// the user leaves the launcher to look at the app they just
+  /// opened.
+  void _activateWidgetSelection() {
+    _showWidgetSelection = true;
+    _selectionTimer?.cancel();
+    _selectionTimer = Timer(_selectionTtl, () {
+      _selectionTimer = null;
+      if (!_showWidgetSelection) return;
+      _showWidgetSelection = false;
+      requestSync();
+    });
+    requestSync();
   }
 
   // ── Render → push ────────────────────────────────────────────
@@ -186,7 +288,14 @@ class WidgetSyncService {
     String miniJson;
     try {
       snap = WidgetSnapshot.fromProvider(p);
-      miniJson = MiniCalendarData.buildJson(p);
+      // The "selected day" highlight on the widget is opt-in per
+      // render: off by default (so the widget never shows a stale
+      // selection between sessions), flipped on briefly by
+      // _activateWidgetSelection after a widget-day tap.
+      miniJson = MiniCalendarData.buildJson(
+        p,
+        includeSelected: _showWidgetSelection,
+      );
     } catch (e, s) {
       AppLogger.error('WidgetSyncService: snapshot build failed',
           error: e, stack: s);

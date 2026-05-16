@@ -64,7 +64,14 @@ class MiniCalendarData {
 
   /// Builds the JSON payload for the visible window of months
   /// centred on today's Hijri month.
-  static String buildJson(AppProvider p) {
+  ///
+  /// [includeSelected] gates the green "selected day" highlight
+  /// (`bg = 'selected'`). The widget service holds this `false` by
+  /// default so the widget never shows a stale selection between
+  /// sessions, and flips it on briefly after a widget-day tap.
+  /// The in-app calendar's own selection rendering is unaffected
+  /// (this only governs what we serialise into the widget payload).
+  static String buildJson(AppProvider p, {bool includeSelected = true}) {
     final nowH = p.today;
     final loc = p.locale;
 
@@ -93,9 +100,13 @@ class MiniCalendarData {
         todayHy: nowH.hYear,
         todayHm: nowH.hMonth,
         todayHd: nowH.hDay,
-        selHy: selHy,
-        selHm: selHm,
-        selHd: selHd,
+        // Nulled-out selection coordinates short-circuit the
+        // `isSelected` predicate inside `_buildMonth` — no cell
+        // will pick the 'selected' background state when the
+        // widget service has the highlight switched off.
+        selHy: includeSelected ? selHy : null,
+        selHm: includeSelected ? selHm : null,
+        selHd: includeSelected ? selHd : null,
       ));
     }
 

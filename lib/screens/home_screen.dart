@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../providers/app_provider.dart';
 import '../services/widget_sync_service.dart';
 import '../theme.dart';
+import 'add_event_screen.dart';
 import 'calendar_screen.dart';
 import 'event_bank_screen.dart';
 import 'settings_screen.dart';
@@ -24,11 +25,19 @@ class _HomeScreenState extends State<HomeScreen> {
     // mode itself is switched on the provider by WidgetSyncService;
     // here we only make sure the bottom nav is on the Calendar tab.
     WidgetSyncService.instance.openMonthlyTick.addListener(_onOpenMonthly);
+    // A Mini Calendar day cell DOUBLE-TAP asks for the New Event
+    // screen prefilled with that day. WidgetSyncService detects the
+    // double tap from the URI stream and exposes the prefilled
+    // start [DateTime] via this notifier — we just push the route.
+    WidgetSyncService.instance.openAddEventForDate
+        .addListener(_onOpenAddEventForDate);
   }
 
   @override
   void dispose() {
     WidgetSyncService.instance.openMonthlyTick.removeListener(_onOpenMonthly);
+    WidgetSyncService.instance.openAddEventForDate
+        .removeListener(_onOpenAddEventForDate);
     super.dispose();
   }
 
@@ -36,6 +45,26 @@ class _HomeScreenState extends State<HomeScreen> {
     if (mounted && _currentIndex != 0) {
       setState(() => _currentIndex = 0);
     }
+  }
+
+  void _onOpenAddEventForDate() {
+    final dt = WidgetSyncService.instance.openAddEventForDate.value;
+    // Skip the re-fire that happens when we reset to null below.
+    if (dt == null) return;
+    // Consume immediately so the listener doesn't re-trigger if any
+    // unrelated setState bounces through the build.
+    WidgetSyncService.instance.openAddEventForDate.value = null;
+    if (!mounted) return;
+    // Push AFTER the current frame so we don't navigate during a
+    // build phase that the notifier change might have landed in.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (_) => AddEventScreen(initialStart: dt),
+        ),
+      );
+    });
   }
 
   @override
