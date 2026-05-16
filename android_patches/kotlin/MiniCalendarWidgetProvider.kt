@@ -149,6 +149,12 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         // Theme colours — mirror lib/theme.dart (AppColors).
         val textMain = if (isDark) 0xFFF0EBE0.toInt() else 0xFF1A1A1A.toInt()
         val textMuted = if (isDark) 0xFF6A7585.toInt() else 0xFF999999.toInt()
+        // Weekday header is INTENTIONALLY one step lighter than the
+        // in-app `_buildWeekdayHeader` (which uses text3 / darkText3
+        // at FontWeight.w700) — the widget header is the subdued
+        // companion: regular weight + softer grey for a quieter
+        // premium feel. Friday still picks up the accent below.
+        val weekdayMuted = if (isDark) 0xFF7B8595.toInt() else 0xFFB0B0B0.toInt()
         val textOnAccent = 0xFFFFFFFF.toInt()
         // When today is filled with accent, secondary text (Gregorian
         // day number) and dots use translucent white — mirrors
@@ -170,13 +176,16 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         views.setTextColor(R.id.mc_greg_title, textMuted)
 
         // Weekday header — Friday (index 4) gets the accent, like
-        // the app's monthly grid header.
+        // the app's monthly grid header. Non-Friday labels use the
+        // softer `weekdayMuted` so they read as a quiet header
+        // rather than a heavy band (XML also drops bold + bumps
+        // letter-spacing).
         val weekdays = data.optJSONArray("weekdays")
         for (i in 0..6) {
             val wdId = id("mc_wd_$i")
             if (wdId == 0) continue
             views.setTextViewText(wdId, weekdays?.optString(i) ?: "")
-            views.setTextColor(wdId, if (i == 4) accent else textMuted)
+            views.setTextColor(wdId, if (i == 4) accent else weekdayMuted)
         }
 
         // Day cells.
