@@ -238,6 +238,14 @@ class WidgetSyncService {
           p.selectDay(HijriDate(hy, hm, hd));
           _activateWidgetSelection();
         }
+      } else if (hy != null && hm != null) {
+        // Month-only URI — arrives when the Mini Calendar widget's
+        // prev / next arrow is tapped at the edge of its cached
+        // window and falls through to opening the in-app calendar
+        // at the target Hijri month. No day to select; just move
+        // the in-app monthly view there so the user can keep
+        // navigating in the app's truly-infinite calendar.
+        p.setCurrentMonth(hy, hm);
       }
       // Nudge HomeScreen back to the Calendar tab (covers the
       // warm-start case where another tab was open).
@@ -292,7 +300,12 @@ class WidgetSyncService {
       // render: off by default (so the widget never shows a stale
       // selection between sessions), flipped on briefly by
       // _activateWidgetSelection after a widget-day tap.
-      miniJson = MiniCalendarData.buildJson(
+      //
+      // buildJson is async — it yields the event loop per month so
+      // the 25-month window doesn't freeze UI animations during a
+      // sync. The outer `_rendering` guard already prevents two
+      // builds from running concurrently.
+      miniJson = await MiniCalendarData.buildJson(
         p,
         includeSelected: _showWidgetSelection,
       );

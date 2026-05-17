@@ -155,14 +155,70 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
     private fun shiftOffset(context: Context, delta: Int) {
         val current = readOffset(context)
         val radius = readWindowRadius(context)
-        val newOffset = (current + delta).coerceIn(-radius, radius)
-        if (newOffset == current) {
-            Log.d(TAG, "shiftOffset($delta) at edge (offset=$current), no-op")
-            return
+        val target = current + delta
+        if (target in -radius..radius) {
+            // Within the pre-baked window — instant native nav.
+            writeOffset(context, target)
+            Log.d(TAG, "Nav: offset $current -> $target (in-window)")
+            triggerSelfUpdate(context)
+        } else {
+            // Out of the cached window — there is no pre-built JSON
+            // for this month, so we can't render it natively. Open
+            // the in-app calendar at the target Hijri month instead
+            // — the app's calendar is truly infinite (PageView with
+            // unbounded indices), so navigation continues from there.
+            // The widget's own offset is not advanced; the next sync
+            // (triggered when AppProvider notifies after the launch)
+            // will re-centre the cached window.
+            Log.d(TAG, "Nav: offset $current beyond window ±$radius — launching app")
+            launchAppAtOffset(context, target)
         }
-        writeOffset(context, newOffset)
-        Log.d(TAG, "Nav: offset $current -> $newOffset")
-        triggerSelfUpdate(context)
+    }
+
+    /** Hijri month arithmetic with 12-month wrap. Pure integer ops,
+     *  no Hijri kernel call — same wrap logic as `_buildMonth` in
+     *  lib/widgets_home/mini_calendar_data.dart and as
+     *  `_MonthlyView.hijriForIndex` in calendar_screen.dart. */
+    private fun addMonths(hy: Int, hm: Int, delta: Int): Pair<Int, Int> {
+        var y = hy
+        var m = hm + delta
+        while (m < 1) { m += 12; y -= 1 }
+        while (m > 12) { m -= 12; y += 1 }
+        return Pair(y, m)
+    }
+
+    /** Out-of-window navigation: starts the app on the target Hijri
+     *  month so the user can keep navigating in the in-app calendar.
+     *  Builds the same Intent that `HomeWidgetLaunchIntent.getActivity`
+     *  would, but fires it directly (we're already in a user-initiated
+     *  widget broadcast, so the background-activity-start restrictions
+     *  on Android 10+ don't apply here). */
+    private fun launchAppAtOffset(context: Context, targetOffset: Int) {
+        try {
+            val prefs = HomeWidgetPlugin.getData(context)
+            val json = prefs.getString(DATA_KEY, null) ?: return
+            val data = JSONObject(json)
+            val todayHy = data.optInt("todayHy", 0)
+            val todayHm = data.optInt("todayHm", 0)
+            if (todayHy == 0 || todayHm == 0) {
+                Log.w(TAG, "launchAppAtOffset: payload missing today coords")
+                return
+            }
+            val (hy, hm) = addMonths(todayHy, todayHm, targetOffset)
+            // Month-only URI (no `hd`). The Dart side's _onWidgetUri
+            // recognises this as "navigate to month, don't select a
+            // day" — same flow the in-app `_MonthlyView` uses.
+            val uri = Uri.parse("hijribadr://widget/mini_calendar?hy=$hy&hm=$hm")
+            val intent = Intent(context, MainActivity::class.java).apply {
+                action = "es.antonborri.home_widget.action.LAUNCH"
+                data = uri
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+            Log.d(TAG, "launchAppAtOffset($targetOffset) -> hy=$hy hm=$hm")
+        } catch (e: Exception) {
+            Log.e(TAG, "launchAppAtOffset failed", e)
+        }
     }
 
     private fun setOffset(context: Context, value: Int) {
@@ -222,23 +278,39 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
                 Log.w(TAG, "Failed to read widget SharedPreferences", e)
                 null
             }
+            // Parse the payload ONCE up front so we can decide which
+            // layout to inflate (LTR vs forced-RTL) AND pass the
+            // parsed object straight to renderGrid — no double-parse.
+            val parsed: JSONObject? = if (json != null) {
+                try {
+                    JSONObject(json)
+                } catch (e: Exception) {
+                    Log.w(TAG, "JSON parse failed; using empty layout", e)
+                    null
+                }
+            } else null
+            val isRtl = parsed?.optBoolean("isRtl", false) ?: false
+            val layoutId = if (isRtl) {
+                R.layout.widget_mini_calendar_rtl
+            } else {
+                R.layout.widget_mini_calendar
+            }
             Log.d(
                 TAG,
-                "onUpdate: widgets=${appWidgetIds.size}, hasData=${json != null}",
+                "onUpdate: widgets=${appWidgetIds.size}, hasData=${parsed != null}, isRtl=$isRtl",
             )
 
             for (widgetId in appWidgetIds) {
                 val views = try {
-                    RemoteViews(context.packageName, R.layout.widget_mini_calendar)
+                    RemoteViews(context.packageName, layoutId)
                 } catch (e: Exception) {
                     Log.e(TAG, "RemoteViews construction failed for $widgetId", e)
                     continue
                 }
 
-                if (json != null) {
+                if (parsed != null) {
                     try {
-                        val data = JSONObject(json)
-                        renderGrid(context, views, data)
+                        renderGrid(context, views, parsed)
                         Log.d(TAG, "Rendered grid for widget $widgetId")
                     } catch (e: Exception) {
                         Log.w(
@@ -344,11 +416,13 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
             if (visibleRows >= 6) View.VISIBLE else View.GONE,
         )
 
-        // Nav controls.
+        // Nav controls. Prev/next stay active-looking at all times —
+        // out-of-window taps fall through to launching the app at
+        // the target month (see `shiftOffset`), so the widget feels
+        // infinite even though the cached JSON window is bounded.
         setupNavButtons(
             context, views,
             currentOffset = viewOffset,
-            windowRadius = windowRadius,
             accent = accent,
             mutedColor = weekdayMuted,
         )
@@ -480,49 +554,32 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         Log.d(TAG, "renderCells: filled $rendered day cells")
     }
 
-    /** Wires the prev / today / next header buttons. Clamping at the
-     *  window edges is reflected visually (muted tint + no click) so
-     *  tapping a disabled arrow is a no-op rather than feeling broken.
-     *  The "today" button is muted+disabled when already on offset 0
-     *  and accent+enabled after the user has navigated away. */
+    /** Wires the prev / today / next header buttons.
+     *
+     *  Prev / Next: always active-looking and always clickable. The
+     *  broadcast handler (`shiftOffset`) decides whether to navigate
+     *  natively (in-window) or to launch the app at the target month
+     *  (out-of-window) — so the widget feels truly infinite.
+     *
+     *  Today: muted when already on offset 0 (no navigation needed),
+     *  accent when off it so the eye is drawn back. */
     private fun setupNavButtons(
         context: Context,
         views: RemoteViews,
         currentOffset: Int,
-        windowRadius: Int,
         accent: Int,
         mutedColor: Int,
     ) {
-        // Disabled tint = the muted colour at ~40% alpha — distinct
-        // from the active state without disappearing.
-        val disabledColor = (mutedColor and 0x00FFFFFF) or 0x66000000
-
-        val canGoPrev = currentOffset > -windowRadius
-        val canGoNext = currentOffset < windowRadius
-
-        views.setInt(
-            R.id.mc_btn_prev, "setColorFilter",
-            if (canGoPrev) mutedColor else disabledColor,
-        )
+        views.setInt(R.id.mc_btn_prev, "setColorFilter", mutedColor)
         views.setOnClickPendingIntent(
-            R.id.mc_btn_prev,
-            if (canGoPrev) navPendingIntent(context, ACTION_PREV) else null,
-        )
+            R.id.mc_btn_prev, navPendingIntent(context, ACTION_PREV))
 
-        views.setInt(
-            R.id.mc_btn_next, "setColorFilter",
-            if (canGoNext) mutedColor else disabledColor,
-        )
+        views.setInt(R.id.mc_btn_next, "setColorFilter", mutedColor)
         views.setOnClickPendingIntent(
-            R.id.mc_btn_next,
-            if (canGoNext) navPendingIntent(context, ACTION_NEXT) else null,
-        )
+            R.id.mc_btn_next, navPendingIntent(context, ACTION_NEXT))
 
-        // Today: muted+inactive when already on offset 0, accent+active
-        // after navigation. Always present so the header layout stays
-        // visually balanced.
         if (currentOffset == 0) {
-            views.setInt(R.id.mc_btn_today, "setColorFilter", disabledColor)
+            views.setInt(R.id.mc_btn_today, "setColorFilter", mutedColor)
             views.setOnClickPendingIntent(R.id.mc_btn_today, null)
         } else {
             views.setInt(R.id.mc_btn_today, "setColorFilter", accent)
