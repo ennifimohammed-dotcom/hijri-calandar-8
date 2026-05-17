@@ -113,6 +113,14 @@
                 <action android:name="com.hijricalendar.hijri_calendar.MINI_CAL_PREV"/>
                 <action android:name="com.hijricalendar.hijri_calendar.MINI_CAL_NEXT"/>
                 <action android:name="com.hijricalendar.hijri_calendar.MINI_CAL_TODAY"/>
+                <!-- Per-day-cell interaction: single tap only paints
+                     the transient selection highlight natively, no
+                     app launch. A second tap on the SAME day inside
+                     the double-tap window opens AddEventScreen. -->
+                <action android:name="com.hijricalendar.hijri_calendar.MINI_CAL_DAY_TAP"/>
+                <!-- AlarmManager-fired clear: drops the transient
+                     selection highlight once its TTL expires. -->
+                <action android:name="com.hijricalendar.hijri_calendar.MINI_CAL_CLEAR_SELECTION"/>
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"

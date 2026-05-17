@@ -65,14 +65,11 @@ class _HijriCalendarAppState extends State<HijriCalendarApp>
       // Repaint the home-screen widget too — covers a date rollover
       // or a settings change made while the app was backgrounded.
       WidgetSyncService.instance.requestSync();
-    } else if (state == AppLifecycleState.paused) {
-      // The user just left the launcher / opened another app — drop
-      // the Mini Calendar widget's transient "selected day"
-      // highlight so it never persists between sessions. No-op when
-      // the highlight wasn't lit. Doesn't touch the in-app
-      // selection, only what the widget renders.
-      WidgetSyncService.instance.handleAppPaused();
     }
+    // Mini Calendar widget's transient "selected day" highlight is
+    // now owned by the Kotlin renderer (TTL + AlarmManager-driven
+    // clear in MiniCalendarWidgetProvider) — no Dart lifecycle hook
+    // is needed for it any more.
   }
 
   @override

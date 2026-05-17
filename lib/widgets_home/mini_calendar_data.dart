@@ -74,14 +74,15 @@ class MiniCalendarData {
   /// land between months. Total CPU cost is the same; perceived
   /// jank goes from ~750 ms to ~30 ms slices.
   ///
-  /// [includeSelected] gates the green "selected day" highlight
-  /// (`bg = 'selected'`). The widget service holds this `false` by
-  /// default so the widget never shows a stale selection between
-  /// sessions, and flips it on briefly after a widget-day tap.
-  /// The in-app calendar's own selection rendering is unaffected
-  /// (this only governs what we serialise into the widget payload).
-  static Future<String> buildJson(AppProvider p,
-      {bool includeSelected = true}) async {
+  /// The widget's "selected day" highlight is OWNED by the native
+  /// side (MiniCalendarWidgetProvider holds it in its own
+  /// SharedPreferences with a TTL), so this builder no longer
+  /// emits a `bg = 'selected'` state — the Kotlin renderer
+  /// overlays selection from its local state, completely
+  /// decoupled from `p.selectedDay`. That separation is what lets
+  /// a single tap on a widget cell select WITHOUT opening the app
+  /// (and without polluting the in-app selection).
+  static Future<String> buildJson(AppProvider p) async {
     final nowH = p.today;
     final loc = p.locale;
 
@@ -90,17 +91,15 @@ class MiniCalendarData {
             WidgetsBinding.instance.platformDispatcher.platformBrightness ==
                 Brightness.dark);
 
-    // Selected day — only paint the highlight when the user's current
-    // selection falls inside one of the windowed months.
-    final selHy = p.selectedDay?.hYear;
-    final selHm = p.selectedDay?.hMonth;
-    final selHd = p.selectedDay?.hDay;
-
     // Pre-compute every month in the window. The Kotlin side picks
     // one based on the user's saved view offset; having them all in
     // the payload means in-window navigation is purely native.
     // Yields the event loop between months so the 25-month build
     // doesn't freeze the UI in one shot.
+    //
+    // The "selected day" highlight is OWNED by the Kotlin renderer
+    // (it has its own SharedPreferences + TTL + AlarmManager-driven
+    // clear), so we don't pass any selection coordinates here.
     final months = <Map<String, dynamic>>[];
     for (int offset = -_windowRadius; offset <= _windowRadius; offset++) {
       months.add(_buildMonth(
@@ -112,13 +111,6 @@ class MiniCalendarData {
         todayHy: nowH.hYear,
         todayHm: nowH.hMonth,
         todayHd: nowH.hDay,
-        // Nulled-out selection coordinates short-circuit the
-        // `isSelected` predicate inside `_buildMonth` — no cell
-        // will pick the 'selected' background state when the
-        // widget service has the highlight switched off.
-        selHy: includeSelected ? selHy : null,
-        selHm: includeSelected ? selHm : null,
-        selHd: includeSelected ? selHd : null,
       ));
       // Yield to the event loop so a long build can't block
       // animations / gestures running on the UI isolate.
@@ -143,7 +135,9 @@ class MiniCalendarData {
   }
 
   /// Builds one month's worth of cells + headings, [offset] months
-  /// away from ([baseHy], [baseHm]). Mirrors `_DayCell` exactly.
+  /// away from ([baseHy], [baseHm]). Mirrors `_DayCell` exactly —
+  /// except for the `selected` background, which is overlaid by
+  /// the Kotlin renderer from its own local state, not from here.
   static Map<String, dynamic> _buildMonth({
     required AppProvider p,
     required int offset,
@@ -153,9 +147,6 @@ class MiniCalendarData {
     required int todayHy,
     required int todayHm,
     required int todayHd,
-    required int? selHy,
-    required int? selHm,
-    required int? selHd,
   }) {
     // Hijri month arithmetic — same as the app's _MonthlyView /
     // `hijriForIndex` pattern (lib/screens/calendar_screen.dart).
@@ -176,7 +167,6 @@ class MiniCalendarData {
     final firstOffset = (p.getFirstWeekdayOfMonth(hy, hm) - 1) % 7;
 
     final isRamadan = p.isRamadan(hm);
-    final hasSelectionThisMonth = selHy == hy && selHm == hm;
 
     final cells = <Map<String, dynamic>>[];
     for (int i = 0; i < _gridCells; i++) {
@@ -188,7 +178,6 @@ class MiniCalendarData {
 
       final isTodayCell =
           todayHy == hy && todayHm == hm && todayHd == d;
-      final isSelected = hasSelectionThisMonth && selHd == d;
       final isAyyam = p.isAyyamAlBid(d);
       final isFri = (i % 7) == 4;
 
@@ -200,11 +189,15 @@ class MiniCalendarData {
         // secondary line for this cell instead of showing nonsense.
       }
 
+      // Selected is intentionally absent here: the Kotlin renderer
+      // overlays the 'selected' state from its own SharedPreferences
+      // (with a TTL + AlarmManager-driven clear), so a single tap
+      // can select WITHOUT opening the app or polluting the in-app
+      // selection. Priority on the Kotlin side stays: today >
+      // selected > ayyam > ramadan, matching `_DayCell`.
       String? bg;
       if (isTodayCell) {
         bg = 'today';
-      } else if (isSelected) {
-        bg = 'selected';
       } else if (isAyyam) {
         bg = 'ayyam';
       } else if (isRamadan) {

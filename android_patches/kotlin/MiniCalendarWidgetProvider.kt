@@ -1,5 +1,6 @@
 package com.hijricalendar.hijri_calendar
 
+import android.app.AlarmManager
 import android.app.PendingIntent
 import android.appwidget.AppWidgetManager
 import android.content.ComponentName
@@ -11,7 +12,6 @@ import android.net.Uri
 import android.util.Log
 import android.view.View
 import android.widget.RemoteViews
-import es.antonborri.home_widget.HomeWidgetLaunchIntent
 import es.antonborri.home_widget.HomeWidgetPlugin
 import es.antonborri.home_widget.HomeWidgetProvider
 import org.json.JSONObject
@@ -85,11 +85,15 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         private const val DATA_KEY = "mini_calendar_data"
 
         /** Local SharedPreferences (separate from home_widget's store)
-         *  for the user's current view offset. Kept separate so the
-         *  Dart side never accidentally clobbers it during data
-         *  refreshes. */
+         *  for the widget's transient view state — current view
+         *  offset AND the user-selected day. Kept separate so Dart
+         *  data refreshes can never clobber it. */
         private const val LOCAL_PREFS = "mini_calendar_state"
         private const val OFFSET_KEY = "view_offset"
+        private const val SEL_HY_KEY = "sel_hy"
+        private const val SEL_HM_KEY = "sel_hm"
+        private const val SEL_HD_KEY = "sel_hd"
+        private const val SEL_AT_KEY = "sel_at"
 
         /** In-widget navigation actions. Namespaced under the app's
          *  package to avoid collisions; PendingIntents are explicit
@@ -101,6 +105,30 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
             "com.hijricalendar.hijri_calendar.MINI_CAL_NEXT"
         const val ACTION_TODAY: String =
             "com.hijricalendar.hijri_calendar.MINI_CAL_TODAY"
+
+        /** Cell tap — handled natively (single = paint selection,
+         *  double = launch AddEventScreen). The carried day is in
+         *  the extras below. */
+        const val ACTION_DAY_TAP: String =
+            "com.hijricalendar.hijri_calendar.MINI_CAL_DAY_TAP"
+
+        /** Alarm-fired action that drops the transient selection
+         *  highlight once its TTL expires. */
+        const val ACTION_CLEAR_SELECTION: String =
+            "com.hijricalendar.hijri_calendar.MINI_CAL_CLEAR_SELECTION"
+
+        private const val EXTRA_HY = "hy"
+        private const val EXTRA_HM = "hm"
+        private const val EXTRA_HD = "hd"
+
+        /** Two taps on the SAME cell within this window count as a
+         *  double tap and open AddEventScreen. */
+        private const val DOUBLE_TAP_WINDOW_MS = 400L
+
+        /** How long the transient selection highlight stays visible
+         *  before AlarmManager fires ACTION_CLEAR_SELECTION. Short
+         *  enough to feel "temporary"; long enough to read. */
+        private const val SELECTION_TTL_MS = 10_000L
 
         /** Fallback accent (royal green) for missing/invalid payloads. */
         private const val FALLBACK_ACCENT: Int = 0xFF2D7D5F.toInt()
@@ -116,6 +144,8 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
                 ACTION_PREV -> shiftOffset(context, -1)
                 ACTION_NEXT -> shiftOffset(context, +1)
                 ACTION_TODAY -> setOffset(context, 0)
+                ACTION_DAY_TAP -> handleDayTap(context, intent)
+                ACTION_CLEAR_SELECTION -> handleClearSelection(context)
                 else -> super.onReceive(context, intent)
             }
         } catch (t: Throwable) {
@@ -128,6 +158,175 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
             } catch (_: Throwable) {
                 // Truly nothing we can do; never let it escape.
             }
+        }
+    }
+
+    // ── Per-day-cell interaction ────────────────────────────────
+
+    /** Day-cell tap router. Reads the cell's Hijri coordinates from
+     *  the broadcast extras, compares against the last selection's
+     *  timestamp + coords to detect a double tap:
+     *
+     *    * SAME (hy,hm,hd) within [DOUBLE_TAP_WINDOW_MS] -> DOUBLE
+     *      tap: clears the local selection and launches the app
+     *      with a `&ne=1` URI so Dart can push AddEventScreen.
+     *    * Otherwise -> SINGLE tap: writes the selection, schedules
+     *      an alarm to clear it after [SELECTION_TTL_MS], and
+     *      re-renders the widget so the green highlight appears.
+     *      The app is NOT launched.
+     */
+    private fun handleDayTap(context: Context, intent: Intent) {
+        val hy = intent.getIntExtra(EXTRA_HY, 0)
+        val hm = intent.getIntExtra(EXTRA_HM, 0)
+        val hd = intent.getIntExtra(EXTRA_HD, 0)
+        if (hy <= 0 || hm <= 0 || hd <= 0) {
+            Log.w(TAG, "Day-tap with invalid extras: hy=$hy hm=$hm hd=$hd")
+            return
+        }
+
+        val prev = readLocalSelectionRaw(context)
+        val now = System.currentTimeMillis()
+        val isDoubleTap = prev != null &&
+            prev.hy == hy && prev.hm == hm && prev.hd == hd &&
+            (now - prev.at) <= DOUBLE_TAP_WINDOW_MS
+
+        if (isDoubleTap) {
+            // Consume so a third quick tap can't be read as another
+            // "double" — and we're about to launch the app anyway,
+            // so there's no need to keep highlighting the cell.
+            clearLocalSelection(context)
+            Log.d(TAG, "Day-tap DOUBLE on hy=$hy hm=$hm hd=$hd -> AddEventScreen")
+            launchNewEventScreen(context, hy, hm, hd)
+        } else {
+            writeLocalSelection(context, hy, hm, hd, now)
+            scheduleSelectionClear(context, now)
+            Log.d(TAG, "Day-tap SINGLE on hy=$hy hm=$hm hd=$hd")
+            triggerSelfUpdate(context)
+        }
+    }
+
+    /** Alarm callback for the selection TTL. Only clears if the
+     *  selection is actually stale — a more recent tap may have
+     *  rewritten it after the alarm was scheduled, in which case
+     *  THIS alarm is for an older selection and we leave the
+     *  newer one alone. */
+    private fun handleClearSelection(context: Context) {
+        val sel = readLocalSelectionRaw(context) ?: return
+        val now = System.currentTimeMillis()
+        if (now - sel.at < SELECTION_TTL_MS) {
+            Log.d(TAG, "ClearSelection alarm: selection still fresh, no-op")
+            return
+        }
+        Log.d(TAG, "ClearSelection alarm fired -> clearing highlight")
+        clearLocalSelection(context)
+        triggerSelfUpdate(context)
+    }
+
+    /** Schedules a one-shot alarm to fire ACTION_CLEAR_SELECTION at
+     *  [atTime] + [SELECTION_TTL_MS]. Uses the inexact `set` API to
+     *  avoid needing SCHEDULE_EXACT_ALARM on Android 12+; a few
+     *  seconds of doze-mode delay is acceptable for a UI fade. */
+    private fun scheduleSelectionClear(context: Context, atTime: Long) {
+        try {
+            val am = context.getSystemService(Context.ALARM_SERVICE) as? AlarmManager
+                ?: return
+            val intent = Intent(context, MiniCalendarWidgetProvider::class.java)
+                .setAction(ACTION_CLEAR_SELECTION)
+            val pi = PendingIntent.getBroadcast(
+                context,
+                ACTION_CLEAR_SELECTION.hashCode(),
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+            am.set(AlarmManager.RTC, atTime + SELECTION_TTL_MS, pi)
+        } catch (e: Exception) {
+            Log.w(TAG, "scheduleSelectionClear failed", e)
+        }
+    }
+
+    /** Launches MainActivity with a URI carrying the tapped Hijri
+     *  date AND `ne=1`. The home_widget plugin delivers the URI to
+     *  Dart's `widgetClicked` stream; `WidgetSyncService._onWidgetUri`
+     *  recognises the `ne=1` flag and pushes AddEventScreen
+     *  prefilled with the right Gregorian instant. */
+    private fun launchNewEventScreen(
+        context: Context,
+        hy: Int,
+        hm: Int,
+        hd: Int,
+    ) {
+        try {
+            val uri = Uri.parse(
+                "hijribadr://widget/mini_calendar?hy=$hy&hm=$hm&hd=$hd&ne=1"
+            )
+            val intent = Intent(context, MainActivity::class.java).apply {
+                action = "es.antonborri.home_widget.action.LAUNCH"
+                data = uri
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "launchNewEventScreen failed", e)
+        }
+    }
+
+    // ── Local selection state (private SharedPreferences) ───────
+
+    private data class LocalSelection(
+        val hy: Int, val hm: Int, val hd: Int, val at: Long,
+    )
+
+    /** Returns whatever is currently stored, without applying the
+     *  TTL check. Use [readLocalSelectionFresh] when you only want
+     *  selections that haven't expired yet. */
+    private fun readLocalSelectionRaw(context: Context): LocalSelection? {
+        return try {
+            val prefs = localPrefs(context)
+            val at = prefs.getLong(SEL_AT_KEY, 0L)
+            val hy = prefs.getInt(SEL_HY_KEY, 0)
+            val hm = prefs.getInt(SEL_HM_KEY, 0)
+            val hd = prefs.getInt(SEL_HD_KEY, 0)
+            if (at == 0L || hy <= 0 || hm <= 0 || hd <= 0) null
+            else LocalSelection(hy, hm, hd, at)
+        } catch (e: Exception) {
+            Log.w(TAG, "readLocalSelectionRaw failed", e)
+            null
+        }
+    }
+
+    /** Like [readLocalSelectionRaw] but returns null once the
+     *  selection has exceeded [SELECTION_TTL_MS]. */
+    private fun readLocalSelectionFresh(context: Context): LocalSelection? {
+        val raw = readLocalSelectionRaw(context) ?: return null
+        return if (System.currentTimeMillis() - raw.at < SELECTION_TTL_MS) raw
+               else null
+    }
+
+    private fun writeLocalSelection(
+        context: Context, hy: Int, hm: Int, hd: Int, atTime: Long,
+    ) {
+        try {
+            localPrefs(context).edit()
+                .putInt(SEL_HY_KEY, hy)
+                .putInt(SEL_HM_KEY, hm)
+                .putInt(SEL_HD_KEY, hd)
+                .putLong(SEL_AT_KEY, atTime)
+                .apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "writeLocalSelection failed", e)
+        }
+    }
+
+    private fun clearLocalSelection(context: Context) {
+        try {
+            localPrefs(context).edit()
+                .remove(SEL_HY_KEY)
+                .remove(SEL_HM_KEY)
+                .remove(SEL_HD_KEY)
+                .remove(SEL_AT_KEY)
+                .apply()
+        } catch (e: Exception) {
+            Log.w(TAG, "clearLocalSelection failed", e)
         }
     }
 
@@ -402,11 +601,15 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
             views.setTextColor(wdId, if (i == 4) accent else weekdayMuted)
         }
 
-        // Day cells.
+        // Day cells. The "selected" highlight is overlaid here from
+        // the local SharedPreferences (with TTL) — completely
+        // decoupled from anything Dart sent.
+        val localSelection = readLocalSelectionFresh(context)
         renderCells(
             context, views, monthData, hy, hm,
             accent, accentPale, goldPale,
             textMain, textOnAccent, secondaryOnAccent, textMuted,
+            localSelection,
             { name -> id(name) },
         )
 
@@ -450,6 +653,7 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         textOnAccent: Int,
         secondaryOnAccent: Int,
         textMuted: Int,
+        localSelection: LocalSelection?,
         id: (String) -> Int,
     ) {
         val cells = monthData.optJSONArray("cells")
@@ -470,7 +674,7 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
             val cell = cells?.optJSONObject(i)
             val d = cell?.optInt("d", 0) ?: 0
             if (d < 1) {
-                // Blank padding cell.
+                // Blank padding cell — no day, no click target.
                 views.setTextViewText(numId, "")
                 views.setTextViewText(gregId, "")
                 views.setViewVisibility(gregId, View.GONE)
@@ -482,8 +686,20 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
 
             views.setTextViewText(numId, d.toString())
 
-            val bg = cell?.optString("bg", "") ?: ""
+            // Start from whatever the JSON payload said this cell's
+            // background should be (today / ayyam / ramadan / none).
+            // Then overlay the LOCAL selection if it lands on this
+            // cell and is still fresh — but never override today,
+            // so the priority stays today > selected > ayyam >
+            // ramadan, matching `_DayCell`.
+            var bg = cell?.optString("bg", "") ?: ""
             val isFri = cell?.optBoolean("fri", false) ?: false
+            if (bg != "today" && localSelection != null &&
+                localSelection.hy == hy && localSelection.hm == hm &&
+                localSelection.hd == d
+            ) {
+                bg = "selected"
+            }
             val isToday = bg == "today"
 
             when (bg) {
@@ -537,13 +753,25 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
                 }
             }
 
-            // Per-day tap — opens the app on this exact Hijri date.
+            // Per-day tap — fires a BROADCAST that onReceive
+            // intercepts. Single tap = paint local selection;
+            // double tap = launch AddEventScreen. The widget host
+            // never launches the app for a single tap.
+            //
+            // requestCode = cell index (0..41) so each cell has its
+            // own PendingIntent slot; FLAG_UPDATE_CURRENT refreshes
+            // the extras (current month's hy/hm) on every render.
             try {
-                val uri = Uri.parse(
-                    "hijribadr://widget/mini_calendar?hy=$hy&hm=$hm&hd=$d",
-                )
-                val pi = HomeWidgetLaunchIntent.getActivity(
-                    context, MainActivity::class.java, uri,
+                val tapIntent = Intent(context, MiniCalendarWidgetProvider::class.java)
+                    .setAction(ACTION_DAY_TAP)
+                    .putExtra(EXTRA_HY, hy)
+                    .putExtra(EXTRA_HM, hm)
+                    .putExtra(EXTRA_HD, d)
+                val pi = PendingIntent.getBroadcast(
+                    context,
+                    i,
+                    tapIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
                 )
                 views.setOnClickPendingIntent(cellId, pi)
             } catch (e: Exception) {
