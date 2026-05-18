@@ -18,6 +18,13 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
 
+  /// The widget-driven `AddEventScreen` route currently on the
+  /// navigator, if any. Tracked so a second widget double-tap
+  /// REPLACES the previous New Event screen instead of stacking
+  /// another modal on top — matches the "only one Create Event
+  /// screen may exist at a time" UX contract.
+  Route<dynamic>? _activeAddEventRoute;
+
   @override
   void initState() {
     super.initState();
@@ -31,6 +38,17 @@ class _HomeScreenState extends State<HomeScreen> {
     // start [DateTime] via this notifier — we just push the route.
     WidgetSyncService.instance.openAddEventForDate
         .addListener(_onOpenAddEventForDate);
+    // Cold-start catch-up: when the user double-taps a widget cell
+    // while the app is fully closed, the launch URI is processed by
+    // `WidgetSyncService._checkColdLaunch` from the post-frame
+    // callback in main.dart, which can complete BEFORE HomeScreen
+    // mounts. The listener above only catches FUTURE changes, so
+    // kick the handler once for any value that was set before we
+    // started listening. The handler is null-safe — does nothing
+    // if the notifier is already null.
+    if (WidgetSyncService.instance.openAddEventForDate.value != null) {
+      _onOpenAddEventForDate();
+    }
   }
 
   @override
@@ -59,11 +77,38 @@ class _HomeScreenState extends State<HomeScreen> {
     // build phase that the notifier change might have landed in.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => AddEventScreen(initialStart: dt),
-        ),
+      final navigator = Navigator.of(context);
+
+      // De-stack: if a previous widget-driven AddEventScreen is
+      // still on the navigator, drop it before pushing the
+      // replacement — so the user can never end up with multiple
+      // New Event screens piled on top of each other from
+      // repeated widget double-taps.
+      final previous = _activeAddEventRoute;
+      if (previous != null) {
+        try {
+          navigator.removeRoute(previous);
+        } catch (_) {
+          // Route was already removed (e.g. the user popped it
+          // manually between the cleanup callback queuing and now).
+          // Safe to ignore — _activeAddEventRoute is cleared below.
+        }
+        _activeAddEventRoute = null;
+      }
+
+      final route = MaterialPageRoute<void>(
+        builder: (_) => AddEventScreen(initialStart: dt),
       );
+      _activeAddEventRoute = route;
+      // Clear our reference once the route is popped (back press,
+      // Save, Cancel, etc.) so the next widget double-tap doesn't
+      // try to remove a stale route.
+      route.popped.whenComplete(() {
+        if (mounted && identical(_activeAddEventRoute, route)) {
+          _activeAddEventRoute = null;
+        }
+      });
+      navigator.push(route);
     });
   }
 

@@ -51,16 +51,23 @@ class MiniCalendarData {
   static const int _gridCells = 42;
 
   /// Window radius — the payload covers months [today - radius,
-  /// today + radius]. Trade-off: bigger = more navigable but heavier
-  /// to build (each extra month is one `getDaysInMonth` +
+  /// today + radius]. Trade-off: bigger = more navigable but
+  /// heavier to build (each extra month is one `getDaysInMonth` +
   /// `getFirstWeekdayOfMonth` + up to 30 `getEventsForDay` calls).
-  /// 12 = a full year forward + a full year back, which feels
-  /// effectively infinite for the calendar use case; navigation
-  /// beyond the window falls through to opening the in-app
-  /// calendar (which IS truly infinite) at the target month.
-  /// `_buildMonth` yields per-month so the larger window doesn't
-  /// freeze the UI during a sync.
-  static const int _windowRadius = 12;
+  ///
+  /// 24 = two full years forward + two full years back of INSTANT
+  /// native navigation. Beyond that range the widget's prev / next
+  /// arrows fall through to opening the in-app calendar at the
+  /// target Hijri month — the app's monthly view is truly infinite
+  /// (PageView with unbounded indices), so the user can continue
+  /// navigating decades in either direction without the widget
+  /// having to pre-bake every month.
+  ///
+  /// `_buildMonth` yields the event loop per month, so a wider
+  /// window doesn't freeze UI animations during a sync (~30 ms
+  /// slices for ~49 months ≈ 1.5 s total CPU spread across many
+  /// event-loop turns).
+  static const int _windowRadius = 24;
 
   /// Shared-prefs key the native provider reads. MUST match the key
   /// used in MiniCalendarWidgetProvider.kt and WidgetSyncService.
