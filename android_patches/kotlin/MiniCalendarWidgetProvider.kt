@@ -396,9 +396,12 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         try {
             val prefs = HomeWidgetPlugin.getData(context)
             val json = prefs.getString(DATA_KEY, null) ?: return
-            val data = JSONObject(json)
-            val todayHy = data.optInt("todayHy", 0)
-            val todayHm = data.optInt("todayHm", 0)
+            // Renamed from `data` so it can't shadow `Intent.data`
+            // inside the apply block below — `data = uri` would
+            // otherwise try to assign Uri to this JSONObject val.
+            val payload = JSONObject(json)
+            val todayHy = payload.optInt("todayHy", 0)
+            val todayHm = payload.optInt("todayHm", 0)
             if (todayHy == 0 || todayHm == 0) {
                 Log.w(TAG, "launchAppAtOffset: payload missing today coords")
                 return
