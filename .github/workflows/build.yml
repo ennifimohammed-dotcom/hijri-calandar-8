@@ -99,6 +99,7 @@ jobs:
           cp $GITHUB_WORKSPACE/android_patches/kotlin/HijriDateWidgetProvider.kt "$KOTLIN_DIR/HijriDateWidgetProvider.kt"
           cp $GITHUB_WORKSPACE/android_patches/kotlin/IslamicDayWidgetProvider.kt "$KOTLIN_DIR/IslamicDayWidgetProvider.kt"
           cp $GITHUB_WORKSPACE/android_patches/kotlin/MiniCalendarWidgetProvider.kt "$KOTLIN_DIR/MiniCalendarWidgetProvider.kt"
+          cp $GITHUB_WORKSPACE/android_patches/kotlin/HijriKernel.kt "$KOTLIN_DIR/HijriKernel.kt"
           echo "----- Kotlin files -----"
           ls -la "$KOTLIN_DIR"
           # Merge the widgets' Android resources (layout / xml /

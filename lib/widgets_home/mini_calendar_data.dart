@@ -51,23 +51,24 @@ class MiniCalendarData {
   static const int _gridCells = 42;
 
   /// Window radius — the payload covers months [today - radius,
-  /// today + radius]. Trade-off: bigger = more navigable but
-  /// heavier to build (each extra month is one `getDaysInMonth` +
+  /// today + radius] with FULL data (events, ayyam-al-bid,
+  /// ramadan). Trade-off: bigger = more navigable but heavier to
+  /// build (each extra month is one `getDaysInMonth` +
   /// `getFirstWeekdayOfMonth` + up to 30 `getEventsForDay` calls).
   ///
-  /// 24 = two full years forward + two full years back of INSTANT
-  /// native navigation. Beyond that range the widget's prev / next
-  /// arrows fall through to opening the in-app calendar at the
-  /// target Hijri month — the app's monthly view is truly infinite
-  /// (PageView with unbounded indices), so the user can continue
-  /// navigating decades in either direction without the widget
-  /// having to pre-bake every month.
-  ///
-  /// `_buildMonth` yields the event loop per month, so a wider
-  /// window doesn't freeze UI animations during a sync (~30 ms
-  /// slices for ~49 months ≈ 1.5 s total CPU spread across many
-  /// event-loop turns).
+  /// 24 = two years either side of INSTANT, full-data navigation.
   static const int _windowRadius = 24;
+
+  /// Hard navigation limit, in months, for "skeleton" navigation
+  /// past the full-data window. The Kotlin renderer can synthesise
+  /// any month inside this radius natively (own Hijri kernel —
+  /// `android_patches/kotlin/HijriKernel.kt` — mirrors
+  /// `lib/utils/hijri_utils.dart` 1:1) without needing a JSON
+  /// pre-bake. 360 = 30 years past + 30 years future, which is
+  /// the spec's "scroll like Google Calendar" target. Beyond this
+  /// the widget falls through to opening the in-app calendar
+  /// (which is truly infinite via PageView).
+  static const int _maxNavRadius = 360;
 
   /// Shared-prefs key the native provider reads. MUST match the key
   /// used in MiniCalendarWidgetProvider.kt and WidgetSyncService.
@@ -136,7 +137,24 @@ class MiniCalendarData {
       'accentPale': _hex(AppColors.greenPale),
       'goldPale': _hex(AppColors.goldPale),
       'weekdays': _weekdayHeader(loc),
+      // Region-aware Hijri day offset, mirroring what the in-app
+      // calendar already uses (`AppProvider.hijriDayOffset`). The
+      // Kotlin side passes this into HijriKernel.kt for any
+      // skeleton month it synthesises so far-future / far-past
+      // months on the widget agree with the in-app calendar
+      // bit-for-bit.
+      'hijriOffset': p.hijriDayOffset,
+      // 12-entry locale-aware tables so the Kotlin skeleton
+      // generator can produce titles without duplicating the
+      // app's localisation data.
+      'hijriMonthNames': List<String>.generate(
+        12, (i) => p.getHijriMonthName(i + 1, loc),
+      ),
+      'gregMonthNames': List<String>.generate(
+        12, (i) => TextFormat.gregorianMonthShort(i + 1, loc),
+      ),
       'windowRadius': _windowRadius,
+      'maxNavRadius': _maxNavRadius,
       'months': months,
     });
   }

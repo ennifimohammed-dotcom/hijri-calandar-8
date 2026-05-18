@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../services/widget_sync_service.dart';
 import 'home_screen.dart';
 import 'onboarding_screen.dart';
 
@@ -92,6 +93,30 @@ class _SplashScreenState extends State<SplashScreen>
     _master.addStatusListener((s) {
       if (s == AnimationStatus.completed) _navigateNext();
     });
+
+    // Cold-launch shortcut: when the user double-tapped a Mini
+    // Calendar widget cell with the app fully closed, we want
+    // AddEventScreen to appear DIRECTLY rather than waiting out
+    // the full 2.6 s splash animation. WidgetSyncService picks
+    // up the launch URI from its own post-frame callback in
+    // main.dart and exposes the prefilled start [DateTime] via
+    // `openAddEventForDate`; as soon as it's set we short-
+    // circuit the splash. HomeScreen's catch-up in initState
+    // takes care of actually pushing AddEventScreen once it
+    // mounts.
+    WidgetSyncService.instance.openAddEventForDate
+        .addListener(_onWidgetColdLaunch);
+  }
+
+  void _onWidgetColdLaunch() {
+    if (!mounted) return;
+    if (WidgetSyncService.instance.openAddEventForDate.value == null) return;
+    // Detach immediately so we can't double-navigate if the
+    // listener fires again before dispose.
+    WidgetSyncService.instance.openAddEventForDate
+        .removeListener(_onWidgetColdLaunch);
+    _master.stop();
+    _navigateNext();
   }
 
   Future<void> _navigateNext() async {
@@ -115,6 +140,8 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   void dispose() {
+    WidgetSyncService.instance.openAddEventForDate
+        .removeListener(_onWidgetColdLaunch);
     _master.dispose();
     super.dispose();
   }

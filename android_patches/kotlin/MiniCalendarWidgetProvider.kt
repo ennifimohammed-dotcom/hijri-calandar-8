@@ -353,23 +353,24 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
 
     private fun shiftOffset(context: Context, delta: Int) {
         val current = readOffset(context)
-        val radius = readWindowRadius(context)
+        val maxNavRadius = readMaxNavRadius(context)
         val target = current + delta
-        if (target in -radius..radius) {
-            // Within the pre-baked window — instant native nav.
+        if (target in -maxNavRadius..maxNavRadius) {
+            // Inside the extended native-nav radius. Render is
+            // either from the cached JSON (within windowRadius)
+            // or synthesised as a skeleton by renderGrid via
+            // HijriKernel.kt (between windowRadius and
+            // maxNavRadius). Either way — pure native, no app
+            // launch, instant.
             writeOffset(context, target)
-            Log.d(TAG, "Nav: offset $current -> $target (in-window)")
+            Log.d(TAG, "Nav: offset $current -> $target (native)")
             triggerSelfUpdate(context)
         } else {
-            // Out of the cached window — there is no pre-built JSON
-            // for this month, so we can't render it natively. Open
-            // the in-app calendar at the target Hijri month instead
-            // — the app's calendar is truly infinite (PageView with
-            // unbounded indices), so navigation continues from there.
-            // The widget's own offset is not advanced; the next sync
-            // (triggered when AppProvider notifies after the launch)
-            // will re-centre the cached window.
-            Log.d(TAG, "Nav: offset $current beyond window ±$radius — launching app")
+            // Past the extended native radius (default: 30 years).
+            // Fall through to the in-app calendar (which IS truly
+            // infinite via PageView with unbounded indices); the
+            // widget's own offset is not advanced.
+            Log.d(TAG, "Nav: offset $current beyond ±$maxNavRadius — launching app")
             launchAppAtOffset(context, target)
         }
     }
@@ -433,9 +434,12 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         triggerSelfUpdate(context)
     }
 
-    /** Reads the window radius from the cached JSON so the native
-     *  side stays in lock-step with whatever the Dart side decided
-     *  (no hard-coded magic number to keep in sync). */
+    /** Reads the FULL-DATA window radius from the cached JSON so
+     *  the native side stays in lock-step with whatever the Dart
+     *  side decided (no hard-coded magic number to keep in sync).
+     *  Months inside this radius render with events / ayyam /
+     *  ramadan; months outside (but inside [readMaxNavRadius])
+     *  render as native skeletons via HijriKernel. */
     private fun readWindowRadius(context: Context): Int {
         return try {
             val prefs = HomeWidgetPlugin.getData(context)
@@ -443,6 +447,21 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
             JSONObject(json).optInt("windowRadius", 0)
         } catch (e: Exception) {
             Log.w(TAG, "readWindowRadius failed; clamping to 0", e)
+            0
+        }
+    }
+
+    /** Reads the EXTENDED navigation radius from the cached JSON.
+     *  The widget can scroll natively from [-maxNavRadius,
+     *  +maxNavRadius] months around today (30 years either side
+     *  per the spec); past this we open the in-app calendar. */
+    private fun readMaxNavRadius(context: Context): Int {
+        return try {
+            val prefs = HomeWidgetPlugin.getData(context)
+            val json = prefs.getString(DATA_KEY, null) ?: return 0
+            JSONObject(json).optInt("maxNavRadius", 0)
+        } catch (e: Exception) {
+            Log.w(TAG, "readMaxNavRadius failed; clamping to 0", e)
             0
         }
     }
@@ -567,14 +586,21 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
         )
 
         // Pick the month matching the user's current view offset.
-        // Clamp so a stale stored offset can't render an empty widget.
+        // Inside [-windowRadius, +windowRadius] -> cached JSON
+        // (events / ayyam / ramadan). Between [-maxNavRadius,
+        // +maxNavRadius] -> skeleton synthesised via HijriKernel
+        // (real day numbers, real Gregorian secondaries, no event
+        // dots). Past the extended radius -> snap back to today.
+        val maxNavRadius = data.optInt("maxNavRadius", windowRadius)
         val rawOffset = readOffset(context)
-        val viewOffset = rawOffset.coerceIn(-windowRadius, windowRadius)
+        val viewOffset = rawOffset.coerceIn(-maxNavRadius, maxNavRadius)
         if (viewOffset != rawOffset) {
-            // Drift after a window-radius change: snap back into range.
+            // Drift after a maxNavRadius change: snap back into range.
             writeOffset(context, viewOffset)
         }
-        val monthData = pickMonth(data, viewOffset) ?: pickMonth(data, 0)
+        val monthData = pickMonth(data, viewOffset)
+            ?: synthesiseSkeletonMonth(data, viewOffset)
+            ?: pickMonth(data, 0)
         if (monthData == null) {
             Log.w(TAG, "renderGrid: no month data in payload")
             return
@@ -641,6 +667,80 @@ class MiniCalendarWidgetProvider : HomeWidgetProvider() {
             if (m.optInt("offset", Int.MAX_VALUE) == offset) return m
         }
         return null
+    }
+
+    /** Synthesises a JSONObject for a month that's OUTSIDE the
+     *  cached window, using HijriKernel to compute the real day
+     *  numbers + Gregorian secondaries. The skeleton has no event
+     *  dots and no ayyam-al-bid / ramadan tinting — that's the
+     *  trade-off for true 30-year navigation without pre-baking
+     *  every month into the payload. Returns null if the
+     *  payload's `todayHy`/`todayHm` are missing (we can't
+     *  generate without an anchor). */
+    private fun synthesiseSkeletonMonth(data: JSONObject, offset: Int): JSONObject? {
+        val todayHy = data.optInt("todayHy", 0)
+        val todayHm = data.optInt("todayHm", 0)
+        if (todayHy == 0 || todayHm == 0) return null
+
+        val (hy, hm) = HijriKernel.addMonths(todayHy, todayHm, offset)
+        val hijriOffset = data.optInt("hijriOffset", 0)
+        val daysInMonth = HijriKernel.daysInMonth(hy, hm)
+        val firstWeekday = HijriKernel.firstWeekdayOfMonth(hy, hm, hijriOffset)
+        // Same Mon-based convention as the rest of the widget
+        // (`firstOffset = (rawFirst - 1) % 7`).
+        val firstOffset = (firstWeekday - 1) % 7
+
+        val cells = org.json.JSONArray()
+        for (i in 0 until 42) {
+            val d = i - firstOffset + 1
+            val cell = org.json.JSONObject()
+            if (d < 1 || d > daysInMonth) {
+                cell.put("d", 0) // blank padding cell
+                cells.put(cell)
+                continue
+            }
+            cell.put("d", d)
+            try {
+                val g = HijriKernel.hijriToGregorian(hy, hm, d, hijriOffset)
+                if (g.day > 0) cell.put("g", g.day)
+            } catch (_: Exception) {
+                // Leave 'g' off; renderCells hides the secondary
+                // line for cells where it's missing.
+            }
+            if ((i % 7) == 4) cell.put("fri", true)
+            cells.put(cell)
+        }
+        val visibleRows = if ((firstOffset + daysInMonth) > 35) 6 else 5
+
+        // Localised titles — pull tables straight out of the JSON
+        // payload so the widget uses exactly the same names the
+        // app already localised (no duplicate translation tables
+        // on the Kotlin side).
+        val hijriMonthNames = data.optJSONArray("hijriMonthNames")
+        val gregMonthNames = data.optJSONArray("gregMonthNames")
+        val hijriMonthLabel = if (hm in 1..12)
+            hijriMonthNames?.optString(hm - 1, "") ?: "" else ""
+        val title = "$hijriMonthLabel $hy".trim()
+
+        val gregTitle = try {
+            val mid = HijriKernel.hijriToGregorian(hy, hm, 15, hijriOffset)
+            val gm = mid.month
+            val gy = mid.year
+            val gmLabel = if (gm in 1..12)
+                gregMonthNames?.optString(gm - 1, "") ?: "" else ""
+            "$gmLabel $gy".trim()
+        } catch (_: Exception) {
+            ""
+        }
+
+        return org.json.JSONObject()
+            .put("offset", offset)
+            .put("hy", hy)
+            .put("hm", hm)
+            .put("title", title)
+            .put("gregTitle", gregTitle)
+            .put("visibleRows", visibleRows)
+            .put("cells", cells)
     }
 
     private fun renderCells(
