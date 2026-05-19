@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../providers/app_provider.dart';
 import '../theme.dart';
+import '../utils/text_format.dart';
 
 /// Immutable value object carrying everything the home-screen widgets
 /// need to draw themselves.
@@ -30,7 +31,17 @@ class WidgetSnapshot {
   final String hijriLine;
 
   /// Gregorian date line, always `dd/MM/yyyy`, e.g. "09/05/2026".
+  /// Kept as the compact numeric form for views that need it; the
+  /// Islamic Day widget renders the prettier [gregorianPretty]
+  /// just below the Hijri date.
   final String gregorianLine;
+
+  /// Pretty Gregorian date — day + localised short month + year,
+  /// e.g. "9 مايو 2026" / "9 May 2026" / "9 mai 2026". Pre-computed
+  /// here so the views stay pure layout (no `TextFormat` reach-in)
+  /// and so the same string can feed both the visible text and the
+  /// signature.
+  final String gregorianPretty;
 
   /// Localised region label, e.g. "المغرب" / "Morocco".
   final String regionLabel;
@@ -82,6 +93,7 @@ class WidgetSnapshot {
     required this.dayName,
     required this.hijriLine,
     required this.gregorianLine,
+    required this.gregorianPretty,
     required this.regionLabel,
     required this.isDark,
     required this.isRtl,
@@ -113,8 +125,11 @@ class WidgetSnapshot {
     // (every day "has" them), matching how the monthly view hides
     // them. Reuses AppProvider's own matching logic via
     // `islamicEventsForDay`; nothing is duplicated.
-    String islamicToday = _blessedDay(loc);
-    String islamicTodayTitle = _blessedDay(loc);
+    // No "Blessed day" / "Jour béni" fallback — when there's no
+    // Islamic occasion today, the hero stays empty and the view
+    // promotes the Hijri date to the focal-point role instead.
+    String islamicToday = '';
+    String islamicTodayTitle = '';
     String islamicTodayEmoji = '';
     final upcomingList = <({String emoji, String title, String countdown})>[];
     try {
@@ -166,6 +181,7 @@ class WidgetSnapshot {
       hijriLine: '${t.hDay} ${p.getHijriMonthName(t.hMonth, loc)} ${t.hYear}',
       gregorianLine:
           '${_pad2(greg.day)}/${_pad2(greg.month)}/${greg.year}',
+      gregorianPretty: TextFormat.formatGregorianFull(greg, loc),
       regionLabel: _regionName(p.region, loc),
       isDark: isDark,
       isRtl: loc == 'ar',
@@ -232,22 +248,6 @@ class WidgetSnapshot {
   /// string (gracefully drops the emoji when the event has none).
   static String _fmtOccasion(String emoji, String name) =>
       emoji.isNotEmpty ? '$emoji  $name' : name;
-
-  /// Localised "blessed day" — the [islamicToday] fallback for a day
-  /// with no specific Islamic occasion.
-  static String _blessedDay(String loc) {
-    switch (loc) {
-      case 'fr':
-        return 'Jour béni';
-      case 'en':
-        return 'Blessed day';
-      case 'es':
-        return 'Día bendito';
-      case 'ar':
-      default:
-        return 'يوم مبارك';
-    }
-  }
 
   /// Localised "in N days" countdown for the upcoming occasion.
   static String _inDays(int n, String loc) {

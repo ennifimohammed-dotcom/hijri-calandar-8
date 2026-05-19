@@ -76,7 +76,18 @@ class IslamicDayWidgetView extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.center,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // ── Focal point: crescent + hero title + sub-line ──
+          // ── Focal point: crescent + (optional hero) + dates ──
+          //
+          // When today carries an Islamic occasion, the title sits
+          // at the top of the column in hero type. When nothing
+          // applies today the row stays just crescent + dates (no
+          // "Blessed day" placeholder) and the dates themselves
+          // become the focal point.
+          //
+          // The Hijri date deliberately renders SLIGHTLY larger
+          // than the events list below (14 sp vs the rows' 12.5
+          // sp body text), with the corresponding Gregorian date
+          // tucked just underneath in a smaller, muted line.
           Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
@@ -87,47 +98,65 @@ class IslamicDayWidgetView extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.baseline,
-                      textBaseline: TextBaseline.alphabetic,
-                      children: [
-                        // Hero emoji — separate box so its visual
-                        // weight matches the upcoming rows' emoji
-                        // boxes; falls through to nothing for
-                        // "Blessed day".
-                        if (s.islamicTodayEmoji.isNotEmpty) ...[
-                          _EmojiBox(
-                            emoji: s.islamicTodayEmoji,
-                            fontSize: heroSize * 0.85,
-                          ),
-                          const SizedBox(width: 6),
-                        ],
-                        Flexible(
-                          child: Text(
-                            s.islamicTodayTitle,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: appFont(
-                              fontSize: heroSize,
-                              fontWeight: FontWeight.w800,
-                              color: textHero,
-                              height: 1.05,
-                              letterSpacing: 0.1,
+                    if (s.islamicTodayTitle.isNotEmpty) ...[
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.baseline,
+                        textBaseline: TextBaseline.alphabetic,
+                        children: [
+                          // Hero emoji — separate box so its visual
+                          // weight matches the upcoming rows' emoji
+                          // boxes.
+                          if (s.islamicTodayEmoji.isNotEmpty) ...[
+                            _EmojiBox(
+                              emoji: s.islamicTodayEmoji,
+                              fontSize: heroSize * 0.85,
+                            ),
+                            const SizedBox(width: 6),
+                          ],
+                          Flexible(
+                            child: Text(
+                              s.islamicTodayTitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: appFont(
+                                fontSize: heroSize,
+                                fontWeight: FontWeight.w800,
+                                color: textHero,
+                                height: 1.05,
+                                letterSpacing: 0.1,
+                              ),
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 3),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                    ],
+                    // Hijri date — slightly larger than the
+                    // events list ("أكبر قليلا من خط الأحداث").
                     Text(
-                      '${s.dayName}  ·  ${s.hijriLine}',
+                      s.hijriLine,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: appFont(
-                        fontSize: 11.5,
+                        fontSize: 14,
+                        fontWeight: FontWeight.w600,
+                        color: goldSoft,
+                        height: 1.1,
+                        letterSpacing: 0.1,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    // Corresponding Gregorian date — smaller, muted.
+                    Text(
+                      s.gregorianPretty,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: appFont(
+                        fontSize: 10.5,
                         fontWeight: FontWeight.w400,
                         color: textMuted,
-                        letterSpacing: 0.3,
+                        height: 1.1,
+                        letterSpacing: 0.2,
                       ),
                     ),
                   ],
