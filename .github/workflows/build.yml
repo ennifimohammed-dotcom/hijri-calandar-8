@@ -26,6 +26,23 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: stable
+          # Pin to the last release that's known to build this app
+          # cleanly end-to-end on CI. Flutter 3.44 (stable as of
+          # 2026-05) ships the `flutter_plugin_android_lifecycle` 2.x
+          # series, which raises its required `compileSdk` to 36;
+          # several popular plugins still in our dep graph
+          # (file_picker, home_widget, share_plus,
+          # shared_preferences_android) still compile against
+          # compileSdk 34, and AGP 9's AAR-metadata check refuses
+          # that combination — there's no clean fix that survives
+          # `Project.afterEvaluate` and AGP 9's stricter plugin
+          # registration order at the same time, short of bumping
+          # every plugin (which we don't control).
+          #
+          # Pinning to 3.41.9 keeps us on AGP 8 + the older
+          # flutter_plugin_android_lifecycle that doesn't trip the
+          # check. Revisit when the plugin ecosystem catches up.
+          flutter-version: '3.41.9'
           cache: true
 
       - name: Install ffmpeg (for notification sounds)
@@ -79,37 +96,6 @@ jobs:
             echo "ERROR: no gradle file"
             exit 1
           fi
-
-      - name: Force plugin subprojects to compile against compileSdk 36
-        run: |
-          # Flutter 3.44 ships with flutter_plugin_android_lifecycle
-          # 2.x+ which requires compileSdk 36. Several still-popular
-          # plugins (file_picker, home_widget, share_plus,
-          # shared_preferences_android, ...) ship Android sources
-          # compiled at compileSdk 34, so AGP 9 fails the build with:
-          #
-          #   Dependency ':flutter_plugin_android_lifecycle' requires
-          #   libraries and applications that depend on it to compile
-          #   against version 36 or later of the Android APIs.
-          #   :file_picker is currently compiled against android-34.
-          #
-          # Fix: append a subprojects { afterEvaluate { ... } } block
-          # to the project-level build.gradle that forces every
-          # Android plugin subproject to compile at the same SDK as
-          # the app. Pure build-time SDK bump, no runtime / behaviour
-          # change, no targetSdk / minSdk change. Lives in a separate
-          # patch file (`plugin_subprojects_override.gradle.kts`) so
-          # the override is reviewable and the YAML stays clean.
-          PROJECT_GRADLE=/tmp/base_project/android/build.gradle.kts
-          PATCH=$GITHUB_WORKSPACE/android_patches/plugin_subprojects_override.gradle.kts
-          if [ ! -f "$PROJECT_GRADLE" ]; then
-            PROJECT_GRADLE=/tmp/base_project/android/build.gradle
-          fi
-          echo "----- appending $PATCH to $PROJECT_GRADLE -----"
-          printf '\n' >> "$PROJECT_GRADLE"
-          cat "$PATCH" >> "$PROJECT_GRADLE"
-          echo "----- $PROJECT_GRADLE (tail) -----"
-          tail -30 "$PROJECT_GRADLE"
 
       - name: Replace AndroidManifest.xml
         run: |
