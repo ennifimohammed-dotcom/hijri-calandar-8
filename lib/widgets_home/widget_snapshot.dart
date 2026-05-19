@@ -55,8 +55,27 @@ class WidgetSnapshot {
 
   /// "Islamic Day" widget — the next upcoming Islamic occasion with a
   /// localised countdown (e.g. "🌙  رمضان · بعد 3 يومًا"). Empty when
-  /// there is nothing enabled to look forward to.
+  /// there is nothing enabled to look forward to. Kept as the joined
+  /// string for backward-compat readers; the new view splits it
+  /// across [islamicUpcomingName] + [islamicUpcomingCountdown].
   final String islamicUpcoming;
+
+  /// JUST the upcoming occasion's localised name (with leading
+  /// emoji when the event has one), e.g. "🌙  رمضان". Companion
+  /// piece of [islamicUpcoming] so the view can lay out the title
+  /// and the countdown badge as separate elements.
+  final String islamicUpcomingName;
+
+  /// JUST the localised countdown for the upcoming occasion,
+  /// e.g. "غدًا" / "بعد 3 يومًا". Empty when no upcoming occasion
+  /// is enabled. Renders as a soft gold badge in the view.
+  final String islamicUpcomingCountdown;
+
+  /// Spiritual-mode hint for the card shell — lets it pick a subtle
+  /// mood adjustment (slightly warmer gold for Ramadan, dimmer
+  /// ambience at night, etc.) without changing the overall palette.
+  /// One of `ramadan` / `eid` / `friday` / `night` / `default`.
+  final String spiritualMode;
 
   const WidgetSnapshot({
     required this.dayName,
@@ -69,6 +88,9 @@ class WidgetSnapshot {
     required this.accent,
     required this.islamicToday,
     required this.islamicUpcoming,
+    required this.islamicUpcomingName,
+    required this.islamicUpcomingCountdown,
+    required this.spiritualMode,
   });
 
   /// Builds a snapshot from the live provider. Pure read — touches no
@@ -92,6 +114,8 @@ class WidgetSnapshot {
     // `islamicEventsForDay`; nothing is duplicated.
     String islamicToday = _blessedDay(loc);
     String islamicUpcoming = '';
+    String islamicUpcomingName = '';
+    String islamicUpcomingCountdown = '';
     try {
       final todayHits = p
           .islamicEventsForDay(t.hDay, t.hMonth, t.hYear)
@@ -112,14 +136,23 @@ class WidgetSnapshot {
             .toList();
         if (hits.isNotEmpty) {
           final e = hits.first;
+          islamicUpcomingName = _fmtOccasion(e.emoji, e.title(loc));
+          islamicUpcomingCountdown = _inDays(d, loc);
           islamicUpcoming =
-              '${_fmtOccasion(e.emoji, e.title(loc))} · ${_inDays(d, loc)}';
+              '$islamicUpcomingName · $islamicUpcomingCountdown';
           break;
         }
       }
     } catch (_) {
       // Leave the defaults; the views handle empty / default strings.
     }
+
+    // Subtle "mood" hint for the card shell — picked from the Hijri
+    // date / Gregorian weekday / wall-clock hour so the widget can
+    // shift its ambience a touch on important Islamic moments
+    // (Ramadan, Eid, Friday) and at night, without changing the
+    // overall palette. Priority: Eid > Ramadan > Friday > Night.
+    final spiritualMode = _spiritualMode(t.hMonth, t.hDay, greg.weekday);
 
     return WidgetSnapshot(
       dayName: _weekdayName(greg.weekday, loc),
@@ -133,7 +166,31 @@ class WidgetSnapshot {
       accent: AppColors.green,
       islamicToday: islamicToday,
       islamicUpcoming: islamicUpcoming,
+      islamicUpcomingName: islamicUpcomingName,
+      islamicUpcomingCountdown: islamicUpcomingCountdown,
+      spiritualMode: spiritualMode,
     );
+  }
+
+  /// Picks a "mood" tag for the card shell. Pure date / weekday /
+  /// clock math — no provider state or persistent settings — so it
+  /// can't drift from what the user actually sees on the lock
+  /// screen.
+  ///
+  /// `eid`     — Eid al-Fitr (1-3 Shawwal) or Eid al-Adha (10-13
+  ///             Dhu al-Hijjah).
+  /// `ramadan` — anywhere in month 9.
+  /// `friday`  — Gregorian weekday 5 (Friday).
+  /// `night`   — local wall-clock hour outside 05:00..18:59.
+  /// `default` — everything else.
+  static String _spiritualMode(int hMonth, int hDay, int gregWeekday) {
+    if (hMonth == 10 && hDay >= 1 && hDay <= 3) return 'eid';
+    if (hMonth == 12 && hDay >= 10 && hDay <= 13) return 'eid';
+    if (hMonth == 9) return 'ramadan';
+    if (gregWeekday == 5) return 'friday';
+    final hour = DateTime.now().hour;
+    if (hour >= 19 || hour < 5) return 'night';
+    return 'default';
   }
 
   /// Compact fingerprint of everything the widgets actually show.
@@ -151,6 +208,11 @@ class WidgetSnapshot {
         accent.toString(),
         islamicToday,
         islamicUpcoming,
+        // islamicUpcoming covers both name and countdown (it's the
+        // joined form), but include the mode explicitly so a sunset
+        // / Ramadan-start moment triggers a re-render even if the
+        // text content didn't change.
+        spiritualMode,
       ].join('|');
 
   static String _pad2(int n) => n.toString().padLeft(2, '0');

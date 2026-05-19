@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 /// Shared building blocks for the home-screen widget views
@@ -9,14 +11,20 @@ import 'package:flutter/material.dart';
 /// in the values it resolved from [WidgetSnapshot].
 
 /// The premium card "shell": a full-bleed accent gradient with a soft
-/// gold glow and a light glassmorphism sheen, its own [Directionality],
-/// and a padded slot for [child].
+/// gold glow, a barely-visible Islamic geometric pattern, and a light
+/// glassmorphism sheen, its own [Directionality], and a padded slot
+/// for [child].
 ///
 /// Full-bleed on purpose — edge-to-edge, no rounded corners, no
 /// border — so the native side can `centerCrop` it to fill the whole
-/// widget with nothing showing through behind it. The gradient
-/// endpoints are BOTH derived from the live accent, so every widget
-/// follows the colour picked in Settings, in light AND dark mode.
+/// widget with nothing showing through behind it.
+///
+/// [spiritualMode] lets callers tag the snapshot's day with a soft
+/// ambience hint — `ramadan` warms the glow, `eid` brightens it a
+/// touch, `friday` deepens the green, `night` dims everything down,
+/// `default` is the standard look. The differences are intentionally
+/// subtle (a few percent of opacity, a few hex digits of warmth) so
+/// the widget stays calm and on-brand.
 class WidgetCardShell extends StatelessWidget {
   final Color accent;
   final bool isDark;
@@ -24,6 +32,10 @@ class WidgetCardShell extends StatelessWidget {
   final Size size;
   final EdgeInsets padding;
   final Widget child;
+
+  /// One of `ramadan` / `eid` / `friday` / `night` / `default`.
+  /// Anything else is treated as `default`.
+  final String spiritualMode;
 
   const WidgetCardShell({
     super.key,
@@ -33,16 +45,56 @@ class WidgetCardShell extends StatelessWidget {
     required this.size,
     required this.child,
     this.padding = const EdgeInsets.fromLTRB(22, 18, 22, 18),
+    this.spiritualMode = 'default',
   });
 
   @override
   Widget build(BuildContext context) {
-    final Color deep = isDark
-        ? _mix(accent, Colors.black, 0.72)
-        : _mix(accent, Colors.black, 0.62);
-    final Color mid = isDark
-        ? _mix(accent, Colors.black, 0.52)
-        : _mix(accent, Colors.black, 0.28);
+    // Base palette — mode-aware so the card subtly shifts on
+    // important Islamic moments while always staying inside the
+    // royal-green / soft-gold brand.
+    final double darkenDeep = switch (spiritualMode) {
+      'night' => isDark ? 0.85 : 0.74,
+      'ramadan' => isDark ? 0.74 : 0.62,
+      'eid' => isDark ? 0.68 : 0.58,
+      'friday' => isDark ? 0.74 : 0.66,
+      _ => isDark ? 0.72 : 0.62,
+    };
+    final double darkenMid = switch (spiritualMode) {
+      'night' => isDark ? 0.62 : 0.45,
+      'ramadan' => isDark ? 0.50 : 0.26,
+      'eid' => isDark ? 0.46 : 0.24,
+      'friday' => isDark ? 0.50 : 0.28,
+      _ => isDark ? 0.52 : 0.28,
+    };
+    final Color deep = _mix(accent, Colors.black, darkenDeep);
+    final Color mid = _mix(accent, Colors.black, darkenMid);
+
+    // Gold glow — warmer + slightly stronger during Ramadan / Eid,
+    // dimmer at night, otherwise the standard signature glow.
+    final Color glowHot = switch (spiritualMode) {
+      'ramadan' => const Color(0xFFE5B450),
+      'eid' => const Color(0xFFEDC868),
+      'night' => const Color(0xFFB9954A),
+      _ => const Color(0xFFD9B45A),
+    };
+    final int glowAlpha = switch (spiritualMode) {
+      'ramadan' => 0x66,
+      'eid' => 0x60,
+      'friday' => 0x55,
+      'night' => 0x38,
+      _ => 0x4F,
+    };
+    final Color glowCenter = glowHot.withAlpha(glowAlpha);
+    final Color glowEdge = glowHot.withAlpha(0);
+
+    // Sheen — a touch brighter at Eid (celebratory), a touch dimmer
+    // at night.
+    final double sheenTop = switch (spiritualMode) {
+      'eid' => 0.13,
+      'night' => 0.07,
+      _ => 0.10,
+    };
 
     return Directionality(
       textDirection: isRtl ? TextDirection.rtl : TextDirection.ltr,
@@ -59,18 +111,33 @@ class WidgetCardShell extends StatelessWidget {
         child: Stack(
           children: [
             // Soft gold glow — clipped to the card by the Stack's
-            // default hard-edge clip.
+            // default hard-edge clip. Slightly larger than before
+            // for a more premium "depth" feel.
             Positioned(
-              top: -34,
-              left: isRtl ? -34 : null,
-              right: isRtl ? null : -34,
+              top: -40,
+              left: isRtl ? -40 : null,
+              right: isRtl ? null : -40,
               child: Container(
-                width: 180,
-                height: 180,
-                decoration: const BoxDecoration(
+                width: 200,
+                height: 200,
+                decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   gradient: RadialGradient(
-                    colors: [Color(0x4FD9B45A), Color(0x00D9B45A)],
+                    colors: [glowCenter, glowEdge],
+                  ),
+                ),
+              ),
+            ),
+            // Very subtle Islamic geometric pattern — tessellating
+            // 8-point stars, drawn at ~3 % opacity so it reads as a
+            // texture rather than a decoration. Painted ONCE per
+            // off-tree render; lightweight (~18 stars, 16 segments
+            // each).
+            Positioned.fill(
+              child: IgnorePointer(
+                child: CustomPaint(
+                  painter: _IslamicPatternPainter(
+                    color: Colors.white.withOpacity(0.035),
                   ),
                 ),
               ),
@@ -83,7 +150,7 @@ class WidgetCardShell extends StatelessWidget {
                     begin: Alignment.topCenter,
                     end: Alignment.bottomCenter,
                     colors: [
-                      Colors.white.withOpacity(0.10),
+                      Colors.white.withOpacity(sheenTop),
                       Colors.white.withOpacity(0.015),
                     ],
                   ),
@@ -146,4 +213,75 @@ class _CrescentPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _CrescentPainter oldDelegate) => false;
+}
+
+/// Tessellating 8-point Islamic star pattern — drawn as a faint
+/// texture across the card. The stars are tiled on a regular grid
+/// so adjacent rows interlock; alpha is set by the caller via
+/// [color] so the pattern reads as "depth" rather than decoration.
+class _IslamicPatternPainter extends CustomPainter {
+  final Color color;
+
+  const _IslamicPatternPainter({required this.color});
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.65
+      ..isAntiAlias = true
+      ..color = color;
+
+    const double tile = 56;
+    const double radius = tile * 0.34;
+
+    // Stagger every other row by half a tile so the stars sit in
+    // an Andalusian-style brick-grid arrangement rather than a
+    // bare square grid.
+    double y = -tile;
+    int row = 0;
+    while (y < size.height + tile) {
+      final double xOffset = (row.isOdd) ? tile / 2 : 0.0;
+      double x = -tile + xOffset;
+      while (x < size.width + tile) {
+        _draw8PointStar(canvas, Offset(x, y), radius, paint);
+        x += tile;
+      }
+      y += tile * 0.85;
+      row += 1;
+    }
+  }
+
+  void _draw8PointStar(
+    Canvas canvas,
+    Offset center,
+    double r,
+    Paint paint,
+  ) {
+    final path = Path();
+    // 16 points alternating outer-radius / inner-radius makes a
+    // clean 8-point star. Inner-to-outer ratio of 0.50 gives a
+    // recognisable "rub el hizb" silhouette without sharp spikes.
+    const int points = 16;
+    final double inner = r * 0.50;
+    for (int i = 0; i < points; i++) {
+      final angle = i * (math.pi / 8);
+      final rad = (i.isEven) ? r : inner;
+      final p = Offset(
+        center.dx + rad * math.cos(angle),
+        center.dy + rad * math.sin(angle),
+      );
+      if (i == 0) {
+        path.moveTo(p.dx, p.dy);
+      } else {
+        path.lineTo(p.dx, p.dy);
+      }
+    }
+    path.close();
+    canvas.drawPath(path, paint);
+  }
+
+  @override
+  bool shouldRepaint(covariant _IslamicPatternPainter oldDelegate) =>
+      oldDelegate.color != color;
 }
