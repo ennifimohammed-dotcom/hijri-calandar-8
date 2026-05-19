@@ -2,23 +2,25 @@
 <!--
   AppWidgetProviderInfo for the "Islamic Day" widget.
 
-  updatePeriodMillis is 0 on purpose: the widget is refreshed by the
-  app (WidgetSyncService) on launch, on resume, and whenever a
-  relevant setting changes — re-running onUpdate on a system timer
-  would only re-display the same cached PNG. A fully-background daily
-  refresh (date rollover while the app is closed) is a later item.
+  Sized to a 4x2 launcher footprint — wide enough to hold the
+  hero occasion title (today's Islamic occasion as the focal
+  point) PLUS three upcoming occasions with countdown badges,
+  matching the in-widget layout that lib/widgets_home/
+  islamic_day_widget_view.dart renders at a 2:1 canvas (360x180
+  logical). minWidth / minHeight still allow downscaling for
+  launchers that can't grant 4 cells of width.
 
-  targetCellWidth / targetCellHeight are honoured on Android 12+; the
-  minWidth / minHeight values cover older launchers. The widget is
-  resizable so the user can pick a comfortable footprint.
+  updatePeriodMillis is 0 on purpose: the widget is refreshed by
+  the app (WidgetSyncService) on launch, on resume, and whenever
+  a relevant setting changes.
 -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:minWidth="180dp"
-    android:minHeight="80dp"
-    android:minResizeWidth="110dp"
-    android:minResizeHeight="40dp"
-    android:targetCellWidth="3"
-    android:targetCellHeight="1"
+    android:minWidth="250dp"
+    android:minHeight="110dp"
+    android:minResizeWidth="200dp"
+    android:minResizeHeight="90dp"
+    android:targetCellWidth="4"
+    android:targetCellHeight="2"
     android:updatePeriodMillis="0"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen"

@@ -48,28 +48,29 @@ class WidgetSnapshot {
   /// The app's current accent colour (royal green by default).
   final Color accent;
 
-  /// "Islamic Day" widget — today's Islamic occasion, already
-  /// localised and emoji-prefixed (e.g. "🕌  يوم الجمعة"). Falls back
-  /// to a localised "blessed day" when nothing applies today.
+  /// "Islamic Day" widget — today's Islamic occasion. Two halves
+  /// stored separately so the view can render the title with its
+  /// full Arabic typography while putting the emoji in its own
+  /// fixed-size container (consistent sizing across rows, never
+  /// crashed against the widget's RTL edge).
+  ///
+  /// `islamicTodayTitle` is the localised name (e.g. "يوم الجمعة").
+  /// `islamicTodayEmoji` is just the emoji code-point (e.g. "🕌"),
+  /// or empty if the event has none.
+  /// `islamicToday` is the legacy joined string — still emitted
+  /// for the signature so a same-string day doesn't re-render.
   final String islamicToday;
+  final String islamicTodayTitle;
+  final String islamicTodayEmoji;
 
-  /// "Islamic Day" widget — the next upcoming Islamic occasion with a
-  /// localised countdown (e.g. "🌙  رمضان · بعد 3 يومًا"). Empty when
-  /// there is nothing enabled to look forward to. Kept as the joined
-  /// string for backward-compat readers; the new view splits it
-  /// across [islamicUpcomingName] + [islamicUpcomingCountdown].
-  final String islamicUpcoming;
-
-  /// JUST the upcoming occasion's localised name (with leading
-  /// emoji when the event has one), e.g. "🌙  رمضان". Companion
-  /// piece of [islamicUpcoming] so the view can lay out the title
-  /// and the countdown badge as separate elements.
-  final String islamicUpcomingName;
-
-  /// JUST the localised countdown for the upcoming occasion,
-  /// e.g. "غدًا" / "بعد 3 يومًا". Empty when no upcoming occasion
-  /// is enabled. Renders as a soft gold badge in the view.
-  final String islamicUpcomingCountdown;
+  /// "Islamic Day" widget — the next THREE upcoming occasions, each
+  /// with its own emoji, localised name and localised countdown
+  /// (e.g. "غدًا" / "بعد 3 يومًا"). Forward-scan dedupes weekly
+  /// repeats by event id, so a single Friday won't fill every slot.
+  /// May contain fewer than three entries (or be empty) when no
+  /// further Islamic events are enabled or scheduled.
+  final List<({String emoji, String title, String countdown})>
+      islamicUpcomingList;
 
   /// Spiritual-mode hint for the card shell — lets it pick a subtle
   /// mood adjustment (slightly warmer gold for Ramadan, dimmer
@@ -87,9 +88,9 @@ class WidgetSnapshot {
     required this.fontFamily,
     required this.accent,
     required this.islamicToday,
-    required this.islamicUpcoming,
-    required this.islamicUpcomingName,
-    required this.islamicUpcomingCountdown,
+    required this.islamicTodayTitle,
+    required this.islamicTodayEmoji,
+    required this.islamicUpcomingList,
     required this.spiritualMode,
   });
 
@@ -113,9 +114,9 @@ class WidgetSnapshot {
     // them. Reuses AppProvider's own matching logic via
     // `islamicEventsForDay`; nothing is duplicated.
     String islamicToday = _blessedDay(loc);
-    String islamicUpcoming = '';
-    String islamicUpcomingName = '';
-    String islamicUpcomingCountdown = '';
+    String islamicTodayTitle = _blessedDay(loc);
+    String islamicTodayEmoji = '';
+    final upcomingList = <({String emoji, String title, String countdown})>[];
     try {
       final todayHits = p
           .islamicEventsForDay(t.hDay, t.hMonth, t.hYear)
@@ -123,24 +124,30 @@ class WidgetSnapshot {
           .toList();
       if (todayHits.isNotEmpty) {
         final e = todayHits.first;
+        islamicTodayTitle = e.title(loc);
+        islamicTodayEmoji = e.emoji;
         islamicToday = _fmtOccasion(e.emoji, e.title(loc));
       }
-      // Forward scan for the next occasion. Weekly events (Jumu'ah,
-      // Mon/Thu fasting) guarantee a hit within a week when anything
-      // is enabled, so a 45-day cap is comfortably enough.
-      for (int d = 1; d <= 45; d++) {
+      // Forward-scan for the next THREE upcoming Islamic occasions.
+      // Weekly events (Jumu'ah, Mon/Thu fasting) repeat — dedupe by
+      // event id so a single Friday can't fill every slot. 60 days
+      // is comfortably enough to find three distinct events when
+      // any reasonable set is enabled.
+      final seenIds = <String>{};
+      for (int d = 1; d <= 60 && upcomingList.length < 3; d++) {
         final h = p.gregorianToHijri(greg.add(Duration(days: d)));
         final hits = p
             .islamicEventsForDay(h.hDay, h.hMonth, h.hYear)
             .where((e) => !p.isDailyAdhkar(e.id))
             .toList();
-        if (hits.isNotEmpty) {
-          final e = hits.first;
-          islamicUpcomingName = _fmtOccasion(e.emoji, e.title(loc));
-          islamicUpcomingCountdown = _inDays(d, loc);
-          islamicUpcoming =
-              '$islamicUpcomingName · $islamicUpcomingCountdown';
-          break;
+        for (final e in hits) {
+          if (upcomingList.length >= 3) break;
+          if (!seenIds.add(e.id)) continue;
+          upcomingList.add((
+            emoji: e.emoji,
+            title: e.title(loc),
+            countdown: _inDays(d, loc),
+          ));
         }
       }
     } catch (_) {
@@ -165,9 +172,9 @@ class WidgetSnapshot {
       fontFamily: p.fontFamily,
       accent: AppColors.green,
       islamicToday: islamicToday,
-      islamicUpcoming: islamicUpcoming,
-      islamicUpcomingName: islamicUpcomingName,
-      islamicUpcomingCountdown: islamicUpcomingCountdown,
+      islamicTodayTitle: islamicTodayTitle,
+      islamicTodayEmoji: islamicTodayEmoji,
+      islamicUpcomingList: upcomingList,
       spiritualMode: spiritualMode,
     );
   }
@@ -207,11 +214,15 @@ class WidgetSnapshot {
         fontFamily,
         accent.toString(),
         islamicToday,
-        islamicUpcoming,
-        // islamicUpcoming covers both name and countdown (it's the
-        // joined form), but include the mode explicitly so a sunset
-        // / Ramadan-start moment triggers a re-render even if the
-        // text content didn't change.
+        // Fold the upcoming list into one joined string for the
+        // fingerprint — order-sensitive, so reordering picks up
+        // re-renders too.
+        islamicUpcomingList
+            .map((e) => '${e.emoji}|${e.title}|${e.countdown}')
+            .join('//'),
+        // Include the mood mode explicitly so a sunset / Ramadan-
+        // start moment triggers a re-render even if every visible
+        // string happens to be unchanged.
         spiritualMode,
       ].join('|');
 
