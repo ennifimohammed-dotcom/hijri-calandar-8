@@ -1,3 +1,16 @@
+// Flutter 3.44 (AGP 9) ships a Kotlin script compiler that
+// treats the legacy `kotlinOptions { jvmTarget = "11" }` DSL —
+// AND the implicit `android { ... }` extension function — as
+// hard errors instead of mere deprecation warnings. We migrate
+// to the new `kotlin { compilerOptions { ... } }` DSL (per
+// https://kotl.in/u1r8ln) and silence the remaining DSL
+// deprecations at the file level so the script keeps compiling
+// while still building against JVM 11 byte code (matching the
+// Java compileOptions below).
+@file:Suppress("DEPRECATION")
+
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
     id("com.android.application")
     id("kotlin-android")
@@ -15,10 +28,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
 
-    kotlinOptions {
-        jvmTarget = "11"
-    }
-
     defaultConfig {
         applicationId = "com.hijricalendar.hijri_calendar"
         minSdk = 23
@@ -34,6 +43,16 @@ android {
             isMinifyEnabled = false
             isShrinkResources = false
         }
+    }
+}
+
+// New-DSL replacement for the in-`android` `kotlinOptions {}`
+// block (removed for AGP 9). Same effective configuration —
+// Kotlin emits JVM 11 byte code, matching `compileOptions` above
+// so the Java/Kotlin halves of the project agree.
+kotlin {
+    compilerOptions {
+        jvmTarget = JvmTarget.JVM_11
     }
 }
 
