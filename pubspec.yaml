@@ -29,6 +29,10 @@ dependencies:
   # the Kaaba + the on-device magnetometer heading stream.
   geolocator: ^11.0.0
   flutter_compass: ^0.8.1
+  # Native reverse-geocoding (Android Geocoder / iOS CLGeocoder)
+  # so the Qibla screen can show "City, Country" above the raw
+  # coordinates. No API key, no network — uses the OS provider.
+  geocoding: ^3.0.0
   # Home-screen widget bridge. Used in "Flutter-to-bitmap" mode:
   # the app renders a Flutter widget off-screen to a PNG and the
   # native Android AppWidget displays it. See WidgetSyncService.
