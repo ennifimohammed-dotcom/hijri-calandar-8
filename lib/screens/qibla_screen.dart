@@ -64,7 +64,6 @@ class _QiblaScreenState extends State<QiblaScreen>
   double? _rawHeading; // null = no compass event yet
   double? _accuracyDegrees;
   bool _aligned = false;
-  bool _hasFiredAlignHaptic = false;
   bool _compassUnavailable = false;
 
   /// Reusable smoothing coefficient. Bigger = snappier dial,
@@ -227,12 +226,10 @@ class _QiblaScreenState extends State<QiblaScreen>
     if (_aligned && !wasAligned) {
       // Single gentle confirmation — no looping haptic.
       HapticFeedback.lightImpact();
-      _hasFiredAlignHaptic = true;
       _pulseCtrl
         ..stop()
         ..repeat(reverse: true);
     } else if (!_aligned && wasAligned) {
-      _hasFiredAlignHaptic = false;
       _pulseCtrl
         ..stop()
         ..value = 0;
@@ -399,7 +396,7 @@ class _QiblaBackdrop extends StatelessWidget {
             child: IgnorePointer(
               child: CustomPaint(
                 painter: _QiblaPatternPainter(
-                  color: Colors.white.withOpacity(0.030),
+                  color: Colors.white.withValues(alpha: 0.030),
                 ),
               ),
             ),
@@ -782,7 +779,7 @@ class _InfoChip extends StatelessWidget {
         borderRadius: BorderRadius.circular(10),
         color: const Color(0x1AFFFFFF),
         border: Border.all(
-          color: const Color(0xFFF0D89A).withOpacity(0.18),
+          color: const Color(0xFFF0D89A).withValues(alpha: 0.18),
           width: 0.7,
         ),
       ),
@@ -824,7 +821,7 @@ class _AccuracyChip extends StatelessWidget {
             shape: BoxShape.circle,
             color: color,
             boxShadow: [
-              BoxShadow(color: color.withOpacity(0.5), blurRadius: 6),
+              BoxShadow(color: color.withValues(alpha: 0.5), blurRadius: 6),
             ],
           ),
         ),
@@ -876,7 +873,7 @@ class _CompassPainter extends CustomPainter {
     if (aligned) {
       final glowR = radius + 6 + pulse * 6;
       final glow = Paint()
-        ..color = _alignedGlow.withOpacity(0.35 + pulse * 0.15)
+        ..color = _alignedGlow.withValues(alpha: 0.35 + pulse * 0.15)
         ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18);
       canvas.drawCircle(center, glowR, glow);
     }
@@ -885,8 +882,8 @@ class _CompassPainter extends CustomPainter {
     final dialPaint = Paint()
       ..shader = RadialGradient(
         colors: [
-          _goldSoft.withOpacity(0.08),
-          _goldSoft.withOpacity(0.015),
+          _goldSoft.withValues(alpha: 0.08),
+          _goldSoft.withValues(alpha: 0.015),
           Colors.transparent,
         ],
         stops: const [0.0, 0.65, 1.0],
@@ -898,7 +895,7 @@ class _CompassPainter extends CustomPainter {
       center,
       radius,
       Paint()
-        ..color = _goldSoft.withOpacity(0.35)
+        ..color = _goldSoft.withValues(alpha: 0.35)
         ..strokeWidth = 1.4
         ..style = PaintingStyle.stroke,
     );
@@ -907,7 +904,7 @@ class _CompassPainter extends CustomPainter {
       center,
       radius * 0.74,
       Paint()
-        ..color = _goldSoft.withOpacity(0.12)
+        ..color = _goldSoft.withValues(alpha: 0.12)
         ..strokeWidth = 0.8
         ..style = PaintingStyle.stroke,
     );
@@ -932,8 +929,8 @@ class _CompassPainter extends CustomPainter {
         ),
         Paint()
           ..color = isCardinal
-              ? _goldSoft.withOpacity(0.7)
-              : _textMuted.withOpacity(isHalfCard ? 0.55 : 0.35)
+              ? _goldSoft.withValues(alpha: 0.7)
+              : _textMuted.withValues(alpha: isHalfCard ? 0.55 : 0.35)
           ..strokeWidth = isCardinal ? 1.5 : 0.7
           ..strokeCap = StrokeCap.round,
       );
@@ -953,7 +950,7 @@ class _CompassPainter extends CustomPainter {
         text: TextSpan(
           text: cardinals[i],
           style: TextStyle(
-            color: i == 0 ? _goldSoft : _textMain.withOpacity(0.70),
+            color: i == 0 ? _goldSoft : _textMain.withValues(alpha: 0.70),
             fontSize: i == 0 ? 19 : 14,
             fontWeight: i == 0 ? FontWeight.w800 : FontWeight.w600,
           ),

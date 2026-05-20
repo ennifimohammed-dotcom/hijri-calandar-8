@@ -31,7 +31,7 @@ class QiblaService {
   /// pray in the Qibla direction.
   static double bearingTo(double lat, double lng) {
     final lat1 = lat * math.pi / 180;
-    final lat2 = kaabaLat * math.pi / 180;
+    const lat2 = kaabaLat * math.pi / 180;
     final dLng = (kaabaLng - lng) * math.pi / 180;
     final y = math.sin(dLng) * math.cos(lat2);
     final x = math.cos(lat1) * math.sin(lat2) -
@@ -45,7 +45,7 @@ class QiblaService {
   /// "city to Makkah" display we show under the compass.
   static double distanceTo(double lat, double lng) {
     final lat1 = lat * math.pi / 180;
-    final lat2 = kaabaLat * math.pi / 180;
+    const lat2 = kaabaLat * math.pi / 180;
     final dLat = (kaabaLat - lat) * math.pi / 180;
     final dLng = (kaabaLng - lng) * math.pi / 180;
     final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
@@ -81,8 +81,12 @@ class QiblaService {
   /// below the alignment threshold).
   static double shortestAngleDelta(double from, double to) {
     double d = to - from;
-    while (d > 180) d -= 360;
-    while (d < -180) d += 360;
+    while (d > 180) {
+      d -= 360;
+    }
+    while (d < -180) {
+      d += 360;
+    }
     return d;
   }
 }
