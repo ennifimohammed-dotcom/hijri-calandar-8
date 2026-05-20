@@ -219,23 +219,20 @@ class _QiblaScreenState extends State<QiblaScreen>
   /// throws, we silently fall back to coordinates-only display.
   Future<void> _fetchPlaceName(Position pos) async {
     try {
-      // Pass the app locale so we get "مراكش, المغرب" for an
-      // Arabic user rather than the device-locale name. Maps the
-      // single app code to a full locale identifier the OS
-      // geocoder understands.
-      final appLocale = (mounted)
-          ? context.read<AppProvider>().locale
-          : 'en';
-      final localeId = switch (appLocale) {
-        'ar' => 'ar',
-        'fr' => 'fr',
-        'es' => 'es',
-        _ => 'en',
-      };
+      // The `geocoding` package doesn't expose a per-call
+      // `localeIdentifier` parameter on `placemarkFromCoordinates`
+      // — the locale is set once via the platform interface's
+      // `setLocaleIdentifier(...)` global. Wiring that into the
+      // app's locale system here would couple us to a transitive
+      // API surface, so we take the safe fallback: ask the
+      // platform geocoder in the DEVICE locale. Names still come
+      // back fully-localised; they just track the system locale
+      // rather than the app's chosen language. Best-effort by
+      // design — any failure leaves `_placeName` null and the
+      // screen falls back to coordinates-only.
       final marks = await placemarkFromCoordinates(
         pos.latitude,
         pos.longitude,
-        localeIdentifier: localeId,
       );
       if (!mounted || marks.isEmpty) return;
       final m = marks.first;
@@ -809,7 +806,7 @@ class _InfoCard extends StatelessWidget {
     final surface = isDark ? AppColors.darkSurface : AppColors.white;
     final textMain = isDark ? AppColors.darkText : AppColors.text;
     final textMuted = isDark ? AppColors.darkText3 : AppColors.text3;
-    final goldSoft = const Color(0xFFE5C68C);
+    const goldSoft = Color(0xFFE5C68C);
 
     return Container(
       padding: const EdgeInsets.fromLTRB(18, 14, 18, 14),
@@ -981,7 +978,7 @@ class _CalibrationCard extends StatelessWidget {
     final surface = isDark ? AppColors.darkSurface : AppColors.white;
     final textMain = isDark ? AppColors.darkText : AppColors.text;
     final textMuted = isDark ? AppColors.darkText3 : AppColors.text3;
-    final goldSoft = const Color(0xFFE5C68C);
+    const goldSoft = Color(0xFFE5C68C);
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
@@ -1010,9 +1007,9 @@ class _CalibrationCard extends StatelessWidget {
               Container(
                 width: 40,
                 height: 40,
-                decoration: BoxDecoration(
+                decoration: const BoxDecoration(
                   shape: BoxShape.circle,
-                  gradient: const LinearGradient(
+                  gradient: LinearGradient(
                     colors: [Color(0xFFF0D89A), Color(0xFFC8943A)],
                   ),
                 ),
