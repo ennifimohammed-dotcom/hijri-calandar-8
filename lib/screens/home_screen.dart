@@ -5,9 +5,10 @@ import '../services/widget_sync_service.dart';
 import '../theme.dart';
 import 'add_event_screen.dart';
 import 'calendar_screen.dart';
-import 'event_bank_screen.dart';
-import 'settings_screen.dart';
 import 'converter_screen.dart';
+import 'event_bank_screen.dart';
+import 'qibla_screen.dart';
+import 'settings_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -121,10 +122,11 @@ class _HomeScreenState extends State<HomeScreen> {
       body: IndexedStack(
         index: _currentIndex,
         children: const [
-          CalendarScreen(),
-          EventBankScreen(),
-          ConverterScreen(),
-          SettingsScreen(),
+          CalendarScreen(),    // 0
+          EventBankScreen(),   // 1
+          ConverterScreen(),   // 2
+          QiblaScreen(),       // 3
+          SettingsScreen(),    // 4
         ],
       ),
       bottomNavigationBar: _buildBottomNav(p, isDark),
@@ -156,6 +158,9 @@ class _HomeScreenState extends State<HomeScreen> {
             icon: const Icon(Icons.swap_horiz_rounded),
             label: p.locale == 'ar' ? 'محوّل'
                 : p.locale == 'fr' ? 'Convertir' : 'Convert'),
+        BottomNavigationBarItem(
+            icon: const Icon(Icons.explore_rounded),
+            label: p.label('qibla')),
         BottomNavigationBarItem(
             icon: const Icon(Icons.settings_rounded),
             label: p.label('settings')),

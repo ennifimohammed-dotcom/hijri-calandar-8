@@ -25,6 +25,10 @@ dependencies:
   timezone: ^0.9.4
   file_picker: ^8.1.4
   permission_handler: ^11.3.1
+  # Qibla screen — current location for the great-circle bearing to
+  # the Kaaba + the on-device magnetometer heading stream.
+  geolocator: ^11.0.0
+  flutter_compass: ^0.8.1
   # Home-screen widget bridge. Used in "Flutter-to-bitmap" mode:
   # the app renders a Flutter widget off-screen to a PNG and the
   # native Android AppWidget displays it. See WidgetSyncService.

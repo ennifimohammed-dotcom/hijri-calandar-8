@@ -11,6 +11,12 @@
         android:maxSdkVersion="32"/>
     <uses-permission android:name="android.permission.WAKE_LOCK"/>
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <!-- Qibla screen — coarse OR fine location is sufficient to
+         compute the great-circle bearing to the Kaaba. We ask for
+         both so the user can grant whichever they're comfortable
+         with; the app picks whichever is granted. -->
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
 
     <application
         android:label="بدر | badr"
