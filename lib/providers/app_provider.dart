@@ -779,7 +779,7 @@ class AppProvider extends ChangeNotifier {
       'cloud_sync':          {'ar':'المزامنة السحابية','fr':'Synchro. cloud','en':'Cloud Sync','es':'Sincronización'},
       // Qibla screen — premium compass that points to the Kaaba.
       'qibla':                     {'ar':'القبلة','fr':'Qibla','en':'Qibla','es':'Qibla'},
-      'qibla_aligned':             {'ar':'اتجاه القبلة صحيح','fr':'Qibla alignée','en':'Qibla aligned','es':'Qibla alineada'},
+      'qibla_aligned':             {'ar':'✓ تم التوجيه نحو القبلة','fr':'✓ Direction Qibla correcte','en':'✓ Correct Qibla direction','es':'✓ Dirección Qibla correcta'},
       'qibla_to_makkah':           {'ar':'إلى مكة','fr':'vers La Mecque','en':'to Makkah','es':'a La Meca'},
       'qibla_angle':               {'ar':'اتجاه القبلة','fr':'Angle Qibla','en':'Qibla angle','es':'Ángulo Qibla'},
       'qibla_accuracy_high':       {'ar':'دقة ممتازة','fr':'Précision excellente','en':'Excellent accuracy','es':'Excelente precisión'},
