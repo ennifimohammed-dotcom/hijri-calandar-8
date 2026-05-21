@@ -92,9 +92,12 @@ class _QiblaScreenState extends State<QiblaScreen>
   static const double _alignThresholdDegrees = 4;
 
   /// Accuracy threshold (degrees) above which the calibration
-  /// card may surface. Sensors typically report 5-20° when
-  /// stable, 30-60° when uncalibrated.
-  static const double _lowAccuracyThreshold = 25;
+  /// card may surface. Kept STRICTLY above the Android-MEDIUM
+  /// constant (30.0 — see `_accuracyLabel`) so a perfectly
+  /// usable medium-quality sensor reading never triggers the
+  /// "wave your phone" prompt; only the Android-LOW bucket
+  /// (45.0) and iOS continuous readings above 32° will do.
+  static const double _lowAccuracyThreshold = 32;
 
   /// Wait this long with a sustained low-accuracy reading before
   /// showing the calibration card — avoids flashing it during a
@@ -307,13 +310,22 @@ class _QiblaScreenState extends State<QiblaScreen>
     final wasAligned = _aligned;
     _aligned = delta.abs() <= _alignThresholdDegrees;
     if (_aligned && !wasAligned) {
-      // Soft "click into place" — a primary light impact then a
-      // quieter selection tick ~60ms later. The transition guard
-      // above (`!wasAligned`) keeps this from spamming when the
-      // user moves the phone around the alignment threshold.
-      HapticFeedback.lightImpact();
-      Future.delayed(const Duration(milliseconds: 65), () {
-        if (mounted && _aligned) HapticFeedback.selectionClick();
+      // "Click into place" — heavy primary + a medium secondary
+      // tap ~85 ms later. Stronger than the previous
+      // `lightImpact + selectionClick` combo because on most
+      // Android stock ROMs those two are damped down to the
+      // point of being imperceptible — exactly what was reported
+      // on this build. `heavyImpact` maps to a noticeable
+      // VibrationEffect.EFFECT_HEAVY_CLICK on Android and a
+      // strong UIImpactFeedbackGenerator on iOS, so the
+      // confirmation is clearly felt on both platforms.
+      //
+      // The transition guard above (`!wasAligned`) keeps this
+      // from spamming when the user moves the phone around the
+      // alignment threshold.
+      HapticFeedback.heavyImpact();
+      Future.delayed(const Duration(milliseconds: 85), () {
+        if (mounted && _aligned) HapticFeedback.mediumImpact();
       });
       _pulseCtrl
         ..stop()
@@ -815,17 +827,52 @@ class _CompassView extends StatelessWidget {
     return '$rounded $unit';
   }
 
+  /// Maps `event.accuracy` from `flutter_compass` to one of the
+  /// three accuracy tiers shown under the dial.
+  ///
+  /// IMPORTANT — Android quirk:
+  ///   `flutter_compass` does NOT report a continuous degree
+  ///   value on Android. The plugin bucket-maps the underlying
+  ///   `SensorManager.SENSOR_STATUS_ACCURACY_*` levels to three
+  ///   constants:
+  ///     HIGH       → 15.0
+  ///     MEDIUM     → 30.0
+  ///     LOW        → 45.0
+  ///     UNRELIABLE → -1.0
+  ///   so an exclusive `degrees < 15` check (the previous code)
+  ///   misses the HIGH value entirely — `15.0 < 15` is false, so
+  ///   the result falls through to the MEDIUM bucket and the user
+  ///   never sees "Excellent accuracy" even on a freshly
+  ///   calibrated sensor.
+  ///
+  /// iOS reports a true continuous degree value from
+  /// `CMHeading.headingAccuracy` (typically 5-10° excellent,
+  /// 10-25° good, 25°+ poor), so a tolerant ceiling works for
+  /// both platforms.
+  ///
+  /// Thresholds (inclusive ceiling):
+  ///   degrees <= 18  → HIGH    (catches Android-HIGH 15.0
+  ///                            and iOS readings ≤ 18°)
+  ///   degrees <= 32  → MEDIUM  (catches Android-MEDIUM 30.0)
+  ///   degrees >  32  → LOW
+  ///   degrees <  0   → unknown / unreliable — surface as MEDIUM
+  ///                    so the UI doesn't lie either way.
   String _accuracyLabel(AppProvider p, double? degrees) {
-    if (degrees == null) return p.label('qibla_accuracy_medium');
-    if (degrees < 15) return p.label('qibla_accuracy_high');
-    if (degrees < 25) return p.label('qibla_accuracy_medium');
+    if (degrees == null || degrees < 0) {
+      return p.label('qibla_accuracy_medium');
+    }
+    if (degrees <= 18) return p.label('qibla_accuracy_high');
+    if (degrees <= 32) return p.label('qibla_accuracy_medium');
     return p.label('qibla_accuracy_low');
   }
 
+  /// Pip color for the accuracy tier — green / gold / red. Uses
+  /// the same thresholds as [_accuracyLabel] so the swatch and
+  /// the words can't ever disagree.
   Color _accuracyColor(double? degrees) {
-    if (degrees == null) return const Color(0xFFC8943A);
-    if (degrees < 15) return const Color(0xFF4FA46B);
-    if (degrees < 25) return const Color(0xFFC8943A);
+    if (degrees == null || degrees < 0) return const Color(0xFFC8943A);
+    if (degrees <= 18) return const Color(0xFF4FA46B);
+    if (degrees <= 32) return const Color(0xFFC8943A);
     return const Color(0xFFE57373);
   }
 
