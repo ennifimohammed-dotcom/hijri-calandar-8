@@ -61,6 +61,11 @@ class _QiblaScreenState extends State<QiblaScreen>
 
   Position? _position;
   String? _placeName; // "City, Country" or null until/unless geocoded.
+  /// Locale (`'ar' | 'fr' | 'en' | 'es'`) that the current `_placeName`
+  /// was fetched in. Tracked so a runtime language change can
+  /// trigger a single re-geocode without re-doing the whole
+  /// bootstrap.
+  String? _lastGeocodedLocale;
 
   double _qiblaBearing = 0; // 0..360
   double _distanceKm = 0;
@@ -125,6 +130,23 @@ class _QiblaScreenState extends State<QiblaScreen>
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // If the user changed the app language while staying on the
+    // Qibla screen, refresh the City, Country line into the new
+    // locale. Skips the very first call (when `_lastGeocodedLocale`
+    // is still null and the bootstrap fetch hasn't run yet).
+    final pos = _position;
+    final last = _lastGeocodedLocale;
+    if (pos == null || last == null) return;
+    final current = context.read<AppProvider>().locale;
+    if (current != last) {
+      _lastGeocodedLocale = current;
+      unawaited(_fetchPlaceName(pos, current));
+    }
+  }
+
+  @override
   void dispose() {
     _compassSub?.cancel();
     _serviceSub?.cancel();
@@ -170,6 +192,11 @@ class _QiblaScreenState extends State<QiblaScreen>
       final bearing = QiblaService.bearingTo(pos.latitude, pos.longitude);
       final distance = QiblaService.distanceTo(pos.latitude, pos.longitude);
 
+      final appLocale = mounted
+          ? context.read<AppProvider>().locale
+          : 'en';
+      _lastGeocodedLocale = appLocale;
+
       final stream = FlutterCompass.events;
       if (stream == null) {
         setState(() {
@@ -179,7 +206,7 @@ class _QiblaScreenState extends State<QiblaScreen>
           _distanceKm = distance;
           _compassUnavailable = true;
         });
-        unawaited(_fetchPlaceName(pos));
+        unawaited(_fetchPlaceName(pos, appLocale));
         return;
       }
       _compassSub?.cancel();
@@ -200,7 +227,7 @@ class _QiblaScreenState extends State<QiblaScreen>
       });
       // Best-effort reverse geocoding — never blocks the screen
       // and a failure stays silent.
-      unawaited(_fetchPlaceName(pos));
+      unawaited(_fetchPlaceName(pos, appLocale));
     } catch (e) {
       _emitError(_QiblaError.generic);
     }
@@ -217,19 +244,28 @@ class _QiblaScreenState extends State<QiblaScreen>
   /// Best-effort reverse geocoding. Uses the OS provider — no API
   /// key, no network call we control. If it returns nothing or
   /// throws, we silently fall back to coordinates-only display.
-  Future<void> _fetchPlaceName(Position pos) async {
+  ///
+  /// `appLocale` lets the platform geocoder return city/country
+  /// names in the user's chosen app language (Arabic, French,
+  /// English, Spanish) rather than the device locale. Routed via
+  /// the package's global `setLocaleIdentifier` — wrapped in a
+  /// try-catch because some platforms ignore the override; the
+  /// fetch still succeeds in those cases, just in the device
+  /// locale.
+  Future<void> _fetchPlaceName(Position pos, String appLocale) async {
     try {
-      // The `geocoding` package doesn't expose a per-call
-      // `localeIdentifier` parameter on `placemarkFromCoordinates`
-      // — the locale is set once via the platform interface's
-      // `setLocaleIdentifier(...)` global. Wiring that into the
-      // app's locale system here would couple us to a transitive
-      // API surface, so we take the safe fallback: ask the
-      // platform geocoder in the DEVICE locale. Names still come
-      // back fully-localised; they just track the system locale
-      // rather than the app's chosen language. Best-effort by
-      // design — any failure leaves `_placeName` null and the
-      // screen falls back to coordinates-only.
+      final bcp47 = switch (appLocale) {
+        'ar' => 'ar',
+        'fr' => 'fr_FR',
+        'es' => 'es_ES',
+        _ => 'en_US',
+      };
+      try {
+        await setLocaleIdentifier(bcp47);
+      } catch (_) {
+        // Platform geocoder doesn't support a runtime locale
+        // override — silently fall through to its default.
+      }
       final marks = await placemarkFromCoordinates(
         pos.latitude,
         pos.longitude,
@@ -271,7 +307,14 @@ class _QiblaScreenState extends State<QiblaScreen>
     final wasAligned = _aligned;
     _aligned = delta.abs() <= _alignThresholdDegrees;
     if (_aligned && !wasAligned) {
+      // Soft "click into place" — a primary light impact then a
+      // quieter selection tick ~60ms later. The transition guard
+      // above (`!wasAligned`) keeps this from spamming when the
+      // user moves the phone around the alignment threshold.
       HapticFeedback.lightImpact();
+      Future.delayed(const Duration(milliseconds: 65), () {
+        if (mounted && _aligned) HapticFeedback.selectionClick();
+      });
       _pulseCtrl
         ..stop()
         ..repeat(reverse: true);
@@ -640,30 +683,46 @@ class _CompassView extends StatelessWidget {
         // compass never floats lonely on a wide tablet.
         final shortSide =
             math.min(constraints.maxWidth, constraints.maxHeight);
-        final dialSize = math.min(320.0, shortSide - 80);
+        final dialSize = math.min(330.0, shortSide - 72);
         return Padding(
-          padding: const EdgeInsets.fromLTRB(20, 8, 20, 22),
+          padding: const EdgeInsets.fromLTRB(20, 4, 20, 18),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              const SizedBox(height: 6),
-              // City, Country — quietly placed at the top. When
-              // reverse geocoding hasn't returned yet (or
-              // failed), we just hide this line; the
+              // City, Country — quietly placed at the top. A
+              // small location pin on the leading side makes
+              // the line read as "where the calculation is
+              // coming from" without shouting. When reverse
+              // geocoding hasn't returned yet (or failed), the
               // coordinates underneath still convey "we know
               // where you are".
               if (placeName != null && placeName!.isNotEmpty) ...[
-                Text(
-                  placeName!,
-                  textAlign: TextAlign.center,
-                  style: appFont(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: textMain,
-                    letterSpacing: 0.2,
-                  ),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(
+                      Icons.place_rounded,
+                      size: 14,
+                      color: Color(0xFFC8943A),
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: Text(
+                        placeName!,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: appFont(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: textMain,
+                          letterSpacing: 0.2,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 3),
               ],
               Text(
                 coords,
@@ -675,7 +734,7 @@ class _CompassView extends StatelessWidget {
                   letterSpacing: 0.3,
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 6),
               Expanded(
                 child: Center(
                   child: SizedBox(
@@ -690,12 +749,18 @@ class _CompassView extends StatelessWidget {
                         compassUnavailable: compassUnavailable,
                         cardinals: _localizedCardinals(p.locale),
                         isDark: isDark,
+                        // Runtime accent — drives the dial face,
+                        // halo, Qibla ray, and outer ring tint so
+                        // the compass tracks whichever swatch the
+                        // user picked in Settings. Gold remains
+                        // the constant secondary accent.
+                        accent: AppColors.green,
                       ),
                     ),
                   ),
                 ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 4),
               SizedBox(
                 height: 22,
                 child: AnimatedSwitcher(
@@ -715,7 +780,7 @@ class _CompassView extends StatelessWidget {
                       : const SizedBox.shrink(key: ValueKey('idle')),
                 ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               _InfoCard(
                 provider: p,
                 distanceText: distanceText,
@@ -764,13 +829,19 @@ class _CompassView extends StatelessWidget {
     return const Color(0xFFE57373);
   }
 
-  /// Cardinal labels in the user's app locale. Arabic uses the
-  /// single-letter convention requested by the spec; every other
-  /// locale falls back to standard English compass letters.
+  /// Cardinal labels in the user's app locale. Arabic uses
+  /// short Arabic abbreviations; every other locale falls back
+  /// to the standard English compass letters.
+  ///
+  /// Arabic mapping per spec:
+  ///   N → شم  (short for شمال — kept as two letters to
+  ///           disambiguate from East, which also starts with ش)
+  ///   E → ش   (شرق)
+  ///   S → ج   (جنوب)
+  ///   W → غ   (غرب)
   List<String> _localizedCardinals(String loc) {
     if (loc == 'ar') {
-      // Per spec: N → ش, E → ش, S → ج, W → غ.
-      return const ['ش', 'ش', 'ج', 'غ'];
+      return const ['شم', 'ش', 'ج', 'غ'];
     }
     return const ['N', 'E', 'S', 'W'];
   }
@@ -960,9 +1031,12 @@ class _StatBlock extends StatelessWidget {
 
 // ────────────────────────────────────────────────────────────
 // Calibration card — slides in from the bottom when the
-// magnetometer reports persistently poor accuracy.
+// magnetometer reports persistently poor accuracy. Features a
+// small animated lemniscate (figure-8) that traces the motion
+// the user is being asked to perform, so the instruction reads
+// even before the body text has been parsed.
 // ────────────────────────────────────────────────────────────
-class _CalibrationCard extends StatelessWidget {
+class _CalibrationCard extends StatefulWidget {
   final AppProvider provider;
   final bool isDark;
   final VoidCallback onDismiss;
@@ -974,49 +1048,72 @@ class _CalibrationCard extends StatelessWidget {
   });
 
   @override
+  State<_CalibrationCard> createState() => _CalibrationCardState();
+}
+
+class _CalibrationCardState extends State<_CalibrationCard>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2400),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
+    final isDark = widget.isDark;
     final surface = isDark ? AppColors.darkSurface : AppColors.white;
     final textMain = isDark ? AppColors.darkText : AppColors.text;
     final textMuted = isDark ? AppColors.darkText3 : AppColors.text3;
     const goldSoft = Color(0xFFE5C68C);
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
       child: Material(
         color: Colors.transparent,
         child: Container(
-          padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+          padding: const EdgeInsets.fromLTRB(14, 14, 8, 14),
           decoration: BoxDecoration(
             color: surface,
-            borderRadius: BorderRadius.circular(18),
+            borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: goldSoft.withValues(alpha: 0.40),
+              color: goldSoft.withValues(alpha: 0.42),
               width: 0.8,
             ),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withValues(alpha: isDark ? 0.40 : 0.12),
-                blurRadius: 22,
-                offset: const Offset(0, 6),
+                color: Colors.black.withValues(alpha: isDark ? 0.42 : 0.14),
+                blurRadius: 26,
+                offset: const Offset(0, 8),
               ),
             ],
           ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Container(
-                width: 40,
-                height: 40,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  gradient: LinearGradient(
-                    colors: [Color(0xFFF0D89A), Color(0xFFC8943A)],
+              SizedBox(
+                width: 44,
+                height: 44,
+                child: AnimatedBuilder(
+                  animation: _ctrl,
+                  builder: (_, __) => CustomPaint(
+                    painter: _Figure8Painter(
+                      t: _ctrl.value,
+                      color: const Color(0xFFC8943A),
+                      glow: goldSoft,
+                    ),
                   ),
-                ),
-                child: const Icon(
-                  Icons.gesture_rounded,
-                  color: Colors.white,
-                  size: 22,
                 ),
               ),
               const SizedBox(width: 12),
@@ -1026,7 +1123,7 @@ class _CalibrationCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      provider.label('qibla_calibrate_title'),
+                      widget.provider.label('qibla_calibrate_title'),
                       style: appFont(
                         fontSize: 13,
                         fontWeight: FontWeight.w700,
@@ -1034,14 +1131,14 @@ class _CalibrationCard extends StatelessWidget {
                         letterSpacing: 0.15,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 3),
                     Text(
-                      provider.label('qibla_calibrate'),
+                      widget.provider.label('qibla_calibrate'),
                       style: appFont(
                         fontSize: 11.5,
                         fontWeight: FontWeight.w400,
                         color: textMuted,
-                        height: 1.35,
+                        height: 1.40,
                         letterSpacing: 0.1,
                       ),
                     ),
@@ -1049,8 +1146,8 @@ class _CalibrationCard extends StatelessWidget {
                 ),
               ),
               IconButton(
-                tooltip: provider.label('qibla_dismiss'),
-                onPressed: onDismiss,
+                tooltip: widget.provider.label('qibla_dismiss'),
+                onPressed: widget.onDismiss,
                 icon: Icon(
                   Icons.close_rounded,
                   size: 18,
@@ -1065,15 +1162,115 @@ class _CalibrationCard extends StatelessWidget {
   }
 }
 
+/// Lightweight CustomPainter that draws a static lemniscate
+/// (figure-8) outline with an animated dot tracing along its
+/// path. The dot's position is computed from the standard
+/// parametric form of a lemniscate of Bernoulli — pure math, no
+/// extra deps, costs nothing at idle.
+class _Figure8Painter extends CustomPainter {
+  final double t;
+  final Color color;
+  final Color glow;
+  _Figure8Painter({
+    required this.t,
+    required this.color,
+    required this.glow,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final center = Offset(size.width / 2, size.height / 2);
+    final w = size.width * 0.42;
+    final h = size.height * 0.30;
+
+    Offset pointAt(double s) {
+      final theta = s * 2 * math.pi;
+      final denom = 1 + math.sin(theta) * math.sin(theta);
+      return Offset(
+        center.dx + (w * math.cos(theta)) / denom,
+        center.dy + (h * math.sin(theta) * math.cos(theta)) / denom,
+      );
+    }
+
+    // Static path — soft gold trail behind the moving dot.
+    final path = Path();
+    const segments = 64;
+    for (int i = 0; i <= segments; i++) {
+      final p = pointAt(i / segments);
+      if (i == 0) {
+        path.moveTo(p.dx, p.dy);
+      } else {
+        path.lineTo(p.dx, p.dy);
+      }
+    }
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = color.withValues(alpha: 0.22)
+        ..strokeWidth = 1.6
+        ..style = PaintingStyle.stroke
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round,
+    );
+
+    // Moving dot with soft halo.
+    final dot = pointAt(t);
+    canvas.drawCircle(
+      dot,
+      6.5,
+      Paint()
+        ..color = glow.withValues(alpha: 0.55)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 5),
+    );
+    canvas.drawCircle(
+      dot,
+      3.6,
+      Paint()
+        ..shader = RadialGradient(
+          colors: [glow, color],
+        ).createShader(Rect.fromCircle(center: dot, radius: 3.6)),
+    );
+  }
+
+  @override
+  bool shouldRepaint(_Figure8Painter old) =>
+      old.t != t || old.color != color || old.glow != glow;
+}
+
 // ────────────────────────────────────────────────────────────
 // Compass painter — premium Islamic dial.
 //
-// Z-order matters here: cardinal labels are painted AFTER the
-// Qibla ray + Kaaba marker so that, when the Qibla bearing is
-// close to a cardinal direction (e.g. East), the marker can
-// never visually hide its letter. The marker also got slightly
-// smaller, and the labels sit closer to the outer ring so they
-// orbit the marker rather than overlap it.
+// Visual stack (back-to-front):
+//   1. Drop shadow under the dial — soft 3D lift.
+//   2. Accent halo + gold halo — outer ambient glow.
+//   3. Aligned pulse — green halo when on-Qibla.
+//   4. Dial face — accent radial gradient (off-axis to suggest
+//      a light source from the top-left).
+//   5. Glass top highlight — vertical white-to-transparent
+//      gradient masked to a thin top band; gives a subtle
+//      "dome" feel without any heavy 3D engine.
+//   6. Outer metallic ring — sweep gradient between two golds
+//      so the rim catches light differently around the
+//      circumference (premium metal look).
+//   7. Inner decorative gold hairline.
+//   8. Rotated dial content:
+//        a. Tick marks (every 10°).
+//        b. Qibla ray (accent → gold gradient).
+//        c. Kaaba marker on its OWN inner orbit
+//           (`radius * 0.62`) so it can never collide with
+//           the outer cardinal labels.
+//        d. Cardinal letters painted LAST, at `radius - 22`,
+//           guaranteed visible above the ray.
+//   9. Fixed top indicator triangle (gold gradient, with a
+//      subtle gold glow underneath).
+//   10. Centre crescent brand mark.
+//
+// Two colour roles:
+//   * `accent` (runtime) — drives the dial face, halo, and the
+//     start of the Qibla ray. Tracks `AppColors.green` so it
+//     follows whichever swatch the user picked in Settings.
+//   * Gold (constant `_goldSoft`/`_goldDeep`) — keeps the
+//     metallic Islamic identity stable across swatches.
 // ────────────────────────────────────────────────────────────
 class _CompassPainter extends CustomPainter {
   final double heading;
@@ -1083,6 +1280,7 @@ class _CompassPainter extends CustomPainter {
   final bool compassUnavailable;
   final List<String> cardinals; // [N, E, S, W] in the active locale
   final bool isDark;
+  final Color accent;
 
   static const Color _goldSoft = Color(0xFFF0D89A);
   static const Color _goldDeep = Color(0xFFC8943A);
@@ -1096,14 +1294,41 @@ class _CompassPainter extends CustomPainter {
     required this.compassUnavailable,
     required this.cardinals,
     required this.isDark,
+    required this.accent,
   });
 
-  Color get _accentSoft => isDark
-      ? const Color(0xFF1F3A2D)
-      : const Color(0xFFEAF1EB);
-  Color get _accentDeep => isDark
-      ? const Color(0xFF0E2218)
-      : const Color(0xFFD7E5DA);
+  /// Light, slightly-desaturated tint of `accent` for the dial
+  /// face centre. Computed in HSL so any swatch (green, navy,
+  /// maroon, plum, teal, sky, rose, amber) lands at a calm
+  /// pale-on-light / deep-on-dark surface without going neon.
+  Color get _dialCenter {
+    final hsl = HSLColor.fromColor(accent);
+    if (isDark) {
+      return hsl
+          .withLightness((hsl.lightness * 0.55).clamp(0.10, 0.32))
+          .withSaturation((hsl.saturation * 0.65).clamp(0.0, 1.0))
+          .toColor();
+    }
+    return hsl
+        .withLightness(0.94)
+        .withSaturation((hsl.saturation * 0.28).clamp(0.0, 1.0))
+        .toColor();
+  }
+
+  Color get _dialEdge {
+    final hsl = HSLColor.fromColor(accent);
+    if (isDark) {
+      return hsl
+          .withLightness((hsl.lightness * 0.30).clamp(0.05, 0.20))
+          .withSaturation((hsl.saturation * 0.55).clamp(0.0, 1.0))
+          .toColor();
+    }
+    return hsl
+        .withLightness(0.84)
+        .withSaturation((hsl.saturation * 0.45).clamp(0.0, 1.0))
+        .toColor();
+  }
+
   Color get _textMain =>
       isDark ? const Color(0xFFFAF5E8) : const Color(0xFF1A1A1A);
   Color get _textMuted =>
@@ -1112,152 +1337,248 @@ class _CompassPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final center = Offset(size.width / 2, size.height / 2);
-    final radius = math.min(size.width, size.height) / 2 - 16;
+    final radius = math.min(size.width, size.height) / 2 - 18;
 
-    // Soft outer halo — premium glow that pulls the eye to the
-    // dial without overwhelming the otherwise-clean screen.
-    final halo = Paint()
-      ..color = _goldSoft.withValues(alpha: 0.20)
-      ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 22);
-    canvas.drawCircle(center, radius + 6, halo);
+    // 1) Drop shadow — soft, slightly offset so the dial reads
+    //    as a raised disc on the screen surface.
+    canvas.drawCircle(
+      center.translate(0, 8),
+      radius + 2,
+      Paint()
+        ..color = Colors.black.withValues(alpha: isDark ? 0.55 : 0.13)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 24),
+    );
 
-    // Aligned pulse — soft green halo around the dial.
+    // 2a) Accent ambient halo.
+    canvas.drawCircle(
+      center,
+      radius + 10,
+      Paint()
+        ..color = accent.withValues(alpha: isDark ? 0.20 : 0.14)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 24),
+    );
+    // 2b) Gold halo — a touch lighter, layered on top so accent
+    //     + gold mix.
+    canvas.drawCircle(
+      center,
+      radius + 6,
+      Paint()
+        ..color = _goldSoft.withValues(alpha: 0.18)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 20),
+    );
+
+    // 3) Aligned pulse — soft green halo when on-Qibla.
     if (aligned) {
       final glowR = radius + 6 + pulse * 6;
       canvas.drawCircle(
         center,
         glowR,
         Paint()
-          ..color = _alignedGlow.withValues(alpha: 0.35 + pulse * 0.15)
+          ..color = _alignedGlow.withValues(alpha: 0.32 + pulse * 0.16)
           ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 18),
       );
     }
 
-    // Dial fill — subtle accent radial gradient, light in the
-    // centre and deepening slightly toward the edge so the dial
-    // reads as its own surface against the clean screen.
+    final dialRect = Rect.fromCircle(center: center, radius: radius);
+
+    // 4) Dial face — off-axis radial gradient (centre slightly
+    //    up-left) gives the disc subtle volume without faking a
+    //    full 3D engine.
     canvas.drawCircle(
       center,
       radius,
       Paint()
         ..shader = RadialGradient(
-          colors: [_accentSoft, _accentDeep],
+          center: const Alignment(-0.28, -0.34),
+          radius: 0.95,
+          colors: [_dialCenter, _dialEdge],
           stops: const [0.0, 1.0],
-        ).createShader(Rect.fromCircle(center: center, radius: radius)),
+        ).createShader(dialRect),
     );
 
-    // Outer gold ring.
+    // 5) Glass top highlight — a soft white wash on the upper
+    //    half clipped to the dial circle, producing the
+    //    "glass dome" feel.
+    canvas.save();
+    canvas.clipPath(Path()..addOval(dialRect));
+    final highlightRect = Rect.fromLTWH(
+      center.dx - radius,
+      center.dy - radius,
+      radius * 2,
+      radius * 0.95,
+    );
+    canvas.drawRect(
+      highlightRect,
+      Paint()
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: isDark
+              ? [
+                  Colors.white.withValues(alpha: 0.07),
+                  Colors.white.withValues(alpha: 0.00),
+                ]
+              : [
+                  Colors.white.withValues(alpha: 0.32),
+                  Colors.white.withValues(alpha: 0.00),
+                ],
+        ).createShader(highlightRect),
+    );
+    canvas.restore();
+
+    // 6) Outer metallic ring — sweep gradient catches light
+    //    around the rim. Two strokes layered (a thicker faint
+    //    one + a thinner crisp one) reads as a small bevel.
     canvas.drawCircle(
       center,
       radius,
       Paint()
-        ..color = _goldDeep.withValues(alpha: 0.55)
-        ..strokeWidth = 1.5
+        ..shader = SweepGradient(
+          startAngle: -math.pi / 2,
+          endAngle: math.pi * 1.5,
+          colors: const [
+            _goldSoft,
+            _goldDeep,
+            _goldSoft,
+            _goldDeep,
+            _goldSoft,
+          ],
+          stops: const [0.0, 0.30, 0.5, 0.70, 1.0],
+        ).createShader(dialRect)
+        ..strokeWidth = 2.2
         ..style = PaintingStyle.stroke,
     );
-    // Inner decorative ring.
+    // Faint inner shadow under the rim — sells the bevel.
+    canvas.drawCircle(
+      center,
+      radius - 2,
+      Paint()
+        ..color = Colors.black.withValues(alpha: isDark ? 0.22 : 0.06)
+        ..strokeWidth = 1.0
+        ..style = PaintingStyle.stroke,
+    );
+
+    // 7) Inner decorative gold hairline.
     canvas.drawCircle(
       center,
       radius * 0.74,
       Paint()
         ..color = _goldSoft.withValues(alpha: 0.22)
-        ..strokeWidth = 0.8
+        ..strokeWidth = 0.7
         ..style = PaintingStyle.stroke,
     );
 
-    // Rotate the dial so North follows True North relative to
-    // the phone's current heading.
+    // 8) Rotated dial content — North follows True North.
     canvas.save();
     canvas.translate(center.dx, center.dy);
     canvas.rotate(-heading * math.pi / 180);
 
-    // Tick marks — every 10°, with the four cardinals
-    // emphasised.
+    // 8a) Tick marks — pulled in 4px so they don't kiss the rim.
     for (int deg = 0; deg < 360; deg += 10) {
       final a = (deg - 90) * math.pi / 180;
       final isCardinal = deg % 90 == 0;
       final isHalfCard = deg % 30 == 0;
-      final tickLen = isCardinal ? 12.0 : (isHalfCard ? 7.0 : 4.0);
+      final tickLen = isCardinal ? 10.0 : (isHalfCard ? 6.0 : 3.5);
+      final outerR = radius - 4;
       canvas.drawLine(
-        Offset(radius * math.cos(a), radius * math.sin(a)),
+        Offset(outerR * math.cos(a), outerR * math.sin(a)),
         Offset(
-          (radius - tickLen) * math.cos(a),
-          (radius - tickLen) * math.sin(a),
+          (outerR - tickLen) * math.cos(a),
+          (outerR - tickLen) * math.sin(a),
         ),
         Paint()
           ..color = isCardinal
-              ? _goldSoft.withValues(alpha: 0.85)
-              : _textMuted.withValues(alpha: isHalfCard ? 0.55 : 0.35)
-          ..strokeWidth = isCardinal ? 1.5 : 0.7
+              ? _goldSoft.withValues(alpha: 0.90)
+              : _textMuted.withValues(alpha: isHalfCard ? 0.55 : 0.30)
+          ..strokeWidth = isCardinal ? 1.6 : 0.7
           ..strokeCap = StrokeCap.round,
       );
     }
 
-    // Qibla bearing ray — drawn BEFORE the cardinal letters so
-    // the letters paint on top when they collide visually.
+    // 8b) Qibla ray — short, drawn from near the centre to JUST
+    //     before the Kaaba marker. Gradient from a translucent
+    //     accent tint into deep gold so the ray reads as light
+    //     emerging from the dial.
     final qa = (qiblaBearing - 90) * math.pi / 180;
+    final qrayStart = Offset(18 * math.cos(qa), 18 * math.sin(qa));
+    final qrayEnd = Offset(
+      (radius * 0.55) * math.cos(qa),
+      (radius * 0.55) * math.sin(qa),
+    );
     canvas.drawLine(
-      Offset(20 * math.cos(qa), 20 * math.sin(qa)),
-      Offset(
-        (radius - 32) * math.cos(qa),
-        (radius - 32) * math.sin(qa),
-      ),
+      qrayStart,
+      qrayEnd,
       Paint()
-        ..color = aligned ? _alignedGlow : _goldDeep
-        ..strokeWidth = 2.0
+        ..shader = LinearGradient(
+          colors: aligned
+              ? [_alignedGlow.withValues(alpha: 0.55), _alignedGlow]
+              : [accent.withValues(alpha: 0.40), _goldDeep],
+        ).createShader(Rect.fromPoints(qrayStart, qrayEnd))
+        ..strokeWidth = 2.4
         ..strokeCap = StrokeCap.round,
     );
-    // Slightly smaller Kaaba marker so its silhouette can't
-    // swallow an adjacent cardinal letter.
+
+    // 8c) Kaaba marker — its own inner orbit at `radius * 0.62`
+    //     so the outer cardinal labels (at `radius - 22`) can
+    //     NEVER overlap it.
+    final markerR = radius * 0.62;
     final markerCenter = Offset(
-      (radius - 22) * math.cos(qa),
-      (radius - 22) * math.sin(qa),
+      markerR * math.cos(qa),
+      markerR * math.sin(qa),
+    );
+    // Soft glow under the marker.
+    canvas.drawCircle(
+      markerCenter,
+      15,
+      Paint()
+        ..color = (aligned ? _alignedGlow : _goldDeep)
+            .withValues(alpha: 0.32)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 8),
     );
     canvas.drawCircle(
       markerCenter,
-      8.5,
+      9.5,
       Paint()
         ..shader = RadialGradient(
+          center: const Alignment(-0.3, -0.3),
           colors: aligned
-              ? const [Color(0xFF9FE3B5), Color(0xFF3F8A5E)]
+              ? const [Color(0xFFB9EAC9), Color(0xFF3F8A5E)]
               : const [_goldSoft, _goldDeep],
-        ).createShader(
-          Rect.fromCircle(center: markerCenter, radius: 8.5),
-        ),
+        ).createShader(Rect.fromCircle(center: markerCenter, radius: 9.5)),
     );
-    // Counter-rotated Kaaba glyph at the marker — small font so
-    // the cardinal letters orbiting around it stay dominant.
+    // Counter-rotated Kaaba glyph.
     canvas.save();
     canvas.translate(markerCenter.dx, markerCenter.dy);
     canvas.rotate(heading * math.pi / 180);
     final ktp = TextPainter(
       text: const TextSpan(
         text: '🕋',
-        style: TextStyle(fontSize: 11, height: 1),
+        style: TextStyle(fontSize: 12, height: 1),
       ),
       textDirection: TextDirection.ltr,
     )..layout();
     ktp.paint(canvas, Offset(-ktp.width / 2, -ktp.height / 2));
     canvas.restore();
 
-    // Cardinal letters — PAINTED LAST inside the rotated dial
-    // so they win every z-order collision with the Qibla
-    // marker. North is the most prominent (gold, bigger,
-    // bolder); the other three are quieter.
+    // 8d) Cardinal letters — painted LAST so they always win the
+    //     z-order. They sit at `radius - 22` (well outside the
+    //     Kaaba marker's `radius * 0.62` orbit), so the two
+    //     never collide visually.
     for (int i = 0; i < 4; i++) {
       final a = (i * 90 - 90) * math.pi / 180;
       final pos = Offset(
-        (radius - 18) * math.cos(a),
-        (radius - 18) * math.sin(a),
+        (radius - 22) * math.cos(a),
+        (radius - 22) * math.sin(a),
       );
       final tp = TextPainter(
         text: TextSpan(
           text: cardinals[i],
           style: TextStyle(
-            color: i == 0 ? _goldSoft : _textMain.withValues(alpha: 0.78),
-            fontSize: i == 0 ? 18 : 14,
+            color: i == 0 ? _goldSoft : _textMain.withValues(alpha: 0.82),
+            fontSize: i == 0 ? 17 : 13.5,
             fontWeight: i == 0 ? FontWeight.w800 : FontWeight.w600,
             height: 1.0,
+            letterSpacing: 0.2,
           ),
         ),
         textDirection: TextDirection.ltr,
@@ -1271,25 +1592,37 @@ class _CompassPainter extends CustomPainter {
 
     canvas.restore(); // end dial rotation
 
-    // Fixed top indicator — small downward gold triangle just
-    // above the dial showing where the phone is currently
-    // pointing.
+    // 9) Fixed top indicator triangle — points down at the
+    //    cardinal currently under the phone's heading. Soft
+    //    glow under it sells it as a small jewel.
     final tip = Offset(center.dx, center.dy - radius - 2);
+    canvas.drawCircle(
+      Offset(tip.dx, tip.dy - 6),
+      9,
+      Paint()
+        ..color = (aligned ? _alignedGlow : _goldDeep)
+            .withValues(alpha: 0.45)
+        ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 6),
+    );
     final indicator = Path()
       ..moveTo(tip.dx, tip.dy)
-      ..lineTo(tip.dx - 7, tip.dy - 12)
-      ..lineTo(tip.dx + 7, tip.dy - 12)
+      ..lineTo(tip.dx - 8, tip.dy - 14)
+      ..lineTo(tip.dx + 8, tip.dy - 14)
       ..close();
     canvas.drawPath(
       indicator,
       Paint()
-        ..color = aligned ? _alignedGlow : _goldSoft
-        ..style = PaintingStyle.fill,
+        ..shader = LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: aligned
+              ? const [Color(0xFFB9EAC9), _alignedGlow]
+              : const [_goldSoft, _goldDeep],
+        ).createShader(Rect.fromLTWH(tip.dx - 8, tip.dy - 14, 16, 14)),
     );
 
-    // Centre crescent — same hand-drawn brand mark used by the
-    // home-screen widgets.
-    _drawCrescent(canvas, center, 12);
+    // 10) Centre crescent brand mark.
+    _drawCrescent(canvas, center, 13);
 
     if (compassUnavailable) {
       // No sensor — quiet hint inside the dial.
@@ -1308,7 +1641,7 @@ class _CompassPainter extends CustomPainter {
         canvas,
         Offset(
           center.dx - hintTp.width / 2,
-          center.dy - hintTp.height / 2,
+          center.dy - hintTp.height / 2 + 18,
         ),
       );
     }
@@ -1346,5 +1679,6 @@ class _CompassPainter extends CustomPainter {
       old.pulse != pulse ||
       old.compassUnavailable != compassUnavailable ||
       old.isDark != isDark ||
-      old.cardinals[0] != cardinals[0];
+      old.cardinals[0] != cardinals[0] ||
+      old.accent != accent;
 }
