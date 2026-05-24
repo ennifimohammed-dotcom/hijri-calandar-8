@@ -145,6 +145,15 @@ class AppProvider extends ChangeNotifier {
   /// authoritative and overrides any inference from `_region`.
   /// Persisted under `country_code` in SharedPreferences.
   String _countryCode = '';
+  /// Safety valve for the hybrid Hijri kernel. When false, the
+  /// kernel is told to forget the active country, which makes
+  /// EVERY conversion fall through to the local arithmetic
+  /// engine — exactly the pre-hybrid behaviour. Useful when the
+  /// user wants offline-only operation, doesn't trust the
+  /// online source, or hits an edge case in the cached data
+  /// they want to escape from without uninstalling.
+  /// Persisted under `use_hybrid_hijri` (default `true`).
+  bool _useHybridHijri = true;
 
   // ── Getters ───────────────────────────────────────────────
   HijriDate get currentMonth => _currentMonth;
@@ -301,6 +310,14 @@ class AppProvider extends ChangeNotifier {
   /// the legacy region strings — only the modern ISO codes.
   /// Adding a new region is a one-line edit to the switch.
   void _syncHybridCountry() {
+    // Safety valve: when the user has disabled the hybrid
+    // engine, push an empty country into the kernel — which
+    // makes EVERY conversion fall through to the arithmetic
+    // fallback, byte-identical to the pre-hybrid build.
+    if (!_useHybridHijri) {
+      kernel.HijriHybrid.clearCountry();
+      return;
+    }
     // Uses the public `country` getter so this method picks up
     // whatever source-of-truth is currently authoritative —
     // `_countryCode` if the user has visited the new picker,
@@ -445,13 +462,66 @@ class AppProvider extends ChangeNotifier {
   /// the Hijri header in the calendar screen and under the
   /// today's-date line in the Settings profile card.
   ///
-  /// Format: "🇲🇦 وزارة الأوقاف" (flag + authority short name).
-  /// Falls back to "🌐 أم القرى" when the user is on the
-  /// global pseudo-country.
+  /// Three possible states:
+  ///   * Hybrid off  → "🧮 حساب محلي" (Local calculation) — the
+  ///                   badge must not pretend a ministry source
+  ///                   when the hybrid engine is disabled.
+  ///   * Country set → "🇲🇦 وزارة الأوقاف" (flag + authority).
+  ///   * Global UAQ  → "🌐 أم القرى الافتراضي".
   String get hijriSourceLabel {
+    if (!_useHybridHijri) {
+      return switch (_locale) {
+        'ar' => '🧮 حساب محلي',
+        'fr' => '🧮 Calcul local',
+        'es' => '🧮 Cálculo local',
+        _ => '🧮 Local calculation',
+      };
+    }
     final c = hijriCountryByCode(country);
     final name = c.localizedAuthority(_locale);
     return '${c.flag} $name';
+  }
+
+  /// Whether the hybrid engine is currently armed. When
+  /// `false`, kernel conversions always go through the local
+  /// arithmetic engine — same code path as before the hybrid
+  /// layer landed. Exposed so the Settings UI can render a
+  /// toggle and grey out the "Refresh now" / auto-detect
+  /// buttons when the user has switched off online sources.
+  bool get useHybridHijri => _useHybridHijri;
+
+  /// Arms / disarms the hybrid engine. Symmetric counterpart of
+  /// the boolean state — handles the cascade (clear or restore
+  /// the kernel's active country, recompute `_today`, invalidate
+  /// caches, persist, notify, reschedule notifications) in one
+  /// call so the Settings UI can just bind a switch to it.
+  Future<void> setUseHybridHijri(bool value) async {
+    if (_useHybridHijri == value) return;
+    _useHybridHijri = value;
+    _syncHybridCountry();
+    _today = _todayForRegion();
+    _currentMonth = HijriDate(_today.hYear, _today.hMonth, 1);
+    _selectedDay = _today;
+    _engine.invalidate();
+    await _savePrefs();
+    notifyListeners();
+    await _repo.rescheduleAllNotifications();
+    _requestIslamicReschedule();
+  }
+
+  /// Wipes the hybrid cache (both the in-memory mirror and the
+  /// SharedPreferences entries) and recomputes today's date so
+  /// the calendar header reflects the post-clear state
+  /// immediately. The next conversion that needs data will
+  /// trigger a fresh background refresh from AlAdhan if the
+  /// hybrid engine is armed; otherwise it falls through to
+  /// arithmetic. Wired to a "Clear cache" link in the
+  /// Hijri-source card under advanced settings.
+  Future<void> clearHijriCache() async {
+    await HijriCache.clear();
+    _today = _todayForRegion();
+    _engine.invalidate();
+    notifyListeners();
   }
 
   /// Did the most recent kernel call actually hit the live
@@ -463,6 +533,7 @@ class AppProvider extends ChangeNotifier {
   /// if the visible Gregorian month is currently cached for the
   /// active country, `false` otherwise.
   bool get hijriSourceIsLive {
+    if (!_useHybridHijri) return false; // Safety valve engaged.
     if (country == 'XX') return false; // Global UAQ is always arithmetic.
     final now = DateTime.now();
     return HijriCache.lookup(
@@ -1007,6 +1078,11 @@ class AppProvider extends ChangeNotifier {
       'hijri_source_detecting':    {'ar':'جاري الاكتشاف…','fr':'Détection…','en':'Detecting…','es':'Detectando…'},
       'hijri_source_detected':     {'ar':'تم اكتشاف بلدك','fr':'Pays détecté','en':'Country detected','es':'País detectado'},
       'hijri_source_detect_fail':  {'ar':'تعذّر اكتشاف البلد','fr':'Détection impossible','en':'Could not detect','es':'No se pudo detectar'},
+      // Phase 9 — safety-valve toggle + cache reset.
+      'hijri_source_use_online':      {'ar':'استعمال التقويم الرسمي عبر الإنترنت','fr':'Utiliser le calendrier officiel en ligne','en':'Use official online calendar','es':'Usar calendario oficial en línea'},
+      'hijri_source_use_online_hint': {'ar':'عند الإيقاف، يستعمل التطبيق الحساب المحلي فقط','fr':'Désactivé, l\'app utilise uniquement le calcul local','en':'When off, the app uses local calculation only','es':'Cuando está apagado, la app usa solo el cálculo local'},
+      'hijri_source_clear_cache':     {'ar':'مسح الذاكرة المحلية','fr':'Effacer le cache local','en':'Clear local cache','es':'Borrar caché local'},
+      'hijri_source_cache_cleared':   {'ar':'تم مسح الذاكرة','fr':'Cache effacé','en':'Cache cleared','es':'Caché borrado'},
       'delete':              {'ar':'حذف','fr':'Supprimer','en':'Delete','es':'Eliminar'},
       'edit':                {'ar':'تعديل','fr':'Modifier','en':'Edit','es':'Editar'},
     };
@@ -1024,6 +1100,9 @@ class AppProvider extends ChangeNotifier {
       // separately from `region` so older builds reading
       // `region` keep working.
       await prefs.setString('country_code', _countryCode);
+      // Phase 9 — safety valve. Default is `true` so an absent
+      // key (older installs) keeps the new hybrid path armed.
+      await prefs.setBool('use_hybrid_hijri', _useHybridHijri);
       await prefs.setInt('hijri_manual_adjust', _hijriManualAdjust);
       await prefs.setString('view_mode', _viewMode.name);
       await prefs.setInt('accent_index', _accentIndex);
@@ -1072,6 +1151,11 @@ class AppProvider extends ChangeNotifier {
       // back to deriving from `_region`.
       final cc = prefs.getString('country_code');
       if (cc != null && cc.isNotEmpty) _countryCode = cc;
+      // Phase 9 — safety-valve toggle. Absent key (older
+      // installs) defaults to true so the hybrid layer is on
+      // by default for the migration cohort.
+      final hybrid = prefs.getBool('use_hybrid_hijri');
+      if (hybrid != null) _useHybridHijri = hybrid;
       final adj = prefs.getInt('hijri_manual_adjust');
       // Widened clamp matches the writer in [setHijriManualAdjust].
       if (adj != null) _hijriManualAdjust = adj.clamp(-3, 3);

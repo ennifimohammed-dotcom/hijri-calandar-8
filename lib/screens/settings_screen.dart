@@ -400,6 +400,13 @@ class _HijriSourceSectionState extends State<_HijriSourceSection> {
               const SizedBox(height: 10),
 
               // ─── Auto-detect + Refresh row ───────────────
+              //
+              // Both buttons disable themselves when the hybrid
+              // engine is off — pressing them would do nothing
+              // useful since the kernel ignores cache writes in
+              // that mode anyway. The visual greying-out (handled
+              // inside `_PillButton` via the `onTap: null` path)
+              // is enough; no separate tooltip needed.
               Row(
                 children: [
                   Expanded(
@@ -410,7 +417,9 @@ class _HijriSourceSectionState extends State<_HijriSourceSection> {
                           : p.label('hijri_source_auto_detect'),
                       busy: _detecting,
                       isDark: isDark,
-                      onTap: _detecting ? null : () => _onDetect(p),
+                      onTap: (_detecting || !p.useHybridHijri)
+                          ? null
+                          : () => _onDetect(p),
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -422,7 +431,9 @@ class _HijriSourceSectionState extends State<_HijriSourceSection> {
                           : p.label('hijri_source_refresh'),
                       busy: _refreshing,
                       isDark: isDark,
-                      onTap: _refreshing ? null : () => _onRefresh(p),
+                      onTap: (_refreshing || !p.useHybridHijri)
+                          ? null
+                          : () => _onRefresh(p),
                     ),
                   ),
                 ],
@@ -438,6 +449,12 @@ class _HijriSourceSectionState extends State<_HijriSourceSection> {
               // ─── Manual ±3-day adjuster ──────────────────
               const Divider(height: 18, thickness: 0.5),
               _HijriAdjustRow(p: p, isDark: isDark),
+
+              // ─── Phase 9 — safety valve ────────────────────
+              const Divider(height: 18, thickness: 0.5),
+              _HybridToggleRow(p: p, isDark: isDark),
+              const SizedBox(height: 8),
+              _ClearCacheLink(p: p, isDark: isDark),
             ],
           ),
         ),
@@ -894,6 +911,115 @@ class _CountryRow extends StatelessWidget {
                   color: AppColors.green,
                 ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Phase 9 — hybrid on/off toggle row ─────────────────────
+//
+// Sits at the bottom of the Hijri-source card. When OFF, the
+// kernel falls back to the local arithmetic engine for every
+// conversion (pre-hybrid behaviour). The label + hint are
+// localized into all four supported app languages.
+class _HybridToggleRow extends StatelessWidget {
+  final AppProvider p;
+  final bool isDark;
+  const _HybridToggleRow({required this.p, required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                p.label('hijri_source_use_online'),
+                style: appFont(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: isDark ? AppColors.darkText : AppColors.text,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                p.label('hijri_source_use_online_hint'),
+                style: appFont(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w400,
+                  color: AppColors.text3,
+                  height: 1.35,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 12),
+        Transform.scale(
+          scale: 0.85,
+          child: Switch.adaptive(
+            value: p.useHybridHijri,
+            onChanged: (v) => p.setUseHybridHijri(v),
+            activeThumbColor: AppColors.green,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ─── Phase 9 — clear-cache escape hatch ─────────────────────
+//
+// A tiny inline link rather than a button — feels like a safe
+// "recovery action" and not something the user would tap by
+// accident. Surfaces a SnackBar after the cache is wiped so
+// the user sees confirmation that the action took effect.
+class _ClearCacheLink extends StatelessWidget {
+  final AppProvider p;
+  final bool isDark;
+  const _ClearCacheLink({required this.p, required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: AlignmentDirectional.centerStart,
+      child: TextButton.icon(
+        onPressed: () async {
+          await p.clearHijriCache();
+          if (!context.mounted) return;
+          ScaffoldMessenger.of(context)
+            ..removeCurrentSnackBar()
+            ..showSnackBar(SnackBar(
+              content: Text(
+                p.label('hijri_source_cache_cleared'),
+                style: appFont(fontSize: 12.5, color: Colors.white),
+              ),
+              backgroundColor: AppColors.green,
+              behavior: SnackBarBehavior.floating,
+              duration: const Duration(milliseconds: 2000),
+              margin: const EdgeInsets.all(12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ));
+        },
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
+          minimumSize: const Size(0, 28),
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          foregroundColor: AppColors.green,
+        ),
+        icon: const Icon(Icons.delete_sweep_outlined, size: 14),
+        label: Text(
+          p.label('hijri_source_clear_cache'),
+          style: appFont(
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+            color: AppColors.green,
           ),
         ),
       ),
