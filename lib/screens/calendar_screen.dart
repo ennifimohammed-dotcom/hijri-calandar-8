@@ -6,6 +6,7 @@ import '../utils/hijri_utils.dart';
 import '../utils/hijri_kernel.dart' as hijri_kernel;
 import '../utils/text_format.dart';
 import '../theme.dart';
+import '../widgets/hijri_source_badge.dart';
 import 'add_event_screen.dart';
 import 'search_screen.dart';
 
@@ -228,6 +229,19 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                     color: isDark ? AppColors.darkText3 : AppColors.text3,
+                  ),
+                ),
+                // Phase 7 — transparency badge. One small line
+                // telling the user WHERE today's Hijri date comes
+                // from (country authority + cache freshness).
+                // Tappable: opens an info sheet with "refresh
+                // now" + a shortcut to Settings.
+                const SizedBox(height: 4),
+                Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: HijriSourceBadge(
+                    compact: true,
+                    darkOverride: isDark,
                   ),
                 ),
               ],

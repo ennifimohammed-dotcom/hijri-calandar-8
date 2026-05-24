@@ -440,6 +440,39 @@ class AppProvider extends ChangeNotifier {
   /// Settings screen formats this as "Last update: 3h ago".
   DateTime? get hijriLastSync => HijriCache.lastSyncFor(country);
 
+  /// Short, locale-aware description of where today's Hijri
+  /// date comes from. Used by the small "source" badge under
+  /// the Hijri header in the calendar screen and under the
+  /// today's-date line in the Settings profile card.
+  ///
+  /// Format: "🇲🇦 وزارة الأوقاف" (flag + authority short name).
+  /// Falls back to "🌐 أم القرى" when the user is on the
+  /// global pseudo-country.
+  String get hijriSourceLabel {
+    final c = hijriCountryByCode(country);
+    final name = c.localizedAuthority(_locale);
+    return '${c.flag} $name';
+  }
+
+  /// Did the most recent kernel call actually hit the live
+  /// cache, or did it fall back to the arithmetic engine?
+  /// Wired to a small dot indicator next to the source badge so
+  /// the user can tell at a glance whether the displayed date
+  /// reflects the ministry's published calendar (green) or the
+  /// local fallback (gold). Reads the cache directly — `true`
+  /// if the visible Gregorian month is currently cached for the
+  /// active country, `false` otherwise.
+  bool get hijriSourceIsLive {
+    if (country == 'XX') return false; // Global UAQ is always arithmetic.
+    final now = DateTime.now();
+    return HijriCache.lookup(
+          countryCode: country,
+          gregorianYear: now.year,
+          gregorianMonth: now.month,
+        ) !=
+        null;
+  }
+
   // The old `_regionOffset(code)` switch was the source of truth
   // for the country adjustment before the hybrid kernel landed.
   // It has been deleted — the adjustment now lives next to each

@@ -8,6 +8,7 @@ import '../providers/app_provider.dart';
 import '../utils/text_format.dart';
 import '../theme.dart';
 import '../data/hijri_countries.dart';
+import '../widgets/hijri_source_badge.dart';
 import 'notification_settings_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -194,6 +195,13 @@ class _ProfileCard extends StatelessWidget {
                     style: appFont(fontSize: 11, color: AppColors.green,
                         fontWeight: FontWeight.w700)),
                   Text(gregStr, style: appFont(fontSize: 10, color: AppColors.text3)),
+                  const SizedBox(height: 6),
+                  // Phase 7 — transparency. Tap surfaces the
+                  // full source sheet (authority, last sync,
+                  // refresh button). Lets the user audit where
+                  // their displayed Hijri date came from
+                  // without diving into the Hijri section.
+                  HijriSourceBadge(compact: true, darkOverride: isDark),
                 ],
               )),
               Container(
