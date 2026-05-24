@@ -7,6 +7,7 @@ import '../models/notification_settings.dart';
 import '../providers/app_provider.dart';
 import '../utils/text_format.dart';
 import '../theme.dart';
+import '../data/hijri_countries.dart';
 import 'notification_settings_screen.dart';
 
 class SettingsScreen extends StatelessWidget {
@@ -24,6 +25,7 @@ class SettingsScreen extends StatelessWidget {
               text: p.label('settings'), isDark: isDark, large: true)),
             SliverToBoxAdapter(child: _ProfileCard(isDark: isDark, p: p)),
             SliverToBoxAdapter(child: _LanguageSection(p: p, isDark: isDark)),
+            SliverToBoxAdapter(child: _HijriSourceSection(p: p, isDark: isDark)),
             SliverToBoxAdapter(child: _AppearanceSection(p: p, isDark: isDark)),
             SliverToBoxAdapter(child: _CalendarSection(p: p, isDark: isDark)),
             SliverToBoxAdapter(child: _NotificationsSection(p: p, isDark: isDark)),
@@ -227,40 +229,17 @@ class _LanguageSection extends StatelessWidget {
       ('ar', '🇲🇦', 'عربي'), ('fr', '🇫🇷', 'FR'),
       ('en', '🇬🇧', 'EN'),   ('es', '🇪🇸', 'ES'),
     ];
-    // Two regions only: Umm al-Qura (the calendrical baseline used
-    // by Saudi Arabia) and Morocco (Ministry of Habous and Islamic
-    // Affairs — typically lags UAQ by one day via local sighting).
-    final regions = [
-      (
-        'global',
-        '🕋',
-        loc == 'ar'
-            ? 'أم القرى'
-            : loc == 'es'
-                ? 'Umm al-Qura'
-                : loc == 'en'
-                    ? 'Umm al-Qura'
-                    : 'Oumm al-Qoura',
-      ),
-      (
-        'ma',
-        '🇲🇦',
-        loc == 'ar'
-            ? 'المغرب'
-            : loc == 'es'
-                ? 'Marruecos'
-                : loc == 'en'
-                    ? 'Morocco'
-                    : 'Maroc',
-      ),
-    ];
+    // Region picker was extracted into its own
+    // `_HijriSourceSection` (Phase 6) — it now offers all 30
+    // AlAdhan-supported countries plus auto-detect / refresh /
+    // manual adjustment in a single dedicated card.
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _SectionTitle(
-          text: loc == 'ar' ? 'اللغة والمنطقة'
-              : loc == 'fr' ? 'LANGUE & RÉGION' : 'LANGUAGE & REGION',
+          text: loc == 'ar' ? 'اللغة'
+              : loc == 'fr' ? 'LANGUE' : 'LANGUAGE',
           isDark: isDark),
         _Card(
           isDark: isDark,
@@ -301,50 +280,615 @@ class _LanguageSection extends StatelessWidget {
                   ));
                 }).toList(),
               ),
-              const SizedBox(height: 14),
-              Text(loc == 'ar' ? 'المنطقة'
-                  : loc == 'fr' ? 'Région'
-                  : loc == 'es' ? 'Región'
-                  : 'Region',
-                style: appFont(fontSize: 10, fontWeight: FontWeight.w700,
-                    color: AppColors.text3, letterSpacing: 2)),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 6, runSpacing: 6,
-                children: regions.map((r) {
-                  final active = p.region == r.$1;
-                  return GestureDetector(
-                    onTap: () => p.setRegion(r.$1),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 150),
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                      decoration: BoxDecoration(
-                        color: active
-                            ? AppColors.green
-                            : (isDark ? AppColors.darkBg : AppColors.bg),
-                        borderRadius: BorderRadius.circular(20),
-                        border: Border.all(
-                            color: active ? AppColors.green : AppColors.border)),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        Text(r.$2, style: const TextStyle(fontSize: 12)),
-                        const SizedBox(width: 5),
-                        Text(r.$3, style: appFont(
-                            fontSize: 10,
-                            fontWeight: FontWeight.w700,
-                            color: active
-                                ? Colors.white
-                                : (isDark ? AppColors.darkText2 : AppColors.text2))),
-                      ]),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// 2b. HIJRI CALENDAR SOURCE — country, authority, sync, manual adj
+// ═══════════════════════════════════════════════════════════
+//
+// The new picker for the Hybrid Hijri Calendar. Shows the
+// active country + the religious authority whose calendar is
+// being followed, exposes a 30-country picker bottom sheet, an
+// auto-detect button (GPS + locale), a "refresh now" trigger
+// with a "last sync" timestamp, and the manual ±3-day
+// adjustment row. Replaces the old 2-region toggle that lived
+// at the bottom of [_LanguageSection].
+class _HijriSourceSection extends StatefulWidget {
+  final AppProvider p;
+  final bool isDark;
+  const _HijriSourceSection({required this.p, required this.isDark});
+
+  @override
+  State<_HijriSourceSection> createState() => _HijriSourceSectionState();
+}
+
+class _HijriSourceSectionState extends State<_HijriSourceSection> {
+  bool _refreshing = false;
+  bool _detecting = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.p;
+    final loc = p.locale;
+    final isDark = widget.isDark;
+    final activeCountry = hijriCountryByCode(p.country);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _SectionTitle(
+          text: p.label('hijri_source').toUpperCase(),
+          isDark: isDark,
+        ),
+        _Card(
+          isDark: isDark,
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ─── Country picker tile ─────────────────────
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => _openCountryPicker(context, p),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 12),
+                  decoration: BoxDecoration(
+                    color: isDark ? AppColors.darkBg : AppColors.bg,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: AppColors.green.withValues(alpha: 0.35),
+                      width: 1.2,
                     ),
-                  );
-                }).toList(),
+                  ),
+                  child: Row(
+                    children: [
+                      Text(activeCountry.flag,
+                          style: const TextStyle(fontSize: 26)),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              activeCountry.localizedName(loc),
+                              style: appFont(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800,
+                                color: isDark
+                                    ? AppColors.darkText
+                                    : AppColors.text,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              activeCountry.localizedAuthority(loc),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: appFont(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w500,
+                                color: AppColors.text3,
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Icon(Icons.chevron_right_rounded,
+                          color: AppColors.text3, size: 22),
+                    ],
+                  ),
+                ),
               ),
+
+              const SizedBox(height: 10),
+
+              // ─── Auto-detect + Refresh row ───────────────
+              Row(
+                children: [
+                  Expanded(
+                    child: _PillButton(
+                      icon: Icons.my_location_rounded,
+                      label: _detecting
+                          ? p.label('hijri_source_detecting')
+                          : p.label('hijri_source_auto_detect'),
+                      busy: _detecting,
+                      isDark: isDark,
+                      onTap: _detecting ? null : () => _onDetect(p),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _PillButton(
+                      icon: Icons.refresh_rounded,
+                      label: _refreshing
+                          ? p.label('hijri_source_refreshing')
+                          : p.label('hijri_source_refresh'),
+                      busy: _refreshing,
+                      isDark: isDark,
+                      onTap: _refreshing ? null : () => _onRefresh(p),
+                    ),
+                  ),
+                ],
+              ),
+
               const SizedBox(height: 12),
+
+              // ─── Last sync info ──────────────────────────
+              _LastSyncRow(p: p, isDark: isDark),
+
+              const SizedBox(height: 10),
+
+              // ─── Manual ±3-day adjuster ──────────────────
+              const Divider(height: 18, thickness: 0.5),
               _HijriAdjustRow(p: p, isDark: isDark),
             ],
           ),
         ),
       ],
+    );
+  }
+
+  Future<void> _onDetect(AppProvider p) async {
+    setState(() => _detecting = true);
+    String iso = 'XX';
+    try {
+      iso = await p.detectCountryAndApply();
+    } catch (_) {
+      iso = 'XX';
+    }
+    if (!mounted) return;
+    setState(() => _detecting = false);
+    final ok = isHijriCountrySupported(iso) && iso != 'XX';
+    final c = hijriCountryByCode(iso);
+    _snack(
+      context,
+      ok
+          ? '${p.label('hijri_source_detected')} — ${c.flag} ${c.localizedName(p.locale)}'
+          : p.label('hijri_source_detect_fail'),
+      success: ok,
+    );
+  }
+
+  Future<void> _onRefresh(AppProvider p) async {
+    setState(() => _refreshing = true);
+    bool ok = false;
+    try {
+      ok = await p.refreshHijriCalendarNow();
+    } catch (_) {
+      ok = false;
+    }
+    if (!mounted) return;
+    setState(() => _refreshing = false);
+    _snack(
+      context,
+      p.label(ok ? 'hijri_source_sync_ok' : 'hijri_source_sync_fail'),
+      success: ok,
+    );
+  }
+
+  void _snack(BuildContext context, String text, {required bool success}) {
+    ScaffoldMessenger.of(context)
+      ..removeCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(text, style: appFont(fontSize: 12.5, color: Colors.white)),
+        backgroundColor: success
+            ? AppColors.green
+            : const Color(0xFFD94F4F),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(milliseconds: 2400),
+        margin: const EdgeInsets.all(12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ));
+  }
+
+  Future<void> _openCountryPicker(BuildContext context, AppProvider p) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) => _CountryPickerSheet(p: p, isDark: widget.isDark),
+    );
+  }
+}
+
+// ─── Pill button with optional loading spinner ──────────────
+class _PillButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool busy;
+  final bool isDark;
+  final VoidCallback? onTap;
+  const _PillButton({
+    required this.icon,
+    required this.label,
+    required this.busy,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null;
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedOpacity(
+        duration: const Duration(milliseconds: 120),
+        opacity: enabled ? 1.0 : 0.55,
+        child: Container(
+          height: 40,
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          decoration: BoxDecoration(
+            color: isDark ? AppColors.darkBg : AppColors.bg,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: isDark ? AppColors.darkBorder : AppColors.border,
+            ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (busy)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 1.8,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                        Color(0xFFC8943A)),
+                  ),
+                )
+              else
+                Icon(icon, size: 16, color: AppColors.green),
+              const SizedBox(width: 6),
+              Flexible(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: appFont(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w700,
+                    color: isDark ? AppColors.darkText : AppColors.text,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── "Last update: 3h ago" row ─────────────────────────────
+class _LastSyncRow extends StatelessWidget {
+  final AppProvider p;
+  final bool isDark;
+  const _LastSyncRow({required this.p, required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    final ts = p.hijriLastSync;
+    final text = ts == null
+        ? p.label('hijri_source_never_synced')
+        : '${p.label('hijri_source_last_sync')}: ${_formatAgo(p, ts)}';
+    final color = ts == null ? AppColors.text3 : AppColors.green;
+    return Row(
+      children: [
+        Icon(
+          ts == null
+              ? Icons.cloud_off_rounded
+              : Icons.cloud_done_rounded,
+          size: 14,
+          color: color,
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 2,
+            style: appFont(
+              fontSize: 11,
+              fontWeight: FontWeight.w500,
+              color: isDark ? AppColors.darkText2 : AppColors.text2,
+              height: 1.35,
+            ),
+          ),
+        ),
+        if (ts != null) ...[
+          const SizedBox(width: 6),
+          Container(
+            width: 6,
+            height: 6,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: color,
+              boxShadow: [
+                BoxShadow(
+                  color: color.withValues(alpha: 0.55),
+                  blurRadius: 5,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  /// Humanises a timestamp into a localized "Nh ago" string.
+  /// Uses the four pre-translated buckets in the provider's
+  /// label map (`hijri_source_just_now`, `..._minutes_ago`,
+  /// `..._hours_ago`, `..._days_ago`) with `{n}` substitution.
+  static String _formatAgo(AppProvider p, DateTime ts) {
+    final diff = DateTime.now().difference(ts);
+    if (diff.inMinutes < 1) return p.label('hijri_source_just_now');
+    if (diff.inHours < 1) {
+      return p
+          .label('hijri_source_minutes_ago')
+          .replaceAll('{n}', '${diff.inMinutes}');
+    }
+    if (diff.inDays < 1) {
+      return p
+          .label('hijri_source_hours_ago')
+          .replaceAll('{n}', '${diff.inHours}');
+    }
+    return p
+        .label('hijri_source_days_ago')
+        .replaceAll('{n}', '${diff.inDays}');
+  }
+}
+
+// ─── Country picker modal bottom sheet ─────────────────────
+class _CountryPickerSheet extends StatefulWidget {
+  final AppProvider p;
+  final bool isDark;
+  const _CountryPickerSheet({required this.p, required this.isDark});
+
+  @override
+  State<_CountryPickerSheet> createState() => _CountryPickerSheetState();
+}
+
+class _CountryPickerSheetState extends State<_CountryPickerSheet> {
+  String _filter = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final p = widget.p;
+    final loc = p.locale;
+    final isDark = widget.isDark;
+    final media = MediaQuery.of(context);
+
+    final filtered = _filter.isEmpty
+        ? kHijriCountries
+        : kHijriCountries.where((c) {
+            final needle = _filter.toLowerCase();
+            return c.localizedName(loc).toLowerCase().contains(needle) ||
+                c.code.toLowerCase().contains(needle);
+          }).toList();
+
+    return DraggableScrollableSheet(
+      initialChildSize: 0.78,
+      minChildSize: 0.45,
+      maxChildSize: 0.95,
+      expand: false,
+      builder: (_, scrollCtrl) => Container(
+        decoration: BoxDecoration(
+          color: isDark ? AppColors.darkSurface : AppColors.white,
+          borderRadius: const BorderRadius.vertical(
+            top: Radius.circular(22),
+          ),
+        ),
+        padding: EdgeInsets.only(bottom: media.viewInsets.bottom),
+        child: Column(
+          children: [
+            // Grab handle
+            Container(
+              margin: const EdgeInsets.only(top: 10, bottom: 10),
+              width: 42,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.text3.withValues(alpha: 0.4),
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      p.label('hijri_source_select_title'),
+                      style: appFont(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                        color: isDark ? AppColors.darkText : AppColors.text,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.pop(context),
+                    icon: Icon(
+                      Icons.close_rounded,
+                      size: 22,
+                      color: isDark ? AppColors.darkText3 : AppColors.text3,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // ─── Search field ──────────────────────────────
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+              child: TextField(
+                onChanged: (v) => setState(() => _filter = v),
+                style: appFont(
+                  fontSize: 13,
+                  color: isDark ? AppColors.darkText : AppColors.text,
+                ),
+                decoration: InputDecoration(
+                  prefixIcon: Icon(
+                    Icons.search_rounded,
+                    size: 18,
+                    color: AppColors.text3,
+                  ),
+                  hintText: loc == 'ar'
+                      ? 'ابحث…'
+                      : loc == 'fr'
+                          ? 'Rechercher…'
+                          : loc == 'es'
+                              ? 'Buscar…'
+                              : 'Search…',
+                  hintStyle: appFont(fontSize: 13, color: AppColors.text3),
+                  filled: true,
+                  fillColor: isDark ? AppColors.darkBg : AppColors.bg,
+                  contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(
+                      color: isDark
+                          ? AppColors.darkBorder
+                          : AppColors.border,
+                    ),
+                  ),
+                  focusedBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(
+                      color: AppColors.green,
+                      width: 1.5,
+                    ),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                    borderSide: BorderSide(
+                      color: isDark
+                          ? AppColors.darkBorder
+                          : AppColors.border,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            // ─── Country list ──────────────────────────────
+            Expanded(
+              child: ListView.separated(
+                controller: scrollCtrl,
+                padding: const EdgeInsets.fromLTRB(8, 0, 8, 12),
+                itemCount: filtered.length,
+                separatorBuilder: (_, __) => const SizedBox(height: 2),
+                itemBuilder: (_, i) {
+                  final c = filtered[i];
+                  final active = p.country == c.code;
+                  return _CountryRow(
+                    country: c,
+                    active: active,
+                    locale: loc,
+                    isDark: isDark,
+                    onTap: () async {
+                      await p.setCountry(c.code);
+                      if (!mounted) return;
+                      Navigator.pop(context);
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CountryRow extends StatelessWidget {
+  final HijriCountry country;
+  final bool active;
+  final String locale;
+  final bool isDark;
+  final VoidCallback onTap;
+  const _CountryRow({
+    required this.country,
+    required this.active,
+    required this.locale,
+    required this.isDark,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+          decoration: BoxDecoration(
+            color: active
+                ? AppColors.green.withValues(alpha: 0.10)
+                : Colors.transparent,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: active
+                  ? AppColors.green.withValues(alpha: 0.55)
+                  : Colors.transparent,
+              width: 1.2,
+            ),
+          ),
+          child: Row(
+            children: [
+              Text(country.flag, style: const TextStyle(fontSize: 24)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      country.localizedName(locale),
+                      style: appFont(
+                        fontSize: 13.5,
+                        fontWeight: active
+                            ? FontWeight.w800
+                            : FontWeight.w700,
+                        color: isDark ? AppColors.darkText : AppColors.text,
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      country.localizedAuthority(locale),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: appFont(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w400,
+                        color: AppColors.text3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (active)
+                Icon(
+                  Icons.check_circle_rounded,
+                  size: 20,
+                  color: AppColors.green,
+                ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -810,12 +1354,12 @@ class _HijriAdjustRow extends StatelessWidget {
                 ? 'Ajuste manual del Hijri'
                 : 'Hijri manual adjustment';
     final hint = loc == 'ar'
-        ? 'بالأيام (−2 إلى +2)'
+        ? 'بالأيام (−3 إلى +3)'
         : loc == 'fr'
-            ? 'En jours (−2 à +2)'
+            ? 'En jours (−3 à +3)'
             : loc == 'es'
-                ? 'En días (−2 a +2)'
-                : 'In days (−2 to +2)';
+                ? 'En días (−3 a +3)'
+                : 'In days (−3 to +3)';
     return Row(
       children: [
         Expanded(

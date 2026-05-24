@@ -12,6 +12,8 @@ import '../services/notification_service.dart';
 import '../utils/app_logger.dart';
 import '../utils/hijri_kernel.dart' as kernel;
 import '../services/notification_settings_service.dart';
+import '../services/country_detector.dart';
+import '../services/hijri_cache.dart';
 import '../theme.dart';
 import '../utils/hijri_utils.dart';
 import '../data/hijri_countries.dart';
@@ -115,10 +117,13 @@ class AppProvider extends ChangeNotifier {
   /// headings, Roboto otherwise).
   String _fontFamily = 'amiri';
 
-  /// Region code for Hijri calendar synchronization. Each region has a
-  /// default day-offset relative to the Umm al-Qura baseline (see
-  /// [_regionOffset]). The user MAY further fine-tune via
-  /// [_hijriManualAdjust].
+  /// Legacy region code (`'ma'`, `'sa'`, `'global'`, ...). Kept
+  /// for backwards compatibility with the home-screen widgets
+  /// and any saved preference set before the hybrid country
+  /// picker landed. NEW code should prefer [country] (ISO 3166-1)
+  /// and the [setCountry] writer; [_region] is auto-derived
+  /// from `_countryCode` whenever the user goes through the
+  /// new picker.
   ///
   /// Defaults are sourced from the official calendrical practice in
   /// each country: Saudi Arabia & global use Umm al-Qura (offset 0);
@@ -134,6 +139,12 @@ class AppProvider extends ChangeNotifier {
   /// the user's pick.
   String _region = 'ma';
   int _hijriManualAdjust = 0;
+  /// New-style country ISO code (`'MA'`, `'SA'`, `'EG'`, ...).
+  /// Empty until the user opens the Settings → "Hijri source"
+  /// picker for the first time, at which point this becomes
+  /// authoritative and overrides any inference from `_region`.
+  /// Persisted under `country_code` in SharedPreferences.
+  String _countryCode = '';
 
   // ── Getters ───────────────────────────────────────────────
   HijriDate get currentMonth => _currentMonth;
@@ -145,7 +156,13 @@ class AppProvider extends ChangeNotifier {
   String get locale => _locale;
   String get region => _region;
   int get hijriManualAdjust => _hijriManualAdjust;
-  int get hijriDayOffset => _regionOffset(_region) + _hijriManualAdjust;
+  /// Total Hijri offset applied at every kernel conversion site.
+  /// Bundles the country's official adjustment (Maghreb +1,
+  /// everything else 0) with the user's manual ±3-day override.
+  /// The kernel splits this back into its two halves internally
+  /// — see [HijriHybrid] for the math.
+  int get hijriDayOffset =>
+      hijriCountryByCode(country).adjustment + _hijriManualAdjust;
   List<AppEvent> get userEvents => _repo.getCached();
   Map<String, bool> get islamicEventsEnabled =>
       Map.unmodifiable(_islamicEventsEnabled);
@@ -284,25 +301,25 @@ class AppProvider extends ChangeNotifier {
   /// the legacy region strings — only the modern ISO codes.
   /// Adding a new region is a one-line edit to the switch.
   void _syncHybridCountry() {
-    final iso = switch (_region) {
-      'ma' => 'MA',
-      'dz' => 'DZ',
-      'tn' => 'TN',
-      'sa' => 'SA',
-      'tr' => 'TR',
-      'id' => 'ID',
-      'global' => 'XX',
-      _ => 'XX',
-    };
-    final country = hijriCountryByCode(iso);
+    // Uses the public `country` getter so this method picks up
+    // whatever source-of-truth is currently authoritative —
+    // `_countryCode` if the user has visited the new picker,
+    // otherwise the legacy `_region` string.
+    final c = hijriCountryByCode(country);
     kernel.HijriHybrid.setCountry(
-      code: country.code,
-      adjustment: country.adjustment,
+      code: c.code,
+      adjustment: c.adjustment,
     );
   }
 
   Future<void> setHijriManualAdjust(int days) async {
-    final clamped = days.clamp(-2, 2);
+    // Clamp window widened from ±2 to ±3 to give the user more
+    // headroom for edge-case ministry announcements (e.g. a
+    // last-minute Eid sighting that lands two days off the
+    // calculated date). The AlAdhan API also accepts ±3 server
+    // side; ±4 would start producing nonsensical Hijri values
+    // so we cap there.
+    final clamped = days.clamp(-3, 3);
     if (_hijriManualAdjust == clamped) return;
     _hijriManualAdjust = clamped;
     _today = _todayForRegion();
@@ -314,29 +331,122 @@ class AppProvider extends ChangeNotifier {
     _requestIslamicReschedule();
   }
 
-  /// Region → default day-offset relative to Umm al-Qura.
-  /// Sources:
-  ///   • Saudi Arabia: Umm al-Qura (official)
-  ///   • Morocco: Ministry of Habous and Islamic Affairs (sighting,
-  ///     typically +1 day vs UAQ)
-  ///   • Algeria: Ministry of Religious Affairs (sighting, typically +1)
-  ///   • Tunisia: Ministry of Religious Affairs (calculation, ≈ UAQ)
-  ///   • Türkiye: Diyanet (calculation, aligned with UAQ)
-  ///   • Indonesia: Kementerian Agama (mostly aligned with UAQ)
-  ///   • Global: Umm al-Qura baseline
-  static int _regionOffset(String code) {
-    switch (code) {
-      case 'ma': return 1;
-      case 'dz': return 1;
-      case 'tn': return 0;
-      case 'sa': return 0;
-      case 'tr': return 0;
-      case 'id': return 0;
-      case 'global':
-      default:
-        return 0;
-    }
+  // ── Hybrid Hijri country picker ──────────────────────────
+  //
+  // The user-facing "Hijri calendar source" picker exposes the
+  // full 30-country list from [kHijriCountries]. The selection
+  // is stored in `_countryCode` (ISO 3166-1 alpha-2, uppercase)
+  // and persisted under the new `country_code` SharedPreferences
+  // key. The legacy `_region` string and its persistence key
+  // stay in place for backwards compatibility — the new picker
+  // writes BOTH so older code paths that still read `region`
+  // (e.g. the spiritual-mode hint in the home-screen widget)
+  // keep working.
+
+  /// Active country ISO code. Returns `_countryCode` if the
+  /// user has explicitly picked one, otherwise derives an ISO
+  /// code from the legacy `_region`. Always returns a valid
+  /// entry in [kHijriCountries] — falls back to `'XX'`.
+  String get country {
+    if (_countryCode.isNotEmpty) return _countryCode;
+    // Legacy region → ISO bridge for users who haven't visited
+    // the new picker yet.
+    return switch (_region) {
+      'ma' => 'MA',
+      'dz' => 'DZ',
+      'tn' => 'TN',
+      'sa' => 'SA',
+      'tr' => 'TR',
+      'id' => 'ID',
+      _ => 'XX',
+    };
   }
+
+  /// Picks a country by ISO 3166-1 code. Triggers everything
+  /// the kernel needs (cache retarget, `_today` recompute,
+  /// notification reschedule, persist) and is the only public
+  /// path the new Settings UI should call.
+  ///
+  /// Also keeps the legacy `_region` in sync so older code that
+  /// still reads it (spiritual-mode mood, the home-screen
+  /// widget's region label) stays consistent.
+  Future<void> setCountry(String iso) async {
+    final upper = iso.toUpperCase().trim();
+    if (upper.isEmpty) return;
+    if (_countryCode == upper) return;
+    _countryCode = upper;
+    // Keep the legacy region string aligned so any caller that
+    // still reads `p.region` (and there are a few in the home
+    // widgets) sees the same calendar identity.
+    _region = switch (upper) {
+      'MA' => 'ma',
+      'DZ' => 'dz',
+      'TN' => 'tn',
+      'SA' => 'sa',
+      'TR' => 'tr',
+      'ID' => 'id',
+      _ => 'global',
+    };
+    _syncHybridCountry();
+    _today = _todayForRegion();
+    _currentMonth = HijriDate(_today.hYear, _today.hMonth, 1);
+    _selectedDay = _today;
+    _engine.invalidate();
+    await _savePrefs();
+    notifyListeners();
+    await _repo.rescheduleAllNotifications();
+    _requestIslamicReschedule();
+  }
+
+  /// Asks [CountryDetector] for a best-effort country guess and
+  /// applies it. Returns the picked ISO code (`'XX'` on total
+  /// failure). Used by the "Auto-detect" button in Settings.
+  ///
+  /// Passes `requestPermission: true` so the user gets the
+  /// location-permission sheet if they haven't already granted
+  /// it via the Qibla screen.
+  Future<String> detectCountryAndApply() async {
+    final iso = await CountryDetector.detect(requestPermission: true);
+    if (iso.isNotEmpty) {
+      await setCountry(iso);
+    }
+    return iso;
+  }
+
+  /// Force-refreshes the hybrid cache for the visible Hijri
+  /// month's Gregorian span. Wrapper around
+  /// [HijriHybrid.forceRefresh] that the "Refresh now" button
+  /// in Settings can fire-and-await for a spinner. Returns
+  /// `true` on success, `false` on any failure.
+  Future<bool> refreshHijriCalendarNow() async {
+    final now = DateTime.now();
+    final ok = await kernel.HijriHybrid.forceRefresh(
+      gregorianYear: now.year,
+      gregorianMonth: now.month,
+    );
+    if (ok) {
+      // Cache content changed under us — recompute `_today` so
+      // the calendar header reflects the freshly synced value,
+      // then nudge listeners.
+      _today = _todayForRegion();
+      _engine.invalidate();
+      notifyListeners();
+    }
+    return ok;
+  }
+
+  /// Timestamp of the most recent successful cache refresh for
+  /// the active country, or `null` if we've never synced. The
+  /// Settings screen formats this as "Last update: 3h ago".
+  DateTime? get hijriLastSync => HijriCache.lastSyncFor(country);
+
+  // The old `_regionOffset(code)` switch was the source of truth
+  // for the country adjustment before the hybrid kernel landed.
+  // It has been deleted — the adjustment now lives next to each
+  // country in `kHijriCountries` so adding a new country is one
+  // table edit, not two. The legacy mapping is preserved via the
+  // `country` getter, which maps the old short codes back to
+  // their ISO 3166-1 equivalents (`'ma' → 'MA'`, etc.).
 
   /// Today in the user's regional Hijri calendar.
   ///
@@ -845,6 +955,25 @@ class AppProvider extends ChangeNotifier {
       'qibla_compass_unavailable': {'ar':'بوصلة الجهاز غير متوفّرة','fr':'Boussole indisponible','en':'Device compass unavailable','es':'Brújula no disponible'},
       'qibla_hint':                {'ar':'للحصول على أفضل دقّة فعّل الموقع، وحرّك الهاتف بشكل ٨ لمعايرة البوصلة.','fr':'Pour une meilleure précision, activez la localisation et bougez le téléphone en 8 pour calibrer la boussole.','en':'For best accuracy enable location and move the phone in a figure-8 to calibrate the compass.','es':'Para mayor precisión activa la ubicación y mueve el teléfono en 8 para calibrar la brújula.'},
       'region':              {'ar':'المنطقة / المذهب','fr':'Région / École','en':'Region','es':'Región'},
+      // Phase 6 — Hybrid Hijri Calendar Settings UI.
+      'hijri_source':              {'ar':'مصدر التقويم الهجري','fr':'Source du calendrier Hijri','en':'Hijri calendar source','es':'Fuente del calendario Hijri'},
+      'hijri_source_country':      {'ar':'البلد','fr':'Pays','en':'Country','es':'País'},
+      'hijri_source_authority':    {'ar':'المرجع الرسمي','fr':'Autorité officielle','en':'Official authority','es':'Autoridad oficial'},
+      'hijri_source_auto_detect':  {'ar':'اكتشاف تلقائي','fr':'Détecter automatiquement','en':'Auto-detect','es':'Detectar automáticamente'},
+      'hijri_source_refresh':      {'ar':'تحديث الآن','fr':'Actualiser maintenant','en':'Refresh now','es':'Actualizar ahora'},
+      'hijri_source_last_sync':    {'ar':'آخر تحديث','fr':'Dernière sync','en':'Last update','es':'Última act.'},
+      'hijri_source_never_synced': {'ar':'لم يتم التحديث بعد — التطبيق يستعمل الحساب المحلي','fr':'Jamais synchronisé — calcul local en cours','en':'Never synced — using local calculation','es':'Nunca sincronizado — usando cálculo local'},
+      'hijri_source_just_now':     {'ar':'للتو','fr':'à l\'instant','en':'just now','es':'justo ahora'},
+      'hijri_source_minutes_ago':  {'ar':'قبل {n} دقيقة','fr':'il y a {n} min','en':'{n} min ago','es':'hace {n} min'},
+      'hijri_source_hours_ago':    {'ar':'قبل {n} ساعة','fr':'il y a {n} h','en':'{n}h ago','es':'hace {n}h'},
+      'hijri_source_days_ago':     {'ar':'قبل {n} يوم','fr':'il y a {n} j','en':'{n}d ago','es':'hace {n}d'},
+      'hijri_source_refreshing':   {'ar':'جاري التحديث…','fr':'Actualisation…','en':'Refreshing…','es':'Actualizando…'},
+      'hijri_source_sync_ok':      {'ar':'تم التحديث بنجاح','fr':'Mis à jour','en':'Updated','es':'Actualizado'},
+      'hijri_source_sync_fail':    {'ar':'تعذّر التحديث — تحقق من الإنترنت','fr':'Échec — vérifiez la connexion','en':'Failed — check connection','es':'Falló — revisa la conexión'},
+      'hijri_source_select_title': {'ar':'اختر البلد','fr':'Choisir le pays','en':'Select country','es':'Seleccionar país'},
+      'hijri_source_detecting':    {'ar':'جاري الاكتشاف…','fr':'Détection…','en':'Detecting…','es':'Detectando…'},
+      'hijri_source_detected':     {'ar':'تم اكتشاف بلدك','fr':'Pays détecté','en':'Country detected','es':'País detectado'},
+      'hijri_source_detect_fail':  {'ar':'تعذّر اكتشاف البلد','fr':'Détection impossible','en':'Could not detect','es':'No se pudo detectar'},
       'delete':              {'ar':'حذف','fr':'Supprimer','en':'Delete','es':'Eliminar'},
       'edit':                {'ar':'تعديل','fr':'Modifier','en':'Edit','es':'Editar'},
     };
@@ -858,6 +987,10 @@ class AppProvider extends ChangeNotifier {
       await prefs.setString('theme', _themeMode.name);
       await prefs.setString('locale', _locale);
       await prefs.setString('region', _region);
+      // Phase 6 — new authoritative country picker. Stored
+      // separately from `region` so older builds reading
+      // `region` keep working.
+      await prefs.setString('country_code', _countryCode);
       await prefs.setInt('hijri_manual_adjust', _hijriManualAdjust);
       await prefs.setString('view_mode', _viewMode.name);
       await prefs.setInt('accent_index', _accentIndex);
@@ -900,8 +1033,15 @@ class AppProvider extends ChangeNotifier {
       if (loc != null) _locale = loc;
       final reg = prefs.getString('region');
       if (reg != null && reg.isNotEmpty) _region = reg;
+      // Phase 6 — pick up the new authoritative country code if
+      // it's been written. If not (first launch with the new
+      // build), leave it empty so the `country` getter falls
+      // back to deriving from `_region`.
+      final cc = prefs.getString('country_code');
+      if (cc != null && cc.isNotEmpty) _countryCode = cc;
       final adj = prefs.getInt('hijri_manual_adjust');
-      if (adj != null) _hijriManualAdjust = adj.clamp(-2, 2);
+      // Widened clamp matches the writer in [setHijriManualAdjust].
+      if (adj != null) _hijriManualAdjust = adj.clamp(-3, 3);
       final vm = prefs.getString('view_mode');
       if (vm != null) {
         _viewMode = CalendarViewMode.values.firstWhere(
