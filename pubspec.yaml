@@ -37,6 +37,14 @@ dependencies:
   # the app renders a Flutter widget off-screen to a PNG and the
   # native Android AppWidget displays it. See WidgetSyncService.
   home_widget: ^0.9.1
+  # Hybrid Hijri Calendar — talks to AlAdhan API
+  # (api.aladhan.com) to fetch each country's OFFICIAL Hijri
+  # calendar (Saudi HJCoSA, Morocco MOMRA, Egypt Dar al-Iftaa,
+  # Turkey Diyanet, Indonesia Kemenag, ...). The rest of the
+  # app keeps the synchronous kernel API and falls back to the
+  # local arithmetic engine when the network is offline or the
+  # cache is cold — see `HijriApiService` and `HijriCache`.
+  http: ^1.2.0
 
 dev_dependencies:
   flutter_test:

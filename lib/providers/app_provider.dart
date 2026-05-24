@@ -14,6 +14,7 @@ import '../utils/hijri_kernel.dart' as kernel;
 import '../services/notification_settings_service.dart';
 import '../theme.dart';
 import '../utils/hijri_utils.dart';
+import '../data/hijri_countries.dart';
 
 enum CalendarViewMode { monthly, weekly, agenda }
 
@@ -177,6 +178,16 @@ class AppProvider extends ChangeNotifier {
       await _loadPrefs();
       _notificationSettings = await _notifSettings.load();
 
+      // Hybrid Hijri kernel — hydrate the in-memory mirror of
+      // SharedPreferences so the first synchronous conversion
+      // can read the cache. Boot is idempotent and fails
+      // silently if SharedPreferences is unavailable; the
+      // kernel falls back to the arithmetic engine in that
+      // case, so a cold cache produces the same Hijri output
+      // as the legacy build.
+      await kernel.HijriHybrid.boot();
+      _syncHybridCountry();
+
       _today = _todayForRegion();
       _currentMonth = HijriDate(_today.hYear, _today.hMonth, 1);
       _selectedDay = _today;
@@ -245,6 +256,11 @@ class AppProvider extends ChangeNotifier {
   Future<void> setRegion(String code) async {
     if (_region == code) return;
     _region = code;
+    // Keep the hybrid kernel's active country in sync with the
+    // region setting so cache lookups target the right
+    // ministry's published calendar. Has to land BEFORE
+    // `_todayForRegion()` reads from the kernel.
+    _syncHybridCountry();
     _today = _todayForRegion();
     _currentMonth = HijriDate(_today.hYear, _today.hMonth, 1);
     _selectedDay = _today;
@@ -253,6 +269,36 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
     await _repo.rescheduleAllNotifications();
     _requestIslamicReschedule();
+  }
+
+  /// Maps the legacy region code (`'ma'`, `'sa'`, `'global'`,
+  /// ...) to an ISO 3166-1 alpha-2 country code that the
+  /// AlAdhan API understands, and pushes it into [HijriHybrid]
+  /// along with the country's official adjustment (in days).
+  ///
+  /// Kept private and called from exactly two places:
+  ///   1. Once after `_loadPrefs()` during [init].
+  ///   2. Inside [setRegion] before recomputing `_today`.
+  ///
+  /// Centralising the mapping here means the kernel never sees
+  /// the legacy region strings — only the modern ISO codes.
+  /// Adding a new region is a one-line edit to the switch.
+  void _syncHybridCountry() {
+    final iso = switch (_region) {
+      'ma' => 'MA',
+      'dz' => 'DZ',
+      'tn' => 'TN',
+      'sa' => 'SA',
+      'tr' => 'TR',
+      'id' => 'ID',
+      'global' => 'XX',
+      _ => 'XX',
+    };
+    final country = hijriCountryByCode(iso);
+    kernel.HijriHybrid.setCountry(
+      code: country.code,
+      adjustment: country.adjustment,
+    );
   }
 
   Future<void> setHijriManualAdjust(int days) async {
