@@ -390,7 +390,7 @@ class _HijriSourceSectionState extends State<_HijriSourceSection> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      Icon(Icons.chevron_right_rounded,
+                      const Icon(Icons.chevron_right_rounded,
                           color: AppColors.text3, size: 22),
                     ],
                   ),
@@ -763,7 +763,7 @@ class _CountryPickerSheetState extends State<_CountryPickerSheet> {
                   color: isDark ? AppColors.darkText : AppColors.text,
                 ),
                 decoration: InputDecoration(
-                  prefixIcon: Icon(
+                  prefixIcon: const Icon(
                     Icons.search_rounded,
                     size: 18,
                     color: AppColors.text3,
@@ -823,7 +823,11 @@ class _CountryPickerSheetState extends State<_CountryPickerSheet> {
                     isDark: isDark,
                     onTap: () async {
                       await p.setCountry(c.code);
-                      if (!mounted) return;
+                      // `context.mounted` ties the guard directly
+                      // to the BuildContext we're about to use,
+                      // which silences the analyzer's
+                      // `use_build_context_synchronously` warning.
+                      if (!context.mounted) return;
                       Navigator.pop(context);
                     },
                   );

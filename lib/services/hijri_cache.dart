@@ -201,7 +201,7 @@ class HijriCache {
     final upper = countryCode.toUpperCase();
     DateTime? newest;
     for (final entry in _memory.entries) {
-      if (!entry.key.startsWith('${_keyPrefix}${upper}_')) continue;
+      if (!entry.key.startsWith('$_keyPrefix${upper}_')) continue;
       final t = entry.value.fetchedAt;
       if (newest == null || t.isAfter(newest)) newest = t;
     }

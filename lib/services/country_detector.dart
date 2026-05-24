@@ -92,11 +92,15 @@ class CountryDetector {
     // intentional — we want a country, not a building. Low
     // accuracy uses cell-tower / Wi-Fi triangulation, which
     // returns much faster than GPS-fix.
+    //
+    // API note: geolocator 11.0.0 uses the `desiredAccuracy` +
+    // `timeLimit` named parameters on `getCurrentPosition`. The
+    // `LocationSettings` wrapper landed in geolocator 13+ and is
+    // intentionally avoided here so the package pin in
+    // pubspec.yaml stays at ^11.
     final pos = await Geolocator.getCurrentPosition(
-      locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.low,
-        timeLimit: Duration(seconds: 3),
-      ),
+      desiredAccuracy: LocationAccuracy.low,
+      timeLimit: const Duration(seconds: 3),
     );
 
     // Step 3: reverse geocode to a Placemark. The platform
