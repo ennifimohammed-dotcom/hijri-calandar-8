@@ -8,6 +8,7 @@ import '../providers/app_provider.dart';
 import '../utils/text_format.dart';
 import '../theme.dart';
 import '../data/hijri_countries.dart';
+import '../widgets/gps_rationale_dialog.dart';
 import '../widgets/hijri_source_badge.dart';
 import 'notification_settings_screen.dart';
 
@@ -463,6 +464,17 @@ class _HijriSourceSectionState extends State<_HijriSourceSection> {
   }
 
   Future<void> _onDetect(AppProvider p) async {
+    // Show the rationale dialog FIRST so the user understands
+    // why we're about to ask for GPS. Symmetric with the
+    // onboarding flow's "Auto-detect" card — same dialog body,
+    // same Allow/Cancel semantics. If they cancel we do
+    // nothing (no permission prompt, no state change).
+    final allowed = await showGpsRationaleDialog(
+      context: context,
+      locale: p.locale,
+    );
+    if (!mounted || !allowed) return;
+
     setState(() => _detecting = true);
     String iso = 'XX';
     try {

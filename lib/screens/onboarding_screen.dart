@@ -6,6 +6,7 @@ import '../providers/app_provider.dart';
 import '../services/country_detector.dart';
 import '../theme.dart';
 import '../widgets/country_picker_sheet.dart';
+import '../widgets/gps_rationale_dialog.dart';
 import 'home_screen.dart';
 
 /// First-launch picker mode for the Hijri calendar source.
@@ -70,6 +71,20 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   /// the quick guess found nothing recognised.
   String _suggestedCountry = '';
 
+  /// Country actually detected after the user tapped "Allow" on
+  /// the GPS rationale dialog. Different from `_suggestedCountry`
+  /// — that's a no-permission heuristic; this one is the
+  /// authoritative result of the full GPS+timezone+locale ladder
+  /// and is already applied to the provider by the time it lands
+  /// here. Empty until the user goes through the auto-detect
+  /// flow successfully.
+  String _autoDetectedCountry = '';
+
+  /// True while the live detection is running. Drives a small
+  /// spinner inside the "Auto-detect" card so the user knows the
+  /// permission grant kicked off real work.
+  bool _isDetecting = false;
+
   // Page-3 virtues. Mirrors the IslamicEventsData ids that the
   // provider's `toggleIslamicEvent` already understands. The set of
   // ids below is intentionally a small, sensible default — the full
@@ -111,11 +126,26 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     // post-onboarding state.
     switch (_sourceMode) {
       case _HijriSourceMode.auto:
-        // Triggers the full ladder (GPS → timezone → locale).
-        // GPS step asks for permission if not granted; the user
-        // already understood why by virtue of being on the
-        // "Auto-detect" card.
-        await p.detectCountryAndApply();
+        // Detection ran LIVE during the card tap (via the GPS
+        // rationale dialog + `_onAutoTapped`). If the user
+        // granted permission and detection produced a real
+        // country, the provider already has it set — no need
+        // to re-call. If they declined or detection failed,
+        // fall back to the no-permission `detectQuick` guess
+        // so they still get something reasonable instead of
+        // the global XX default.
+        if (_autoDetectedCountry.isNotEmpty &&
+            _autoDetectedCountry != 'XX') {
+          // Already applied during the tap — no-op for
+          // `setCountry` since the value matches. Kept for
+          // clarity / safety against future refactors.
+          await p.setCountry(_autoDetectedCountry);
+        } else if (_suggestedCountry.isNotEmpty &&
+            _suggestedCountry != 'XX') {
+          await p.setCountry(_suggestedCountry);
+        } else {
+          await p.setCountry('XX');
+        }
         break;
       case _HijriSourceMode.manual:
         if (_manualCountry.isNotEmpty) {
@@ -146,6 +176,89 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             FadeTransition(opacity: anim, child: child),
       ),
     );
+  }
+
+  /// Handler for the "Auto-detect my country" card tap.
+  ///
+  /// Flow
+  ///   1. Show the GPS rationale dialog so the user understands
+  ///      why we're about to ask for location.
+  ///   2. If they cancel: still mark the card as selected (we
+  ///      respect their choice of mode), but leave detection
+  ///      pending — `_finish` will fall back to the no-permission
+  ///      quick guess.
+  ///   3. If they allow: run `p.detectCountryAndApply()` (which
+  ///      requests the actual OS permission, reads GPS, walks
+  ///      the timezone/locale fallback ladder, and applies the
+  ///      result via `setCountry`). The provider notifies, so
+  ///      the calendar, header badge, and any other watcher
+  ///      updates live.
+  ///   4. Surface a snackbar with the detected flag + name so
+  ///      the user sees confirmation that something happened.
+  ///
+  /// Re-runnable — tapping the card a second time re-shows the
+  /// dialog and tries again, which is what a user who initially
+  /// denied permission would want.
+  Future<void> _onAutoTapped(AppProvider p) async {
+    if (_isDetecting) return;
+
+    // Always flip the mode to auto regardless of dialog outcome
+    // — the user clearly wants this option, the dialog only
+    // decides whether we actually run detection now.
+    setState(() => _sourceMode = _HijriSourceMode.auto);
+
+    final allowed = await showGpsRationaleDialog(
+      context: context,
+      locale: _selectedLang,
+    );
+    if (!mounted || !allowed) return;
+
+    setState(() => _isDetecting = true);
+    String iso = 'XX';
+    try {
+      iso = await p.detectCountryAndApply();
+    } catch (_) {
+      iso = 'XX';
+    }
+    if (!mounted) return;
+    setState(() {
+      _isDetecting = false;
+      _autoDetectedCountry = iso;
+    });
+
+    // Feedback — green snackbar on success, red on graceful
+    // failure (permission denied or no GPS fix).
+    final ok = iso.isNotEmpty && iso != 'XX';
+    final c = hijriCountryByCode(iso);
+    final loc = _selectedLang;
+    final successMsg = switch (loc) {
+      'ar' => '✓ تم تحديد بلدك: ${c.flag} ${c.localizedName(loc)}',
+      'fr' => '✓ Pays détecté : ${c.flag} ${c.localizedName(loc)}',
+      'es' => '✓ País detectado: ${c.flag} ${c.localizedName(loc)}',
+      _ => '✓ Country detected: ${c.flag} ${c.localizedName(loc)}',
+    };
+    final failMsg = switch (loc) {
+      'ar' => 'تعذّر تحديد البلد — يمكنك الاختيار يدوياً',
+      'fr' => 'Détection impossible — choisissez manuellement',
+      'es' => 'No se pudo detectar — elige manualmente',
+      _ => 'Detection failed — pick manually',
+    };
+    ScaffoldMessenger.of(context)
+      ..removeCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(
+          ok ? successMsg : failMsg,
+          style: appFont(fontSize: 12.5, color: Colors.white),
+        ),
+        backgroundColor:
+            ok ? AppColors.green : const Color(0xFFD94F4F),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(milliseconds: 2400),
+        margin: const EdgeInsets.all(12),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ));
   }
 
   /// Opens the shared country picker sheet and stores the
@@ -234,10 +347,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         sourceMode: _sourceMode,
                         manualCountry: _manualCountry,
                         suggestedCountry: _suggestedCountry,
+                        autoDetectedCountry: _autoDetectedCountry,
+                        isDetecting: _isDetecting,
                         onLangSelected: (l) =>
                             setState(() => _selectedLang = l),
                         onSourceModeSelected: (m) =>
                             setState(() => _sourceMode = m),
+                        onAutoRequested: () => _onAutoTapped(p),
                         onManualPickRequested: _openManualPicker,
                       ),
                       _VirtuesPage(
@@ -499,16 +615,22 @@ class _LanguageRegionPage extends StatelessWidget {
   final _HijriSourceMode sourceMode;
   final String manualCountry;
   final String suggestedCountry;
+  final String autoDetectedCountry;
+  final bool isDetecting;
   final ValueChanged<String> onLangSelected;
   final ValueChanged<_HijriSourceMode> onSourceModeSelected;
+  final VoidCallback onAutoRequested;
   final VoidCallback onManualPickRequested;
   const _LanguageRegionPage({
     required this.selectedLang,
     required this.sourceMode,
     required this.manualCountry,
     required this.suggestedCountry,
+    required this.autoDetectedCountry,
+    required this.isDetecting,
     required this.onLangSelected,
     required this.onSourceModeSelected,
+    required this.onAutoRequested,
     required this.onManualPickRequested,
   });
 
@@ -583,10 +705,21 @@ class _LanguageRegionPage extends StatelessWidget {
           _SourceModeCard(
             mode: _HijriSourceMode.auto,
             active: sourceMode == _HijriSourceMode.auto,
+            // Spinner takes over the icon slot while the GPS
+            // permission grant + detection is in flight.
             icon: '📍',
+            busy: isDetecting,
             title: _autoTitle(loc),
-            subtitle: _autoSubtitle(loc, suggestedCountry),
-            onTap: () => onSourceModeSelected(_HijriSourceMode.auto),
+            subtitle: _autoSubtitle(
+              loc,
+              suggestedCountry,
+              autoDetectedCountry,
+              isDetecting,
+            ),
+            // Tap → rationale dialog → live detection. Routes
+            // through the parent's `_onAutoTapped`, which also
+            // handles the mode flip + snackbar feedback.
+            onTap: onAutoRequested,
           ),
           const SizedBox(height: 10),
           _SourceModeCard(
@@ -625,13 +758,51 @@ class _LanguageRegionPage extends StatelessWidget {
         _ => 'Auto-detect my country',
       };
 
-  String _autoSubtitle(String loc, String suggested) {
+  /// Subtitle for the "Auto-detect" card. Three states, in
+  /// priority order:
+  ///
+  ///   1. `busy` → "Detecting your location..." with the
+  ///      pulsing icon in the parent card slot. Highest
+  ///      priority because it overrides the "what you'll get"
+  ///      messaging.
+  ///   2. `detected` set → "✓ Detected: 🇸🇦 Saudi Arabia".
+  ///      Shown after a successful auto-detect; gives the
+  ///      user immediate confirmation that the tap did real
+  ///      work instead of waiting until `_finish`.
+  ///   3. `suggested` set (no detection yet) → "Suggested:
+  ///      🇸🇦 Saudi Arabia". Pre-grant hint computed from the
+  ///      no-permission timezone+locale guess.
+  ///   4. Neither → generic "Recommended" copy.
+  String _autoSubtitle(
+    String loc,
+    String suggested,
+    String detected,
+    bool busy,
+  ) {
+    if (busy) {
+      return switch (loc) {
+        'ar' => 'جاري تحديد موقعك…',
+        'fr' => 'Détection de votre position…',
+        'es' => 'Detectando tu ubicación…',
+        _ => 'Detecting your location…',
+      };
+    }
+    if (detected.isNotEmpty && detected != 'XX') {
+      final c = hijriCountryByCode(detected);
+      final name = c.localizedName(loc);
+      return switch (loc) {
+        'ar' => '✓ تم: ${c.flag} $name',
+        'fr' => '✓ Détecté : ${c.flag} $name',
+        'es' => '✓ Detectado: ${c.flag} $name',
+        _ => '✓ Detected: ${c.flag} $name',
+      };
+    }
     if (suggested.isEmpty || suggested == 'XX') {
       return switch (loc) {
-        'ar' => 'مُستحسَن — يستعمل المنطقة الزمنية والـ GPS',
-        'fr' => 'Recommandé — utilise le fuseau horaire et le GPS',
-        'es' => 'Recomendado — usa la zona horaria y el GPS',
-        _ => 'Recommended — uses timezone and GPS',
+        'ar' => 'مُستحسَن — يستعمل GPS والمنطقة الزمنية',
+        'fr' => 'Recommandé — utilise le GPS et le fuseau horaire',
+        'es' => 'Recomendado — usa GPS y zona horaria',
+        _ => 'Recommended — uses GPS and timezone',
       };
     }
     final c = hijriCountryByCode(suggested);
@@ -689,6 +860,13 @@ class _SourceModeCard extends StatelessWidget {
   final String title;
   final String subtitle;
   final VoidCallback onTap;
+
+  /// Renders an in-line spinner in place of [icon] while the
+  /// card's underlying action is running (e.g. live GPS
+  /// detection on the "Auto-detect" card). Only the auto card
+  /// ever passes `true`; the others stay static.
+  final bool busy;
+
   const _SourceModeCard({
     required this.mode,
     required this.active,
@@ -696,6 +874,7 @@ class _SourceModeCard extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.busy = false,
   });
 
   @override
@@ -708,7 +887,27 @@ class _SourceModeCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
         child: Row(
           children: [
-            Text(icon, style: const TextStyle(fontSize: 24)),
+            // Spinner takes the icon's slot during live work
+            // (e.g. GPS detection). Same 24 px footprint so the
+            // row layout doesn't reflow when the spinner appears.
+            if (busy)
+              SizedBox(
+                width: 24,
+                height: 24,
+                child: Padding(
+                  padding: const EdgeInsets.all(2),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    valueColor: AlwaysStoppedAnimation<Color>(
+                      active
+                          ? const Color(0xFF0A2519)
+                          : Colors.white.withValues(alpha: 0.9),
+                    ),
+                  ),
+                ),
+              )
+            else
+              Text(icon, style: const TextStyle(fontSize: 24)),
             const SizedBox(width: 12),
             Expanded(
               child: Column(
