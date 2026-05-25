@@ -69,9 +69,17 @@ class HijriCache {
   /// monthly), shorter than the typical user's app-open cadence.
   static const Duration refreshThreshold = Duration(days: 7);
 
-  /// Beyond this age, treat the entry as a hard miss. Avoids
-  /// surfacing year-old cached Hijri values to a user who only
-  /// opens the app annually.
+  /// Beyond this age, treat the entry as a hard miss — EXCEPT
+  /// for entries whose Gregorian month is fully in the past.
+  /// Past months are historical facts (Ramadan 1445 started on
+  /// a specific day; that day will never be re-announced), so
+  /// they're kept indefinitely. The hard expiry only applies
+  /// to the current Gregorian month or any future Gregorian
+  /// month, where a delayed ministry announcement might still
+  /// arrive after weeks of silence and the cached value could
+  /// be a stale arithmetic guess.
+  ///
+  /// See [_isPastMonth] for the "fully in the past" predicate.
   static const Duration hardExpiry = Duration(days: 60);
 
   /// Memory tier. Keyed by the same flat string as on disk so
@@ -116,8 +124,13 @@ class HijriCache {
           final decoded = json.decode(monthRaw);
           final data = HijriMonthData.fromJson(decoded);
           if (data == null) continue;
-          // Hard expiry — drop entries we'd never trust anyway.
-          if (DateTime.now().difference(data.fetchedAt) > hardExpiry) {
+          // Hard expiry — drop entries we'd never trust
+          // anyway. Past months are exempt because they're
+          // historical facts that don't change after their
+          // Gregorian month ends.
+          final age = DateTime.now().difference(data.fetchedAt);
+          if (age > hardExpiry &&
+              !_isPastMonth(data.gregorianYear, data.gregorianMonth)) {
             continue;
           }
           _memory[k] = data;
@@ -252,7 +265,8 @@ class HijriCache {
     }
   }
 
-  /// Drops entries older than [hardExpiry] from both tiers.
+  /// Drops entries older than [hardExpiry] from both tiers,
+  /// EXCEPT past-month entries which are kept indefinitely.
   /// Called opportunistically by the refresh scheduler — does
   /// nothing if it would have to wait on disk.
   static Future<void> prune() async {
@@ -260,7 +274,9 @@ class HijriCache {
     final now = DateTime.now();
     final toRemove = <String>[];
     for (final entry in _memory.entries) {
-      if (now.difference(entry.value.fetchedAt) > hardExpiry) {
+      final data = entry.value;
+      if (now.difference(data.fetchedAt) > hardExpiry &&
+          !_isPastMonth(data.gregorianYear, data.gregorianMonth)) {
         toRemove.add(entry.key);
       }
     }
@@ -311,5 +327,18 @@ class HijriCache {
   /// dumps debuggable.
   static String _key(String country, int gYear, int gMonth) {
     return '$_keyPrefix${country.toUpperCase()}_${gYear}_$gMonth';
+  }
+
+  /// True if `(year, month)` is fully in the past (i.e. an
+  /// earlier year, or an earlier month of the current year).
+  /// Used by [boot] and [prune] to spare past-month entries
+  /// from the hard-expiry cutoff: once a Gregorian month has
+  /// ended, the Hijri values inside it are historical facts
+  /// that can't change, so it's safe to keep them forever.
+  static bool _isPastMonth(int year, int month) {
+    final now = DateTime.now();
+    if (year < now.year) return true;
+    if (year > now.year) return false;
+    return month < now.month;
   }
 }

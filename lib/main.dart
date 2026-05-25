@@ -7,6 +7,7 @@ import 'screens/splash_screen.dart';
 import 'services/notification_service.dart';
 import 'services/widget_sync_service.dart';
 import 'theme.dart';
+import 'utils/hijri_kernel.dart' as hijri_kernel;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -65,6 +66,26 @@ class _HijriCalendarAppState extends State<HijriCalendarApp>
       // Repaint the home-screen widget too — covers a date rollover
       // or a settings change made while the app was backgrounded.
       WidgetSyncService.instance.requestSync();
+      // Smart-UX improvement 4 — sighting-night tip-off. Every
+      // time the user touches the app, if today is the 29th or
+      // 30th of a Hijri month, force a refresh from AlAdhan to
+      // pick up any ministry announcement that landed since the
+      // app was last open. Throttled inside the kernel to at
+      // most one fetch per 30 minutes per Greg month, so rapid
+      // resumes never stampede.
+      try {
+        final provider = context.read<AppProvider>();
+        final t = provider.today;
+        hijri_kernel.HijriHybrid.tipOffForSighting(
+          gregNow: DateTime.now(),
+          hijriDay: t.hDay,
+          hijriMonth: t.hMonth,
+          hijriYear: t.hYear,
+        );
+      } catch (_) {
+        // Provider not ready yet during a very early resume —
+        // safe to skip; init() will fire the tip-off itself.
+      }
     }
     // Mini Calendar widget's transient "selected day" highlight is
     // now owned by the Kotlin renderer (TTL + AlarmManager-driven

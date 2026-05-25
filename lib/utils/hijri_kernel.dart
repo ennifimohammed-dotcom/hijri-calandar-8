@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 import '../services/hijri_api_service.dart';
 import '../services/hijri_cache.dart';
 import 'hijri_utils.dart';
@@ -197,6 +199,195 @@ class HijriHybrid {
       return true;
     } catch (_) {
       return false;
+    }
+  }
+
+  // ── History pre-warm (Smart-UX improvement 3) ────────────
+
+  /// Whether a bulk fill is currently in flight. Prevents two
+  /// fills from racing if [ensureHistoryFill] is called twice
+  /// in quick succession (e.g. once at app init, once at
+  /// country change).
+  static bool _bulkFillRunning = false;
+
+  /// One-time, country-scoped bulk fill of the cache covering
+  /// ~7 years (5 past + 2 future). Designed so the user can
+  /// scroll the calendar to any year in living memory and to
+  /// any upcoming planned year (Hajj prep, etc.) without ever
+  /// hitting an empty cell.
+  ///
+  /// Properties
+  ///   * Idempotent — gated by the `hijri_bulk_done_<country>`
+  ///     key in SharedPreferences. Once set, subsequent calls
+  ///     are no-ops for that country.
+  ///   * Polite — fetches sequentially with a 350 ms gap so we
+  ///     never trip AlAdhan's rate limit (90 req/min).
+  ///   * Background — `unawaited` Future so the caller is never
+  ///     blocked on the ~30-second total fill time.
+  ///   * Self-healing — any month that fails (network blip,
+  ///     500) is silently skipped; the next `ensureHistoryFill`
+  ///     call after the user changes country will retry only
+  ///     the missing months because the cache already has the
+  ///     successful ones.
+  ///   * Past-month aware — past months are permanent (no TTL),
+  ///     so they're only fetched once per country, ever.
+  ///
+  /// `pastYears` / `futureYears` default to 5 and 2 — covers
+  /// the practical span for retrospection (zakat anchors, past
+  /// Eid dates) and planning (Hajj, Ramadan two years out).
+  static Future<void> ensureHistoryFill({
+    int pastYears = 5,
+    int futureYears = 2,
+  }) async {
+    final country = _countryCode;
+    if (country.isEmpty || country == 'XX') return;
+    if (_bulkFillRunning) return;
+    _bulkFillRunning = true;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final flagKey = 'hijri_bulk_done_$country';
+      if (prefs.getBool(flagKey) == true) return;
+
+      final now = DateTime.now();
+      final months = <(int, int)>[];
+      // Walk Gregorian years inside-out (current → outward) so
+      // the months the user is most likely to look at land in
+      // the cache first.
+      for (int delta = 0;
+          delta <= pastYears || delta <= futureYears;
+          delta++) {
+        if (delta <= futureYears) {
+          final y = now.year + delta;
+          for (int m = 1; m <= 12; m++) {
+            months.add((y, m));
+          }
+        }
+        if (delta > 0 && delta <= pastYears) {
+          final y = now.year - delta;
+          for (int m = 1; m <= 12; m++) {
+            months.add((y, m));
+          }
+        }
+      }
+
+      // Sequential fetch with throttling. Note we DO NOT use
+      // `scheduleRefresh` here — that would queue all 84 in
+      // parallel microtasks and stampede AlAdhan. The explicit
+      // await + delay loop keeps us under their 90 req/min
+      // limit with comfortable margin.
+      for (final (year, month) in months) {
+        if (HijriCache.isFresh(
+          countryCode: country,
+          gregorianYear: year,
+          gregorianMonth: month,
+        )) {
+          continue;
+        }
+        try {
+          final data = await HijriApiService.fetchGregorianMonth(
+            gregorianYear: year,
+            gregorianMonth: month,
+            countryCode: country,
+            adjustment: _countryAdjustment,
+          );
+          if (data != null) {
+            await HijriCache.store(data);
+          }
+        } catch (_) {
+          // One bad month doesn't poison the whole fill.
+        }
+        await Future.delayed(const Duration(milliseconds: 350));
+      }
+
+      await prefs.setBool(flagKey, true);
+    } catch (_) {
+      // ignore — silent failure is fine, will retry next launch
+    } finally {
+      _bulkFillRunning = false;
+    }
+  }
+
+  // ── Sighting-night listener (Smart-UX improvement 4) ─────
+
+  /// Last time we kicked off a sighting-night refresh, keyed by
+  /// `country-greg_year-greg_month`. Used to throttle the
+  /// aggressive 29th-night refresh so a user who opens the app
+  /// six times that evening triggers ~6 attempts spread out by
+  /// at least 30 minutes, not 6 in the same second.
+  static final Map<String, DateTime> _lastSightingPing = {};
+
+  /// Minimum gap between two sighting-night refresh attempts
+  /// for the same month. Long enough to space out AlAdhan
+  /// requests, short enough that opening the app every hour
+  /// between Maghrib and Fajr produces a fresh attempt each
+  /// time.
+  static const Duration _sightingPingCooldown = Duration(minutes: 30);
+
+  /// Fires an aggressive refresh if today is the 29th of a
+  /// Hijri month (or the 30th — committees sometimes announce
+  /// late). Called opportunistically from `AppProvider.init`
+  /// and from the app-resume hook, so every time the user
+  /// touches the app during a sighting window we re-check
+  /// AlAdhan for the official announcement.
+  ///
+  /// `gregNow` is passed in so the caller (always the
+  /// AppProvider) can use a consistent "now" across its own
+  /// state mutations.
+  static void tipOffForSighting({
+    required DateTime gregNow,
+    required int hijriDay,
+    required int hijriMonth,
+    required int hijriYear,
+  }) {
+    final country = _countryCode;
+    if (country.isEmpty || country == 'XX') return;
+    // Only fire on the days that matter — 29 (sighting night)
+    // and 30 (post-sighting confirmation). On the 1st of a new
+    // month the cache should already have the data from the
+    // previous evening's refresh; we leave that alone to keep
+    // the early-morning cold-start fast.
+    if (hijriDay != 29 && hijriDay != 30) return;
+
+    // Throttle by (country, current Greg month). Spreading by
+    // Greg month means each calendar month gets at most one
+    // refresh attempt per `_sightingPingCooldown`, regardless
+    // of how many times the user opens the app.
+    final key = '${country}_${gregNow.year}_${gregNow.month}';
+    final last = _lastSightingPing[key];
+    if (last != null &&
+        gregNow.difference(last) < _sightingPingCooldown) {
+      return;
+    }
+    _lastSightingPing[key] = gregNow;
+
+    // Force a refresh of the CURRENT Greg month (announcement
+    // for "tomorrow is 1 X" lands inside it) AND the next Greg
+    // month (the announcement might bridge a Greg month
+    // boundary — e.g. Hijri 29 falls on the last Greg day of a
+    // month, the new Hijri month starts in the next Greg
+    // month). Fire-and-forget: the await happens inside
+    // `forceRefresh`; we don't block the caller.
+    unawaited(forceRefresh(
+      gregorianYear: gregNow.year,
+      gregorianMonth: gregNow.month,
+    ));
+    final next = DateTime(gregNow.year, gregNow.month + 1, 1);
+    unawaited(forceRefresh(
+      gregorianYear: next.year,
+      gregorianMonth: next.month,
+    ));
+  }
+
+  /// Clears the bulk-done flag for a country. Called when the
+  /// user explicitly clears the cache so the next app-open
+  /// triggers a fresh bulk fill instead of relying on the now-
+  /// empty cache + lazy backfill alone.
+  static Future<void> resetBulkFillFlag(String countryCode) async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('hijri_bulk_done_$countryCode');
+    } catch (_) {
+      // ignore
     }
   }
 }

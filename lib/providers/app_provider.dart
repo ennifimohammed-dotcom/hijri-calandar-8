@@ -215,6 +215,25 @@ class AppProvider extends ChangeNotifier {
       _syncHybridCountry();
 
       _today = _todayForRegion();
+
+      // Smart-UX improvement 3 — bulk-fill ~7 years of cache
+      // (5 past + 2 future). One-time per country, gated by a
+      // SharedPreferences flag inside the kernel. Fire-and-
+      // forget so init() returns instantly; the calendar will
+      // get progressively richer over the next ~30 seconds.
+      unawaited(kernel.HijriHybrid.ensureHistoryFill());
+
+      // Smart-UX improvement 4 — sighting-night tip-off. If
+      // today is the 29th or 30th of a Hijri month, force a
+      // fresh fetch from AlAdhan now so any ministry sighting
+      // announcement that landed since the last app open is
+      // picked up before the user sees the calendar.
+      kernel.HijriHybrid.tipOffForSighting(
+        gregNow: DateTime.now(),
+        hijriDay: _today.hDay,
+        hijriMonth: _today.hMonth,
+        hijriYear: _today.hYear,
+      );
       _currentMonth = HijriDate(_today.hYear, _today.hMonth, 1);
       _selectedDay = _today;
 
@@ -413,6 +432,17 @@ class AppProvider extends ChangeNotifier {
     notifyListeners();
     await _repo.rescheduleAllNotifications();
     _requestIslamicReschedule();
+    // Trigger the same bulk fill + sighting tip-off the boot
+    // path runs, but for the NEW country. Fire-and-forget; the
+    // user sees the country switch land instantly and the
+    // history fills in the background over ~30 s.
+    unawaited(kernel.HijriHybrid.ensureHistoryFill());
+    kernel.HijriHybrid.tipOffForSighting(
+      gregNow: DateTime.now(),
+      hijriDay: _today.hDay,
+      hijriMonth: _today.hMonth,
+      hijriYear: _today.hYear,
+    );
   }
 
   /// Asks [CountryDetector] for a best-effort country guess and
@@ -519,9 +549,19 @@ class AppProvider extends ChangeNotifier {
   /// Hijri-source card under advanced settings.
   Future<void> clearHijriCache() async {
     await HijriCache.clear();
+    // Also clear the bulk-done flag for the active country so
+    // the next bulk fill actually re-fetches the full window
+    // (otherwise the flag would short-circuit it and the cache
+    // would stay near-empty after the reset).
+    await kernel.HijriHybrid.resetBulkFillFlag(country);
     _today = _todayForRegion();
     _engine.invalidate();
     notifyListeners();
+    // Kick off a fresh fill — useful when the user clears the
+    // cache because they suspect bad data; they get an
+    // immediate re-population instead of waiting for
+    // opportunistic refresh.
+    unawaited(kernel.HijriHybrid.ensureHistoryFill());
   }
 
   /// Did the most recent kernel call actually hit the live
