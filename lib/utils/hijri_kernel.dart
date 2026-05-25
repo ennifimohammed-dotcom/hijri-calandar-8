@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/hijri_months.dart';
 import '../services/hijri_api_service.dart';
 import '../services/hijri_cache.dart';
+import '../services/notification_service.dart';
 import 'hijri_utils.dart';
 
 /// Hybrid Hijri Kernel — the single, authoritative entry point
@@ -165,6 +167,12 @@ class HijriHybrid {
         );
         if (data != null) {
           await HijriCache.store(data);
+          // Phase-7 improvement 7 — after the cache is updated,
+          // check whether the new payload changed tomorrow's
+          // Hijri month boundary (e.g. ministry announced "1
+          // Shawwal tomorrow" while our cache previously said
+          // "30 Ramadan"). Fires a single notification if so.
+          await _maybeEmitBoundaryChange();
         }
       } catch (_) {
         // Silent — kernel already has the arithmetic fallback.
@@ -196,10 +204,185 @@ class HijriHybrid {
       );
       if (data == null) return false;
       await HijriCache.store(data);
+      // Phase-7 improvement 7 — same boundary-change detection
+      // as the background refresh path. A user who taps
+      // "Refresh now" on the night of 29 Ramadan and discovers
+      // tomorrow is now Eid will see the notification land
+      // alongside the snackbar.
+      await _maybeEmitBoundaryChange();
       return true;
     } catch (_) {
       return false;
     }
+  }
+
+  // ── Boundary-change notification (Smart-UX improvement 7) ─
+  //
+  // After every successful refresh (background or forced), look
+  // up "tomorrow's" Hijri date in the now-fresh cache and
+  // compare against the last value we remembered. If they
+  // disagree AND the new value is the FIRST of a Hijri month,
+  // fire a one-shot notification — typically "tomorrow is 1
+  // Shawwal" right after a country's sighting committee
+  // announces Eid on the night of 29 Ramadan.
+  //
+  // Persistence
+  //   `hijri_last_tomorrow_<COUNTRY>` in SharedPreferences holds
+  //   the last-known tomorrow Hijri triple as a tight `Y-M-D`
+  //   string. Reading + writing is cheap (one preference call
+  //   each), survives app restarts, and is country-scoped so
+  //   switching country mid-month doesn't fire a stale alert.
+  //
+  // Why only on month-FIRST transitions
+  //   Day-level corrections (e.g. cache flipped "tomorrow = 6
+  //   Ramadan" to "tomorrow = 7 Ramadan" because a ministry
+  //   re-aligned) are uninteresting to most users. The truly
+  //   meaningful events are month boundaries: Ramadan start,
+  //   Eid al-Fitr (1 Shawwal), Eid al-Adha (10 Dhul-Hijjah but
+  //   precedes by Dhul-Hijjah start), and the new Hijri year
+  //   (1 Muharram). All of those land on a `hDay == 1` in our
+  //   detection signal.
+
+  /// Looks at tomorrow's Hijri value (from cache, applied with
+  /// the country adjustment), compares to the last-known value
+  /// in SharedPreferences, and fires a notification on a
+  /// month-boundary transition.
+  ///
+  /// Silent no-op if:
+  ///   * No country is active (hybrid disabled / global UAQ).
+  ///   * Tomorrow's value isn't yet in the cache (we wouldn't
+  ///     know what to announce).
+  ///   * The last-known value is empty (first ever store —
+  ///     prime it and don't fire).
+  ///   * The new value isn't the 1st of a Hijri month.
+  static Future<void> _maybeEmitBoundaryChange() async {
+    final country = _countryCode;
+    if (country.isEmpty || country == 'XX') return;
+
+    final now = DateTime.now();
+    final tomorrow = DateTime(now.year, now.month, now.day + 1);
+
+    // Look up tomorrow's Hijri triple using the SAME path the
+    // kernel uses for everything else — cache first, arithmetic
+    // fallback if the cache hasn't covered that Greg day.
+    final cached = HijriCache.lookupGregDay(
+      countryCode: country,
+      gregorianYear: tomorrow.year,
+      gregorianMonth: tomorrow.month,
+      gregorianDay: tomorrow.day,
+    );
+    final HijriDate hijriTomorrow;
+    if (cached != null) {
+      final (hy, hm, hd) = cached;
+      hijriTomorrow = HijriDate(hy, hm, hd);
+    } else {
+      // Cache miss after a refresh that just landed is unusual
+      // but possible if `tomorrow` straddles a Greg month
+      // boundary we haven't yet fetched. Fall back to arithmetic
+      // (with country adjustment) so the comparison still
+      // produces a meaningful result.
+      final shifted = tomorrow.subtract(
+        Duration(days: _countryAdjustment),
+      );
+      hijriTomorrow = HijriDate.fromGregorian(shifted);
+    }
+
+    final newKey =
+        '${hijriTomorrow.hYear}-${hijriTomorrow.hMonth}-${hijriTomorrow.hDay}';
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastKey = 'hijri_last_tomorrow_$country';
+      final previous = prefs.getString(lastKey);
+
+      // Always persist the latest value so future calls have a
+      // baseline. We compute whether to FIRE the notification
+      // based on the comparison ABOVE this write.
+      await prefs.setString(lastKey, newKey);
+
+      // Don't notify on the priming write — only on subsequent
+      // genuine transitions.
+      if (previous == null || previous.isEmpty) return;
+      if (previous == newKey) return;
+
+      // Only fire on a Hijri month boundary (new month's day 1).
+      if (hijriTomorrow.hDay != 1) return;
+
+      // Read user locale from prefs — kernel doesn't have a
+      // direct AppProvider reference; reading prefs is the
+      // pragmatic shortcut (~1 ms).
+      final locale = prefs.getString('locale') ?? 'ar';
+      final monthName = hijriMonthName(hijriTomorrow.hMonth, locale);
+      await _fireBoundaryNotification(
+        locale: locale,
+        hYear: hijriTomorrow.hYear,
+        hMonth: hijriTomorrow.hMonth,
+        monthName: monthName,
+      );
+    } catch (_) {
+      // Persistence / notification failure shouldn't block the
+      // calling refresh path.
+    }
+  }
+
+  /// Composes and dispatches the localized "Tomorrow is 1 X"
+  /// notification via [NotificationService.notifyHijriBoundary].
+  /// Eid-month boundaries (Shawwal, Dhul-Hijjah) get a slightly
+  /// richer body line so the user immediately understands the
+  /// religious significance, not just the date math.
+  static Future<void> _fireBoundaryNotification({
+    required String locale,
+    required int hYear,
+    required int hMonth,
+    required String monthName,
+  }) async {
+    final isEidFitr = hMonth == 10;   // 1 Shawwal = Eid al-Fitr
+    final isHajjMonth = hMonth == 12; // Dhul-Hijjah
+    final isNewYear = hMonth == 1;    // 1 Muharram = new Hijri year
+
+    final String title = switch (locale) {
+      'ar' => '🌙 تحديث التقويم الهجري',
+      'fr' => '🌙 Mise à jour du calendrier Hijri',
+      'es' => '🌙 Actualización del calendario Hijri',
+      _ => '🌙 Hijri calendar update',
+    };
+
+    final String tomorrowLine = switch (locale) {
+      'ar' => 'غداً 1 $monthName $hYear',
+      'fr' => 'Demain : 1 $monthName $hYear',
+      'es' => 'Mañana: 1 $monthName $hYear',
+      _ => 'Tomorrow: 1 $monthName $hYear',
+    };
+
+    String? suffix;
+    if (isEidFitr) {
+      suffix = switch (locale) {
+        'ar' => 'عيد الفطر المبارك',
+        'fr' => 'Aïd al-Fitr',
+        'es' => 'Eid al-Fitr',
+        _ => 'Eid al-Fitr',
+      };
+    } else if (isHajjMonth) {
+      suffix = switch (locale) {
+        'ar' => 'أول ذي الحجة — أيام الحج',
+        'fr' => 'Début de Dhul-Hijjah',
+        'es' => 'Inicio de Dhul-Hiyya',
+        _ => 'Start of Dhul-Hijjah',
+      };
+    } else if (isNewYear) {
+      suffix = switch (locale) {
+        'ar' => 'رأس السنة الهجرية',
+        'fr' => 'Nouvel an hégirien',
+        'es' => 'Año Nuevo Hijri',
+        _ => 'Hijri New Year',
+      };
+    }
+
+    final body = suffix == null ? tomorrowLine : '$tomorrowLine · $suffix';
+    await NotificationService().notifyHijriBoundary(
+      title: title,
+      body: body,
+    );
   }
 
   // ── History pre-warm (Smart-UX improvement 3) ────────────

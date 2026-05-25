@@ -214,13 +214,31 @@ class _CalendarScreenState extends State<CalendarScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(
-                  TextFormat.toWesternDigits(monthName),
-                  style: appFont(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? AppColors.darkText : AppColors.navy,
-                  ),
+                // Phase-7 improvement 5 — Hijri month name +
+                // small source-status dot inline. Replaces the
+                // separate verbose badge row that used to sit
+                // below the Gregorian line, saving vertical
+                // space and keeping the source signal next to
+                // the date it qualifies. The dot opens the
+                // same info sheet on tap.
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        TextFormat.toWesternDigits(monthName),
+                        style: appFont(
+                          fontSize: 20,
+                          fontWeight: FontWeight.bold,
+                          color: isDark
+                              ? AppColors.darkText
+                              : AppColors.navy,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 2),
+                    HijriSourceDot(darkOverride: isDark),
+                  ],
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -229,19 +247,6 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     fontSize: 11,
                     fontWeight: FontWeight.w600,
                     color: isDark ? AppColors.darkText3 : AppColors.text3,
-                  ),
-                ),
-                // Phase 7 — transparency badge. One small line
-                // telling the user WHERE today's Hijri date comes
-                // from (country authority + cache freshness).
-                // Tappable: opens an info sheet with "refresh
-                // now" + a shortcut to Settings.
-                const SizedBox(height: 4),
-                Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: HijriSourceBadge(
-                    compact: true,
-                    darkOverride: isDark,
                   ),
                 ),
               ],

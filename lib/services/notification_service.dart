@@ -538,6 +538,51 @@ class NotificationService {
     );
   }
 
+  // ── Phase-7 improvement 7 — Hijri month-boundary update ──
+  //
+  // Fired by [HijriHybrid] when a successful refresh detects that
+  // the previously-cached "tomorrow's Hijri date" has changed,
+  // typically because a country's sighting committee announced the
+  // next month's start (Ramadan, Shawwal/Eid al-Fitr, Dhul-Hijjah,
+  // Muharram, etc.). One notification per boundary; the fixed ID
+  // (`_kHijriBoundaryId`) means a re-fire replaces the previous
+  // one instead of stacking.
+  //
+  // Surfaces via the existing notification channel + sound the
+  // user has already authorized — no new permission, no new
+  // channel registration. Silently no-ops if global notifications
+  // are disabled.
+
+  /// Reserved ID for the Hijri-boundary notification. High band
+  /// shared with the other system pings (290 000, 900 0xx,
+  /// 999 9xx) so it never collides with user / Islamic event IDs.
+  static const int _kHijriBoundaryId = 999996;
+
+  /// Fires the "tomorrow is 1 X — new Hijri month" notification.
+  /// Idempotent — repeated calls with the same args replace the
+  /// existing notification rather than stacking.
+  ///
+  /// `title` and `body` are pre-localized by the caller (the
+  /// kernel knows the user's locale via the `AppProvider`'s
+  /// `_locale` string that gets persisted in SharedPreferences).
+  Future<void> notifyHijriBoundary({
+    required String title,
+    required String body,
+  }) async {
+    if (!_settings.settings.enabled) return;
+    try {
+      await _plugin.show(
+        _kHijriBoundaryId,
+        title,
+        body,
+        _buildDetails(_settings.settings),
+        payload: 'hijri_boundary',
+      );
+    } catch (e, stack) {
+      AppLogger.error('notifyHijriBoundary failed', error: e, stack: stack);
+    }
+  }
+
   Future<void> cancelAll() async {
     try {
       await _plugin.cancelAll();

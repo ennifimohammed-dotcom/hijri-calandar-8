@@ -194,17 +194,31 @@ class _ProfileCard extends StatelessWidget {
                   Text(appTitle, style: appFont(
                       fontSize: 18, fontWeight: FontWeight.bold,
                       color: isDark ? AppColors.darkText : AppColors.navy)),
-                  Text(hijriLine,
-                    style: appFont(fontSize: 11, color: AppColors.green,
-                        fontWeight: FontWeight.w700)),
+                  // Phase-7 improvement 5 — small source dot
+                  // inline with the Hijri date instead of the
+                  // full-width verbose badge that used to sit
+                  // below. Same tap target (info sheet), less
+                  // vertical real estate.
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          hijriLine,
+                          style: appFont(
+                            fontSize: 11,
+                            color: AppColors.green,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      HijriSourceDot(
+                        size: 12,
+                        darkOverride: isDark,
+                      ),
+                    ],
+                  ),
                   Text(gregStr, style: appFont(fontSize: 10, color: AppColors.text3)),
-                  const SizedBox(height: 6),
-                  // Phase 7 — transparency. Tap surfaces the
-                  // full source sheet (authority, last sync,
-                  // refresh button). Lets the user audit where
-                  // their displayed Hijri date came from
-                  // without diving into the Hijri section.
-                  HijriSourceBadge(compact: true, darkOverride: isDark),
                 ],
               )),
               Container(
@@ -322,6 +336,14 @@ class _HijriSourceSection extends StatefulWidget {
 class _HijriSourceSectionState extends State<_HijriSourceSection> {
   bool _refreshing = false;
   bool _detecting = false;
+
+  /// Phase-7 improvement 6 — collapsible "advanced" subsection
+  /// at the bottom of the card. False by default so a typical
+  /// user sees only the four essentials (country picker, auto-
+  /// detect, refresh, last sync). Power users tap "Advanced
+  /// options" to reveal the manual ±3 adjuster, the hybrid
+  /// safety toggle, and the clear-cache action.
+  bool _advancedOpen = false;
 
   @override
   Widget build(BuildContext context) {
@@ -449,15 +471,42 @@ class _HijriSourceSectionState extends State<_HijriSourceSection> {
 
               const SizedBox(height: 10),
 
-              // ─── Manual ±3-day adjuster ──────────────────
+              // ─── Phase-7 improvement 6 — collapsible advanced
+              // subsection. The three power-user controls below
+              // (±3 adjuster, online-toggle, cache reset) hide
+              // by default so a typical user sees a clean card.
               const Divider(height: 18, thickness: 0.5),
-              _HijriAdjustRow(p: p, isDark: isDark),
-
-              // ─── Phase 9 — safety valve ────────────────────
-              const Divider(height: 18, thickness: 0.5),
-              _HybridToggleRow(p: p, isDark: isDark),
-              const SizedBox(height: 8),
-              _ClearCacheLink(p: p, isDark: isDark),
+              _AdvancedToggleHeader(
+                p: p,
+                isDark: isDark,
+                open: _advancedOpen,
+                onTap: () =>
+                    setState(() => _advancedOpen = !_advancedOpen),
+              ),
+              AnimatedSize(
+                duration: const Duration(milliseconds: 220),
+                curve: Curves.easeOutCubic,
+                alignment: Alignment.topCenter,
+                child: _advancedOpen
+                    ? Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // ─── Manual ±3-day adjuster ──────
+                            _HijriAdjustRow(p: p, isDark: isDark),
+                            const Divider(
+                                height: 18, thickness: 0.5),
+                            // ─── Hybrid online/offline toggle ──
+                            _HybridToggleRow(p: p, isDark: isDark),
+                            const SizedBox(height: 8),
+                            // ─── Clear local cache ─────────────
+                            _ClearCacheLink(p: p, isDark: isDark),
+                          ],
+                        ),
+                      )
+                    : const SizedBox.shrink(),
+              ),
             ],
           ),
         ),
@@ -1100,6 +1149,70 @@ class _HybridToggleRow extends StatelessWidget {
 // "recovery action" and not something the user would tap by
 // accident. Surfaces a SnackBar after the cache is wiped so
 // the user sees confirmation that the action took effect.
+//
+// Phase-7 improvement 6 — this link is now hidden by default
+// inside the collapsible "Advanced options" subsection in
+// `_HijriSourceSection` so it doesn't draw eyes on first
+// visit; the user has to consciously expand the section to
+// reach it.
+class _AdvancedToggleHeader extends StatelessWidget {
+  final AppProvider p;
+  final bool isDark;
+  final bool open;
+  final VoidCallback onTap;
+  const _AdvancedToggleHeader({
+    required this.p,
+    required this.isDark,
+    required this.open,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final loc = p.locale;
+    final label = switch (loc) {
+      'ar' => 'إعدادات متقدّمة',
+      'fr' => 'Options avancées',
+      'es' => 'Opciones avanzadas',
+      _ => 'Advanced options',
+    };
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                label,
+                style: appFont(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: AppColors.text3,
+                  letterSpacing: 0.4,
+                ),
+              ),
+            ),
+            // Rotates 0° (closed) → 180° (open). Smooth wedge
+            // animation so the user understands the section is
+            // about to expand.
+            AnimatedRotation(
+              duration: const Duration(milliseconds: 200),
+              turns: open ? 0.5 : 0,
+              child: Icon(
+                Icons.keyboard_arrow_down_rounded,
+                size: 18,
+                color: AppColors.text3,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _ClearCacheLink extends StatelessWidget {
   final AppProvider p;
   final bool isDark;

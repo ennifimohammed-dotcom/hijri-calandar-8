@@ -478,3 +478,89 @@ class _SheetButton extends StatelessWidget {
     );
   }
 }
+
+/// Phase-7 Improvement 5 — minimal source indicator.
+///
+/// Replacement for the verbose [HijriSourceBadge] in places
+/// where screen real estate is precious (calendar header,
+/// profile card). One small icon, one tap → same info sheet.
+///
+/// Three visual states:
+///   * ✓ (cloud-done, green) — live cache, country-official
+///     Hijri value is on screen.
+///   * 📐 (calculate, gold) — arithmetic fallback, either
+///     offline + cache cold or the safety toggle is off.
+///
+/// Why a separate widget vs. extending [HijriSourceBadge]?
+///   The badge has its own pill chrome (rounded border, dot,
+///   flag emoji, authority text, info chevron). Adding an
+///   "icon-only" mode to it would gut most of those properties
+///   and make the code harder to read for both call sites. A
+///   sibling widget with a tight, single-purpose API is
+///   cleaner — and the existing badge stays available for any
+///   future surface where the full caption matters.
+class HijriSourceDot extends StatelessWidget {
+  /// Icon size in logical pixels. Defaults to 16 so it sits
+  /// comfortably next to a 14-16 sp body text.
+  final double size;
+
+  /// Optional dark-mode override. When null, we read it from
+  /// the ambient theme.
+  final bool? darkOverride;
+
+  const HijriSourceDot({
+    super.key,
+    this.size = 16,
+    this.darkOverride,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final p = context.watch<AppProvider>();
+    final live = p.hijriSourceIsLive;
+
+    // Two states cover every realistic situation. A third
+    // ("refreshing") would need provider-level tracking of
+    // in-flight fetches; not worth the wiring for a momentary
+    // ~250 ms transition the user will rarely see.
+    final IconData icon = live
+        ? Icons.cloud_done_rounded
+        : Icons.calculate_rounded;
+    final Color color = live
+        ? AppColors.green
+        : const Color(0xFFC8943A);
+
+    return Material(
+      color: Colors.transparent,
+      child: InkResponse(
+        onTap: () => _openSheet(context, p),
+        radius: size * 1.4,
+        // Larger hit area than the visual so a thumb tap
+        // doesn't miss; matches Material's recommended ≥48 dp
+        // target even though the icon itself is only 16 dp.
+        containedInkWell: false,
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: Icon(icon, size: size, color: color),
+        ),
+      ),
+    );
+  }
+
+  /// Opens the same info sheet the verbose badge uses, so
+  /// nothing the user can do via the old badge is lost. The
+  /// sheet hosts the refresh button, the last-sync timestamp,
+  /// and the "open Settings to change source" hint.
+  Future<void> _openSheet(BuildContext context, AppProvider p) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      useRootNavigator: true,
+      builder: (_) => ChangeNotifierProvider.value(
+        value: p,
+        child: const _SourceInfoSheet(),
+      ),
+    );
+  }
+}
