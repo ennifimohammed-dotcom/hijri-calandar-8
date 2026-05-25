@@ -9,6 +9,80 @@ import 'package:timezone/data/latest.dart' as tz_data;
 
 import '../data/hijri_countries.dart';
 
+/// How the detection ended. Surfaced via [CountryDetectionResult]
+/// so the UI can react beyond "we got a country / we didn't" —
+/// distinguishing e.g. "GPS service is OFF on the device" from
+/// "permission is permanently denied" lets the Auto-detect button
+/// guide the user to the right corrective action.
+enum CountryDetectionStatus {
+  /// Country resolved from a fresh or cached GPS fix.
+  gpsOk,
+
+  /// GPS failed (off, denied, no signal, timeout) but the
+  /// device's IANA timezone was a recognised
+  /// [kHijriCountries] entry — quietly used as the result.
+  timezoneOk,
+
+  /// GPS + timezone both failed; the device locale's region
+  /// sub-tag landed us a recognised country.
+  localeOk,
+
+  /// The device's master "Location" switch is OFF. Granting
+  /// the app permission won't help — the user has to flip
+  /// the toggle in system settings first. UI should route to
+  /// [CountryDetector.openLocationSettings].
+  serviceDisabled,
+
+  /// The user denied the location permission for this app.
+  /// A subsequent permission request CAN re-prompt the system
+  /// dialog (Android resets the "don't ask" counter after a
+  /// while).
+  permissionDenied,
+
+  /// The user picked "Don't ask again" on the system dialog,
+  /// OR the OS enforces a permanent denial (e.g. work profile
+  /// policy). `requestPermission()` is a no-op — only opening
+  /// the per-app settings page can flip this back. UI should
+  /// route to [CountryDetector.openAppSettings].
+  permissionDeniedForever,
+
+  /// We had permission and the service was on, but the GPS
+  /// chip did not return a fix within the overall budget.
+  /// Typically: indoors with no Wi-Fi, or first-launch
+  /// cold-start on a phone that hasn't warmed up its GPS yet.
+  timeout,
+
+  /// We got a fix but the reverse geocode returned nothing,
+  /// OR returned a country code we don't support in
+  /// [kHijriCountries].
+  noSignal,
+
+  /// All ladder rungs failed. UI defaults to the global
+  /// Umm al-Qura option and offers the manual picker.
+  unsupported,
+}
+
+/// Bundle of [CountryDetectionStatus] + a usable country code.
+/// The code is ALWAYS populated — `'XX'` (global Umm al-Qura)
+/// is used when no rung produced a real country — so callers
+/// can just `setCountry(result.code)` without a null check.
+class CountryDetectionResult {
+  final String code;
+  final CountryDetectionStatus status;
+  const CountryDetectionResult({
+    required this.code,
+    required this.status,
+  });
+
+  /// Convenience — true if [status] reflects an actual win
+  /// (vs. a fallback or error). Drives the green-vs-red snackbar
+  /// color in the Auto-detect UI.
+  bool get isSuccess =>
+      status == CountryDetectionStatus.gpsOk ||
+      status == CountryDetectionStatus.timezoneOk ||
+      status == CountryDetectionStatus.localeOk;
+}
+
 /// Best-effort country detector for the Hybrid Hijri Calendar.
 ///
 /// Returns an ISO 3166-1 alpha-2 code (`MA`, `SA`, `EG`, ...) that
@@ -64,10 +138,22 @@ class CountryDetector {
   /// we hand back the fallback so we don't strand a slow caller
   /// (typically the first-launch `AppProvider.init`) on a stuck
   /// geocoder.
-  static const Duration _totalTimeout = Duration(seconds: 4);
+  ///
+  /// Bumped from 4 s → 20 s after field testing — a cold-start
+  /// GPS fix on a real phone routinely takes 10-15 s, especially
+  /// indoors or in the user's first launch of the app when the
+  /// GPS chip hasn't been warmed up yet. The previous 4-second
+  /// budget made the "needs several attempts" experience the
+  /// user reported: the first detect timed out, the second
+  /// detect (after GPS had silently warmed up) succeeded.
+  static const Duration _totalTimeout = Duration(seconds: 20);
 
   /// Detects the user's country. Returns a code from
   /// [kHijriCountries] — never null, never throws.
+  ///
+  /// For UI flows that need to distinguish WHY detection failed
+  /// (so they can guide the user to enable GPS or pick manually),
+  /// prefer [detectWithStatus] which returns a status enum.
   ///
   /// `requestPermission` — when true, the GPS step asks for the
   /// location permission if not granted. Pass `false` on quiet
@@ -75,27 +161,122 @@ class CountryDetector {
   /// the permission sheet from the Qibla screen, never as a
   /// surprise during app startup.
   static Future<String> detect({bool requestPermission = false}) async {
+    final result =
+        await detectWithStatus(requestPermission: requestPermission);
+    return result.code;
+  }
+
+  /// Detect-with-diagnosis variant. Returns BOTH the ISO code
+  /// (always usable — never empty) AND a status enum the caller
+  /// can react to: "GPS service is off", "permission denied
+  /// forever", "no signal", "fell back to timezone", etc.
+  ///
+  /// The UI surfaces (Onboarding + Settings Auto-detect button)
+  /// use the status to:
+  ///   * Pop a "please enable GPS in Settings" sheet when
+  ///     `serviceDisabled` is returned.
+  ///   * Pop the platform's app-settings page when
+  ///     `permissionDeniedForever` is returned (only the user
+  ///     can flip that flag back).
+  ///   * Show a green snackbar with the detected flag + name on
+  ///     `gpsOk` / `timezoneOk`.
+  ///   * Show a red snackbar with a "pick manually" hint on
+  ///     `noSignal` / `unsupported`.
+  static Future<CountryDetectionResult> detectWithStatus({
+    bool requestPermission = false,
+  }) async {
     // 1) GPS — gold standard when permission is already granted.
+    CountryDetectionResult? gpsResult;
     try {
-      final code = await _detectInternal(requestPermission: requestPermission)
-          .timeout(_totalTimeout, onTimeout: () => null);
-      if (code != null && isHijriCountrySupported(code)) return code;
+      gpsResult = await _detectInternal(requestPermission: requestPermission)
+          .timeout(
+        _totalTimeout,
+        onTimeout: () => CountryDetectionResult(
+          code: '',
+          status: CountryDetectionStatus.timeout,
+        ),
+      );
+      if (gpsResult.code.isNotEmpty &&
+          isHijriCountrySupported(gpsResult.code)) {
+        return gpsResult;
+      }
     } catch (_) {
-      // Swallow — fall through to the next rung.
+      // Swallow — fall through to the next rung. Keep
+      // `gpsResult` (if non-null) so we can surface a precise
+      // status when both GPS and the secondary rungs fail.
     }
+
     // 2) Timezone — strongest signal that requires no permission.
     //    Asia/Riyadh → SA, Africa/Casablanca → MA, ...
     final tzCode = _fromTimezone();
-    if (tzCode != null && isHijriCountrySupported(tzCode)) return tzCode;
+    if (tzCode != null && isHijriCountrySupported(tzCode)) {
+      return CountryDetectionResult(
+        code: tzCode,
+        status: CountryDetectionStatus.timezoneOk,
+      );
+    }
+
     // 3) Device locale region — backup for users who set their
     //    regional preference even when the timezone is generic
     //    (e.g. UTC).
     final localeCode = _fromDeviceLocale();
     if (localeCode != null && isHijriCountrySupported(localeCode)) {
-      return localeCode;
+      return CountryDetectionResult(
+        code: localeCode,
+        status: CountryDetectionStatus.localeOk,
+      );
     }
-    // 4) Universal fallback.
-    return 'XX';
+
+    // 4) Universal fallback. Propagate the GPS-specific status
+    //    if we have one so the caller can still surface
+    //    "please enable GPS" instead of just "unsupported".
+    return CountryDetectionResult(
+      code: 'XX',
+      status: gpsResult?.status != null &&
+              gpsResult!.status != CountryDetectionStatus.gpsOk
+          ? gpsResult.status
+          : CountryDetectionStatus.unsupported,
+    );
+  }
+
+  /// True iff the device's location services switch is ON.
+  /// Exposed so the UI can pre-check and route the user to the
+  /// Android location-settings page BEFORE the rationale dialog
+  /// when the switch is off (otherwise even `Allow` would do
+  /// nothing — the permission grant doesn't turn on a globally
+  /// disabled radio).
+  static Future<bool> isLocationServiceEnabled() async {
+    try {
+      return await Geolocator.isLocationServiceEnabled();
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Opens the OS-level location settings page so the user can
+  /// flip the master GPS switch on. Companion to
+  /// [isLocationServiceEnabled]. Best-effort — returns silently
+  /// if the platform doesn't support deep-linking to that
+  /// screen.
+  static Future<void> openLocationSettings() async {
+    try {
+      await Geolocator.openLocationSettings();
+    } catch (_) {
+      // ignore — the user will have to navigate manually
+    }
+  }
+
+  /// Opens the per-app settings page so the user can flip the
+  /// location permission back from `Don't allow` / `Denied`.
+  /// Only meaningful after a `permissionDeniedForever` status,
+  /// where re-requesting via `requestPermission()` is a no-op
+  /// because Android remembers the "Don't ask again" flag.
+  static Future<void> openAppSettings() async {
+    try {
+      await Geolocator.openAppSettings();
+    } catch (_) {
+      // ignore
+    }
   }
 
   /// Returns the country code we'd guess WITHOUT touching GPS.
@@ -117,51 +298,123 @@ class CountryDetector {
 
   // ── GPS reverse geocoding ─────────────────────────────────
 
-  static Future<String?> _detectInternal({
+  static Future<CountryDetectionResult> _detectInternal({
     required bool requestPermission,
   }) async {
-    // Step 1: ensure we *can* read GPS without blowing up.
+    // Step 1: GPS service master switch. If the OS-level
+    // location toggle is off, no amount of permission grant
+    // will produce a fix — surface that as a distinct status
+    // so the UI can route the user to the system settings.
     final servicesOn = await Geolocator.isLocationServiceEnabled();
-    if (!servicesOn) return null;
+    if (!servicesOn) {
+      return CountryDetectionResult(
+        code: '',
+        status: CountryDetectionStatus.serviceDisabled,
+      );
+    }
 
+    // Step 2: app-level permission. Three terminal states map to
+    // three distinct statuses so the UI can react meaningfully.
     var perm = await Geolocator.checkPermission();
     if (perm == LocationPermission.denied) {
-      if (!requestPermission) return null;
+      if (!requestPermission) {
+        return CountryDetectionResult(
+          code: '',
+          status: CountryDetectionStatus.permissionDenied,
+        );
+      }
       perm = await Geolocator.requestPermission();
     }
-    if (perm == LocationPermission.denied ||
-        perm == LocationPermission.deniedForever) {
-      return null;
+    if (perm == LocationPermission.denied) {
+      return CountryDetectionResult(
+        code: '',
+        status: CountryDetectionStatus.permissionDenied,
+      );
+    }
+    if (perm == LocationPermission.deniedForever) {
+      return CountryDetectionResult(
+        code: '',
+        status: CountryDetectionStatus.permissionDeniedForever,
+      );
     }
 
-    // Step 2: read a quick position. `LocationAccuracy.low` is
-    // intentional — we want a country, not a building. Low
-    // accuracy uses cell-tower / Wi-Fi triangulation, which
-    // returns much faster than GPS-fix.
-    //
-    // API note: geolocator 11.0.0 uses the `desiredAccuracy` +
-    // `timeLimit` named parameters on `getCurrentPosition`. The
-    // `LocationSettings` wrapper landed in geolocator 13+ and is
-    // intentionally avoided here so the package pin in
-    // pubspec.yaml stays at ^11.
-    final pos = await Geolocator.getCurrentPosition(
-      desiredAccuracy: LocationAccuracy.low,
-      timeLimit: const Duration(seconds: 3),
-    );
+    // Step 3: try `getLastKnownPosition` FIRST. This is the
+    // critical fix for the "needs several attempts" bug: a
+    // cold-start GPS fix routinely takes 10-15 s, but a phone
+    // that has used location recently (Maps, Qibla, ...) has a
+    // sub-millisecond last-known fix sitting in cache. Reading
+    // it gives the user instant feedback in the common case;
+    // we only fall through to `getCurrentPosition` when the
+    // cache is empty.
+    try {
+      final last = await Geolocator.getLastKnownPosition();
+      if (last != null) {
+        final iso = await _geocodeIso(last);
+        if (iso != null) {
+          return CountryDetectionResult(
+            code: iso,
+            status: CountryDetectionStatus.gpsOk,
+          );
+        }
+      }
+    } catch (_) {
+      // ignore — fall through to a fresh fix
+    }
 
-    // Step 3: reverse geocode to a Placemark. The platform
-    // geocoder is the same one the Qibla screen uses for the
-    // "City, Country" line, so the OS already has the data
-    // cached if the user passed through the Qibla tab.
-    final marks = await placemarkFromCoordinates(
-      pos.latitude,
-      pos.longitude,
-    );
-    if (marks.isEmpty) return null;
+    // Step 4: fresh GPS fix. `LocationAccuracy.medium` is the
+    // sweet spot: ~100 m accuracy, uses GPS chip + cellular +
+    // Wi-Fi triangulation, returns within ~5-10 s on a normal
+    // device. The old `LocationAccuracy.low` skipped the GPS
+    // chip entirely on some Android variants, which made
+    // detection fail on devices without an active SIM. The
+    // 18-second `timeLimit` matches the `_totalTimeout` ceiling
+    // minus a 2-second safety margin so the outer `Future.timeout`
+    // doesn't kill the inner call before its own deadline.
+    try {
+      final pos = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.medium,
+        timeLimit: const Duration(seconds: 18),
+      );
+      final iso = await _geocodeIso(pos);
+      if (iso != null) {
+        return CountryDetectionResult(
+          code: iso,
+          status: CountryDetectionStatus.gpsOk,
+        );
+      }
+      return CountryDetectionResult(
+        code: '',
+        status: CountryDetectionStatus.noSignal,
+      );
+    } on TimeoutException {
+      return CountryDetectionResult(
+        code: '',
+        status: CountryDetectionStatus.timeout,
+      );
+    } catch (_) {
+      return CountryDetectionResult(
+        code: '',
+        status: CountryDetectionStatus.noSignal,
+      );
+    }
+  }
 
-    final iso = marks.first.isoCountryCode;
-    if (iso == null || iso.isEmpty) return null;
-    return iso.toUpperCase();
+  /// Reverse-geocodes a position to its ISO country code.
+  /// Returns `null` if the geocoder returns nothing or the
+  /// resulting placemark has no `isoCountryCode`.
+  static Future<String?> _geocodeIso(Position pos) async {
+    try {
+      final marks = await placemarkFromCoordinates(
+        pos.latitude,
+        pos.longitude,
+      );
+      if (marks.isEmpty) return null;
+      final iso = marks.first.isoCountryCode;
+      if (iso == null || iso.isEmpty) return null;
+      return iso.toUpperCase();
+    } catch (_) {
+      return null;
+    }
   }
 
   // ── Device-locale fallback ────────────────────────────────

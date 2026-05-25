@@ -5,6 +5,7 @@ import '../data/hijri_countries.dart';
 import '../providers/app_provider.dart';
 import '../services/country_detector.dart';
 import '../theme.dart';
+import '../utils/app_logger.dart';
 import '../widgets/country_picker_sheet.dart';
 import '../widgets/gps_rationale_dialog.dart';
 import 'home_screen.dart';
@@ -180,21 +181,26 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   /// Handler for the "Auto-detect my country" card tap.
   ///
-  /// Flow
+  /// Robust four-stage flow:
+  ///
   ///   1. Show the GPS rationale dialog so the user understands
   ///      why we're about to ask for location.
-  ///   2. If they cancel: still mark the card as selected (we
+  ///   2. If they Cancel: still mark the card as selected (we
   ///      respect their choice of mode), but leave detection
   ///      pending — `_finish` will fall back to the no-permission
   ///      quick guess.
-  ///   3. If they allow: run `p.detectCountryAndApply()` (which
-  ///      requests the actual OS permission, reads GPS, walks
-  ///      the timezone/locale fallback ladder, and applies the
-  ///      result via `setCountry`). The provider notifies, so
-  ///      the calendar, header badge, and any other watcher
-  ///      updates live.
-  ///   4. Surface a snackbar with the detected flag + name so
-  ///      the user sees confirmation that something happened.
+  ///   3. If they Allow but the device's master Location switch
+  ///      is OFF: show a SECOND dialog routing them to the
+  ///      OS-level location settings. Granting our app
+  ///      permission alone wouldn't help — no chip would feed
+  ///      it.
+  ///   4. Otherwise run the status-aware detect, react to each
+  ///      possible outcome with a specific UI affordance:
+  ///        - success    → green snackbar with flag + name
+  ///        - timeout    → red snackbar with "try again" hint
+  ///        - perm denied (forever) → "Open app settings" sheet
+  ///        - service became OFF mid-flow → "Open settings" sheet
+  ///        - generic fail → red snackbar
   ///
   /// Re-runnable — tapping the card a second time re-shows the
   /// dialog and tries again, which is what a user who initially
@@ -213,51 +219,170 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     );
     if (!mounted || !allowed) return;
 
+    // Pre-check: if the device's master Location switch is OFF,
+    // route to system settings BEFORE asking for the app
+    // permission. Otherwise the user grants the permission, sees
+    // nothing happen, and concludes "auto-detect is broken".
+    final servicesOn = await CountryDetector.isLocationServiceEnabled();
+    if (!mounted) return;
+    if (!servicesOn) {
+      final wantsToOpen = await showGpsServiceOffDialog(
+        context: context,
+        locale: _selectedLang,
+      );
+      if (!mounted) return;
+      if (wantsToOpen) {
+        await CountryDetector.openLocationSettings();
+      }
+      // User has to come back and tap auto again after flipping
+      // the switch — don't try to detect with GPS still off.
+      return;
+    }
+
     setState(() => _isDetecting = true);
-    String iso = 'XX';
+    CountryDetectionResult result;
     try {
-      iso = await p.detectCountryAndApply();
-    } catch (_) {
-      iso = 'XX';
+      result = await p.detectCountryWithStatus();
+    } catch (e, st) {
+      AppLogger.error('Onboarding auto-detect failed', error: e, stack: st);
+      result = const CountryDetectionResult(
+        code: 'XX',
+        status: CountryDetectionStatus.noSignal,
+      );
     }
     if (!mounted) return;
     setState(() {
       _isDetecting = false;
-      _autoDetectedCountry = iso;
+      // Only record the result as "auto-detected" if it
+      // actually came from a real signal (GPS / timezone /
+      // locale). XX-via-failure is NOT a detected country.
+      _autoDetectedCountry = result.isSuccess ? result.code : '';
     });
 
-    // Feedback — green snackbar on success, red on graceful
-    // failure (permission denied or no GPS fix).
-    final ok = iso.isNotEmpty && iso != 'XX';
-    final c = hijriCountryByCode(iso);
+    await _reactToDetection(result);
+  }
+
+  /// Post-detection UI reaction. Pulled out of [_onAutoTapped]
+  /// so the snackbar/sheet logic is testable and so a future
+  /// "retry" button can call it without re-running the whole
+  /// permission ladder.
+  Future<void> _reactToDetection(CountryDetectionResult result) async {
     final loc = _selectedLang;
-    final successMsg = switch (loc) {
-      'ar' => '✓ تم تحديد بلدك: ${c.flag} ${c.localizedName(loc)}',
-      'fr' => '✓ Pays détecté : ${c.flag} ${c.localizedName(loc)}',
-      'es' => '✓ País detectado: ${c.flag} ${c.localizedName(loc)}',
-      _ => '✓ Country detected: ${c.flag} ${c.localizedName(loc)}',
-    };
-    final failMsg = switch (loc) {
-      'ar' => 'تعذّر تحديد البلد — يمكنك الاختيار يدوياً',
-      'fr' => 'Détection impossible — choisissez manuellement',
-      'es' => 'No se pudo detectar — elige manualmente',
-      _ => 'Detection failed — pick manually',
-    };
+    switch (result.status) {
+      case CountryDetectionStatus.gpsOk:
+      case CountryDetectionStatus.timezoneOk:
+      case CountryDetectionStatus.localeOk:
+        final c = hijriCountryByCode(result.code);
+        _showSnack(
+          switch (loc) {
+            'ar' => '✓ تم تحديد بلدك: ${c.flag} ${c.localizedName(loc)}',
+            'fr' => '✓ Pays détecté : ${c.flag} ${c.localizedName(loc)}',
+            'es' => '✓ País detectado: ${c.flag} ${c.localizedName(loc)}',
+            _ => '✓ Country detected: ${c.flag} ${c.localizedName(loc)}',
+          },
+          success: true,
+        );
+        break;
+      case CountryDetectionStatus.serviceDisabled:
+        // Service got disabled BETWEEN our pre-check and the
+        // detect call. Race condition — re-route to settings.
+        final wantsToOpen = await showGpsServiceOffDialog(
+          context: context,
+          locale: loc,
+        );
+        if (mounted && wantsToOpen) {
+          await CountryDetector.openLocationSettings();
+        }
+        break;
+      case CountryDetectionStatus.permissionDeniedForever:
+        // System permission dialog won't re-appear — only the
+        // per-app settings page can flip the flag.
+        _showSnack(
+          switch (loc) {
+            'ar' => 'الإذن مرفوض دائماً — فعّله من إعدادات التطبيق',
+            'fr' => 'Permission refusée — activez-la dans les réglages',
+            'es' => 'Permiso denegado — actívalo en ajustes',
+            _ => 'Permission denied — enable it in app settings',
+          },
+          success: false,
+          actionLabel: switch (loc) {
+            'ar' => 'فتح',
+            'fr' => 'Ouvrir',
+            'es' => 'Abrir',
+            _ => 'Open',
+          },
+          onAction: CountryDetector.openAppSettings,
+        );
+        break;
+      case CountryDetectionStatus.permissionDenied:
+        _showSnack(
+          switch (loc) {
+            'ar' => 'إذن الموقع لم يُمنح — اضغط مجدداً للمحاولة',
+            'fr' => 'Permission refusée — touchez à nouveau pour réessayer',
+            'es' => 'Permiso denegado — toca de nuevo para reintentar',
+            _ => 'Permission denied — tap again to retry',
+          },
+          success: false,
+        );
+        break;
+      case CountryDetectionStatus.timeout:
+        _showSnack(
+          switch (loc) {
+            'ar' => 'انتهت المهلة — قد يستغرق GPS وقتاً، أعد المحاولة',
+            'fr' => 'Délai dépassé — le GPS met du temps, réessayez',
+            'es' => 'Tiempo agotado — el GPS tarda, reintenta',
+            _ => 'Timed out — GPS can take a moment, try again',
+          },
+          success: false,
+        );
+        break;
+      case CountryDetectionStatus.noSignal:
+      case CountryDetectionStatus.unsupported:
+        _showSnack(
+          switch (loc) {
+            'ar' => 'تعذّر تحديد البلد — يمكنك الاختيار يدوياً',
+            'fr' => 'Détection impossible — choisissez manuellement',
+            'es' => 'No se pudo detectar — elige manualmente',
+            _ => 'Detection failed — pick manually',
+          },
+          success: false,
+        );
+        break;
+    }
+  }
+
+  /// One-call SnackBar helper for the auto-detect UI. Optional
+  /// action button (used to surface "Open app settings" when
+  /// permission is permanently denied).
+  void _showSnack(
+    String text, {
+    required bool success,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..removeCurrentSnackBar()
       ..showSnackBar(SnackBar(
         content: Text(
-          ok ? successMsg : failMsg,
+          text,
           style: appFont(fontSize: 12.5, color: Colors.white),
         ),
         backgroundColor:
-            ok ? AppColors.green : const Color(0xFFD94F4F),
+            success ? AppColors.green : const Color(0xFFD94F4F),
         behavior: SnackBarBehavior.floating,
-        duration: const Duration(milliseconds: 2400),
+        duration: Duration(milliseconds: success ? 2400 : 3600),
         margin: const EdgeInsets.all(12),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
         ),
+        action: (actionLabel != null && onAction != null)
+            ? SnackBarAction(
+                label: actionLabel,
+                textColor: Colors.white,
+                onPressed: onAction,
+              )
+            : null,
       ));
   }
 

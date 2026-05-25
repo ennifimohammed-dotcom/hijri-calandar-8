@@ -5,7 +5,9 @@ import 'package:share_plus/share_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../models/notification_settings.dart';
 import '../providers/app_provider.dart';
+import '../services/country_detector.dart';
 import '../utils/text_format.dart';
+import '../utils/app_logger.dart';
 import '../theme.dart';
 import '../data/hijri_countries.dart';
 import '../widgets/gps_rationale_dialog.dart';
@@ -464,35 +466,123 @@ class _HijriSourceSectionState extends State<_HijriSourceSection> {
   }
 
   Future<void> _onDetect(AppProvider p) async {
-    // Show the rationale dialog FIRST so the user understands
-    // why we're about to ask for GPS. Symmetric with the
-    // onboarding flow's "Auto-detect" card — same dialog body,
-    // same Allow/Cancel semantics. If they cancel we do
-    // nothing (no permission prompt, no state change).
+    // Step 1 — rationale. Mirrors the Onboarding flow so the
+    // user sees the same explanation in both places.
     final allowed = await showGpsRationaleDialog(
       context: context,
       locale: p.locale,
     );
     if (!mounted || !allowed) return;
 
+    // Step 2 — pre-check the OS-level Location switch. If it's
+    // off, route to system settings; granting the app
+    // permission alone wouldn't help.
+    final servicesOn = await CountryDetector.isLocationServiceEnabled();
+    if (!mounted) return;
+    if (!servicesOn) {
+      final wantsToOpen = await showGpsServiceOffDialog(
+        context: context,
+        locale: p.locale,
+      );
+      if (!mounted) return;
+      if (wantsToOpen) {
+        await CountryDetector.openLocationSettings();
+      }
+      return;
+    }
+
+    // Step 3 — status-aware detect. Each terminal status gets a
+    // specific UI affordance (open settings, retry hint, etc.)
+    // so the user knows exactly what to do next.
     setState(() => _detecting = true);
-    String iso = 'XX';
+    CountryDetectionResult result;
     try {
-      iso = await p.detectCountryAndApply();
-    } catch (_) {
-      iso = 'XX';
+      result = await p.detectCountryWithStatus();
+    } catch (e, st) {
+      AppLogger.error('Settings auto-detect failed', error: e, stack: st);
+      result = const CountryDetectionResult(
+        code: 'XX',
+        status: CountryDetectionStatus.noSignal,
+      );
     }
     if (!mounted) return;
     setState(() => _detecting = false);
-    final ok = isHijriCountrySupported(iso) && iso != 'XX';
-    final c = hijriCountryByCode(iso);
-    _snack(
-      context,
-      ok
-          ? '${p.label('hijri_source_detected')} — ${c.flag} ${c.localizedName(p.locale)}'
-          : p.label('hijri_source_detect_fail'),
-      success: ok,
-    );
+
+    final loc = p.locale;
+    switch (result.status) {
+      case CountryDetectionStatus.gpsOk:
+      case CountryDetectionStatus.timezoneOk:
+      case CountryDetectionStatus.localeOk:
+        final c = hijriCountryByCode(result.code);
+        _snack(
+          context,
+          '${p.label('hijri_source_detected')} — ${c.flag} ${c.localizedName(loc)}',
+          success: true,
+        );
+        break;
+      case CountryDetectionStatus.serviceDisabled:
+        // Race: services were disabled between our pre-check
+        // and the detect itself. Re-route to settings.
+        final wantsToOpen = await showGpsServiceOffDialog(
+          context: context,
+          locale: loc,
+        );
+        if (mounted && wantsToOpen) {
+          await CountryDetector.openLocationSettings();
+        }
+        break;
+      case CountryDetectionStatus.permissionDeniedForever:
+        _snack(
+          context,
+          switch (loc) {
+            'ar' => 'الإذن مرفوض دائماً — فعّله من إعدادات التطبيق',
+            'fr' => 'Permission refusée — activez-la dans les réglages',
+            'es' => 'Permiso denegado — actívalo en ajustes',
+            _ => 'Permission denied — enable it in app settings',
+          },
+          success: false,
+          actionLabel: switch (loc) {
+            'ar' => 'فتح',
+            'fr' => 'Ouvrir',
+            'es' => 'Abrir',
+            _ => 'Open',
+          },
+          onAction: CountryDetector.openAppSettings,
+        );
+        break;
+      case CountryDetectionStatus.permissionDenied:
+        _snack(
+          context,
+          switch (loc) {
+            'ar' => 'إذن الموقع لم يُمنح — اضغط مجدداً للمحاولة',
+            'fr' => 'Permission refusée — touchez à nouveau pour réessayer',
+            'es' => 'Permiso denegado — toca de nuevo para reintentar',
+            _ => 'Permission denied — tap again to retry',
+          },
+          success: false,
+        );
+        break;
+      case CountryDetectionStatus.timeout:
+        _snack(
+          context,
+          switch (loc) {
+            'ar' => 'انتهت المهلة — قد يستغرق GPS وقتاً، أعد المحاولة',
+            'fr' => 'Délai dépassé — le GPS met du temps, réessayez',
+            'es' => 'Tiempo agotado — el GPS tarda, reintenta',
+            _ => 'Timed out — GPS can take a moment, try again',
+          },
+          success: false,
+        );
+        break;
+      case CountryDetectionStatus.noSignal:
+      case CountryDetectionStatus.unsupported:
+        _snack(
+          context,
+          p.label('hijri_source_detect_fail'),
+          success: false,
+        );
+        break;
+    }
   }
 
   Future<void> _onRefresh(AppProvider p) async {
@@ -512,7 +602,13 @@ class _HijriSourceSectionState extends State<_HijriSourceSection> {
     );
   }
 
-  void _snack(BuildContext context, String text, {required bool success}) {
+  void _snack(
+    BuildContext context,
+    String text, {
+    required bool success,
+    String? actionLabel,
+    VoidCallback? onAction,
+  }) {
     ScaffoldMessenger.of(context)
       ..removeCurrentSnackBar()
       ..showSnackBar(SnackBar(
@@ -521,11 +617,21 @@ class _HijriSourceSectionState extends State<_HijriSourceSection> {
             ? AppColors.green
             : const Color(0xFFD94F4F),
         behavior: SnackBarBehavior.floating,
-        duration: const Duration(milliseconds: 2400),
+        // Longer hold for error snacks so the user has time to
+        // read the "what to do next" guidance + optional
+        // action button.
+        duration: Duration(milliseconds: success ? 2400 : 3600),
         margin: const EdgeInsets.all(12),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12),
         ),
+        action: (actionLabel != null && onAction != null)
+            ? SnackBarAction(
+                label: actionLabel,
+                textColor: Colors.white,
+                onPressed: onAction,
+              )
+            : null,
       ));
   }
 

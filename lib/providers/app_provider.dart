@@ -452,12 +452,31 @@ class AppProvider extends ChangeNotifier {
   /// Passes `requestPermission: true` so the user gets the
   /// location-permission sheet if they haven't already granted
   /// it via the Qibla screen.
+  ///
+  /// For UI flows that need to distinguish WHY detection
+  /// produced a fallback (GPS off vs. permission denied vs.
+  /// timeout) so they can guide the user, prefer
+  /// [detectCountryWithStatus]. This method is kept for legacy
+  /// callers and now delegates to it.
   Future<String> detectCountryAndApply() async {
-    final iso = await CountryDetector.detect(requestPermission: true);
-    if (iso.isNotEmpty) {
-      await setCountry(iso);
+    final result = await detectCountryWithStatus();
+    return result.code;
+  }
+
+  /// Detect-with-diagnosis variant. Applies the country and
+  /// returns the full [CountryDetectionResult] so the caller
+  /// (Auto-detect button in Onboarding + Settings) can render
+  /// the right follow-up: a "please enable GPS in Settings"
+  /// sheet, a "permission permanently denied — open app
+  /// settings" sheet, or just a success snackbar.
+  Future<CountryDetectionResult> detectCountryWithStatus() async {
+    final result = await CountryDetector.detectWithStatus(
+      requestPermission: true,
+    );
+    if (result.code.isNotEmpty) {
+      await setCountry(result.code);
     }
-    return iso;
+    return result;
   }
 
   /// Force-refreshes the hybrid cache for the visible Hijri
