@@ -400,21 +400,115 @@ class CountryDetector {
   }
 
   /// Reverse-geocodes a position to its ISO country code.
-  /// Returns `null` if the geocoder returns nothing or the
-  /// resulting placemark has no `isoCountryCode`.
+  /// Returns `null` only if BOTH the online geocoder AND the
+  /// offline bounding-box fallback fail.
+  ///
+  /// Two-tier strategy:
+  ///   1. ONLINE — `placemarkFromCoordinates` (Android Geocoder
+  ///      / iOS CLGeocoder). Most accurate, but requires network
+  ///      on Android because the platform geocoder hits Google
+  ///      servers. If the user has GPS on but no internet, this
+  ///      step fails silently.
+  ///   2. OFFLINE — bounding-box lookup against the 30 supported
+  ///      Muslim-majority countries (see [_offlineCountryFromLatLng]).
+  ///      Country-level accuracy only (no city, no postal code),
+  ///      but that's all we need — we're picking a calendar
+  ///      authority, not an address. Works fully offline.
+  ///
+  /// This two-tier path is what makes "Detect country" usable on
+  /// a plane / train / countryside without coverage — GPS reads
+  /// the position, our bounding-box table classifies it.
   static Future<String?> _geocodeIso(Position pos) async {
+    // Tier 1 — online platform geocoder. Most accurate.
     try {
       final marks = await placemarkFromCoordinates(
         pos.latitude,
         pos.longitude,
       );
-      if (marks.isEmpty) return null;
-      final iso = marks.first.isoCountryCode;
-      if (iso == null || iso.isEmpty) return null;
-      return iso.toUpperCase();
+      if (marks.isNotEmpty) {
+        final iso = marks.first.isoCountryCode;
+        if (iso != null && iso.isNotEmpty) {
+          return iso.toUpperCase();
+        }
+      }
     } catch (_) {
-      return null;
+      // ignore — fall through to offline
     }
+    // Tier 2 — offline bounding-box lookup. Returns one of the
+    // 30 supported ISO codes or `null` if the position is
+    // outside every known Muslim-majority country.
+    return _offlineCountryFromLatLng(pos.latitude, pos.longitude);
+  }
+
+  /// Offline GPS → ISO country code lookup using approximate
+  /// bounding boxes for the 30 [kHijriCountries] supported by
+  /// the hybrid Hijri calendar.
+  ///
+  /// Why bounding boxes and not polygons?
+  ///   * One country = four floats. 30 countries = 120 floats =
+  ///     ~480 bytes. Polygon data for the same set would be
+  ///     ~200 KB.
+  ///   * Country-level accuracy is enough for our use case (we
+  ///     pick a calendar authority, not a city / district).
+  ///   * Order matters: smaller countries are listed FIRST so
+  ///     they match before being subsumed by a neighbour's
+  ///     larger box. The Gulf is the densest cluster; Bahrain
+  ///     (≈1 250 km²) sits inside Saudi Arabia's box if you go
+  ///     by lat/lng alone, so BH must be checked before SA.
+  ///
+  /// Returns `null` for positions outside every box (e.g. the
+  /// user is in Europe / Africa-south-of-Sahara / Americas /
+  /// East Asia / Oceania) — the caller then falls through to
+  /// the timezone / locale rungs.
+  static String? _offlineCountryFromLatLng(double lat, double lng) {
+    // Each tuple: (ISO code, minLat, maxLat, minLng, maxLng).
+    // Sourced from public country-bbox tables; numbers are
+    // slightly inflated outward so the bbox doesn't reject a
+    // legitimate fix that's 5 km offshore.
+    //
+    // Order: smallest area first, largest last.
+    const boxes = <(String, double, double, double, double)>[
+      // ── Tiny city-states / islands ──
+      ('SG', 1.1, 1.5, 103.6, 104.1),     // Singapore
+      ('BH', 25.5, 26.4, 50.3, 50.9),     // Bahrain
+      ('BN', 4.0, 5.1, 114.0, 115.4),     // Brunei
+      // ── Small Gulf states ──
+      ('QA', 24.4, 26.2, 50.7, 51.7),     // Qatar
+      ('KW', 28.5, 30.1, 46.5, 48.5),     // Kuwait
+      ('AE', 22.6, 26.1, 51.5, 56.4),     // UAE
+      ('OM', 16.6, 26.4, 51.9, 59.9),     // Oman
+      // ── Small Levant ──
+      ('PS', 31.2, 32.6, 34.2, 35.6),     // Palestine
+      ('LB', 33.0, 34.7, 35.1, 36.7),     // Lebanon
+      ('JO', 29.1, 33.4, 34.9, 39.4),     // Jordan
+      ('YE', 12.1, 19.0, 41.8, 54.5),     // Yemen
+      ('TN', 30.2, 37.6, 7.5, 11.6),      // Tunisia
+      ('SY', 32.3, 37.4, 35.7, 42.4),     // Syria
+      ('IQ', 29.0, 37.4, 38.8, 48.6),     // Iraq
+      ('AF', 29.4, 38.5, 60.5, 74.9),     // Afghanistan
+      ('BD', 20.6, 26.7, 88.0, 92.7),     // Bangladesh
+      ('MY', 0.8, 7.5, 99.6, 119.3),      // Malaysia
+      ('MR', 14.7, 27.3, -17.1, -4.8),    // Mauritania
+      ('MA', 21.3, 36.0, -17.1, -1.0),    // Morocco (incl. Western Sahara)
+      ('LY', 19.5, 33.2, 9.4, 25.2),      // Libya
+      ('DZ', 18.9, 37.1, -8.7, 12.0),     // Algeria
+      ('EG', 21.7, 31.7, 24.7, 36.9),     // Egypt
+      ('SD', 8.6, 23.1, 21.8, 38.6),      // Sudan
+      ('TR', 35.8, 42.1, 25.7, 44.8),     // Türkiye
+      ('PK', 23.6, 37.1, 60.9, 77.0),     // Pakistan
+      ('IR', 25.0, 39.8, 44.0, 63.4),     // Iran
+      ('SA', 16.4, 32.2, 34.5, 55.7),     // Saudi Arabia
+      ('IN', 6.7, 35.5, 68.1, 97.5),      // India
+      ('ID', -11.1, 6.1, 95.0, 141.1),    // Indonesia
+    ];
+    for (final box in boxes) {
+      final (code, minLat, maxLat, minLng, maxLng) = box;
+      if (lat >= minLat && lat <= maxLat &&
+          lng >= minLng && lng <= maxLng) {
+        return code;
+      }
+    }
+    return null;
   }
 
   // ── Device-locale fallback ────────────────────────────────

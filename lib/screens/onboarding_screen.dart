@@ -1116,6 +1116,14 @@ class _GlassCard extends StatelessWidget {
     const activeBg = Color(0xFFE9C46A);
     return GestureDetector(
       onTap: onTap,
+      // `opaque` so taps on transparent regions (the glass
+      // tint between the icon and the radio glyph) still
+      // register as a tap — without this, a tap close to the
+      // card edge can be swallowed by the parent without ever
+      // firing `onTap`, which is exactly what makes the
+      // rationale dialog appear to "not show" when the user
+      // is sure they tapped the card.
+      behavior: HitTestBehavior.opaque,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,

@@ -82,6 +82,14 @@ Future<bool> showGpsRationaleDialog({
   final result = await showDialog<bool>(
     context: context,
     barrierDismissible: true,
+    // Route through the root navigator so the dialog is hosted
+    // ABOVE any local routes (PageView inside Onboarding, nested
+    // ModalBottomSheets, etc.) — without this, a dialog opened
+    // from inside a PageView page can occasionally be obscured
+    // by the page's own Material ancestor and the user sees a
+    // dim barrier but no dialog content.
+    useRootNavigator: true,
+    barrierColor: Colors.black.withValues(alpha: 0.55),
     builder: (_) => Dialog(
       backgroundColor: isDark ? AppColors.darkSurface : AppColors.white,
       shape: RoundedRectangleBorder(
@@ -264,6 +272,8 @@ Future<bool> showGpsServiceOffDialog({
   final result = await showDialog<bool>(
     context: context,
     barrierDismissible: true,
+    useRootNavigator: true,
+    barrierColor: Colors.black.withValues(alpha: 0.55),
     builder: (_) => Dialog(
       backgroundColor: isDark ? AppColors.darkSurface : AppColors.white,
       shape: RoundedRectangleBorder(
