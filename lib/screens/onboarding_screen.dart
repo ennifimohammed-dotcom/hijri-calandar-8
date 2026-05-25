@@ -530,7 +530,7 @@ class _LanguageRegionPage extends StatelessWidget {
                 ? 'Fuente del calendario Hijri'
                 : 'Hijri calendar source';
 
-    final langs = const [
+    const langs = [
       ('ar', '🇲🇦', 'العربية'),
       ('fr', '🇫🇷', 'Français'),
       ('en', '🇬🇧', 'English'),
@@ -789,7 +789,7 @@ class _GlassCard extends StatelessWidget {
   });
   @override
   Widget build(BuildContext context) {
-    final activeBg = const Color(0xFFE9C46A);
+    const activeBg = Color(0xFFE9C46A);
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(

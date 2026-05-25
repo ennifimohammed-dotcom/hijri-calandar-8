@@ -279,9 +279,13 @@ class _CountryRow extends StatelessWidget {
                 ),
               ),
               if (active)
-                const Icon(
+                Icon(
                   Icons.check_circle_rounded,
                   size: 20,
+                  // `AppColors.green` is the runtime accent
+                  // (AccentBus-backed), so this can't be a
+                  // `const Icon` — the swatch may differ
+                  // between two renders of the picker.
                   color: AppColors.green,
                 ),
             ],
