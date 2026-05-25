@@ -4,6 +4,8 @@ import 'dart:ui';
 
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest.dart' as tz_data;
 
 import '../data/hijri_countries.dart';
 
@@ -25,16 +27,30 @@ import '../data/hijri_countries.dart';
 ///      or services are off (the Qibla screen will surface that
 ///      to the user separately).
 ///
-///   2. Device locale country tag (e.g. `fr_MA` → `MA`,
-///      `ar_SA` → `SA`). Works fully offline and never requires
-///      a permission prompt; ~90% accurate for users whose
-///      device is configured in their home country.
+///   2. System timezone (NEW — strongest signal that requires
+///      no permission). Maps IANA names like `Asia/Riyadh` to
+///      `SA`, `Africa/Casablanca` to `MA`, etc. The OS-reported
+///      timezone is the user's lived clock — practically nobody
+///      runs `Asia/Riyadh` while physically in Canada, so this
+///      is a far more reliable proxy than the device language
+///      (which is just a UI preference). Covers every one of
+///      the 30 supported `kHijriCountries` plus their
+///      sub-timezones (e.g. `Asia/Pontianak` → `ID`,
+///      `Africa/El_Aaiun` → `MA`).
 ///
-///   3. Fallback to the universal `XX` code (Umm al-Qura). This
+///   3. Device locale REGION tag (e.g. `fr_MA` → `MA`,
+///      `ar_SA` → `SA`). Note: only the REGION sub-tag is read;
+///      the language part is ignored because it's a UI
+///      preference and not a reliable location signal (a Saudi
+///      using an English UI would be `en_SA`, not `en_GB`).
+///      Falls through silently if the device locale lacks a
+///      region tag.
+///
+///   4. Fallback to the universal `XX` code (Umm al-Qura). This
 ///      is intentionally not "guess from IP" — IP geolocation
 ///      adds a third-party dependency and surfaces tricky
-///      privacy questions for not much gain over the locale
-///      heuristic.
+///      privacy questions for not much gain over the layered
+///      timezone + locale heuristic.
 ///
 /// Caller responsibility
 ///   The caller decides what to DO with the returned code (cache
@@ -59,14 +75,44 @@ class CountryDetector {
   /// the permission sheet from the Qibla screen, never as a
   /// surprise during app startup.
   static Future<String> detect({bool requestPermission = false}) async {
+    // 1) GPS — gold standard when permission is already granted.
     try {
       final code = await _detectInternal(requestPermission: requestPermission)
           .timeout(_totalTimeout, onTimeout: () => null);
       if (code != null && isHijriCountrySupported(code)) return code;
     } catch (_) {
-      // Swallow — fall through to the locale heuristic.
+      // Swallow — fall through to the next rung.
     }
-    return _fromDeviceLocale() ?? 'XX';
+    // 2) Timezone — strongest signal that requires no permission.
+    //    Asia/Riyadh → SA, Africa/Casablanca → MA, ...
+    final tzCode = _fromTimezone();
+    if (tzCode != null && isHijriCountrySupported(tzCode)) return tzCode;
+    // 3) Device locale region — backup for users who set their
+    //    regional preference even when the timezone is generic
+    //    (e.g. UTC).
+    final localeCode = _fromDeviceLocale();
+    if (localeCode != null && isHijriCountrySupported(localeCode)) {
+      return localeCode;
+    }
+    // 4) Universal fallback.
+    return 'XX';
+  }
+
+  /// Returns the country code we'd guess WITHOUT touching GPS.
+  /// Used by the Onboarding screen to pre-fill the suggested
+  /// country in the "Auto-detect" button label before the user
+  /// has granted any location permission — so the suggestion
+  /// reads "Auto-detect (likely 🇸🇦 Saudi Arabia)" even on a
+  /// pristine install. Never throws; returns `'XX'` if nothing
+  /// matched.
+  static String detectQuick() {
+    final tzCode = _fromTimezone();
+    if (tzCode != null && isHijriCountrySupported(tzCode)) return tzCode;
+    final localeCode = _fromDeviceLocale();
+    if (localeCode != null && isHijriCountrySupported(localeCode)) {
+      return localeCode;
+    }
+    return 'XX';
   }
 
   // ── GPS reverse geocoding ─────────────────────────────────
@@ -169,5 +215,107 @@ class CountryDetector {
     final region = parts[1];
     if (region.length != 2) return null;
     return region.toUpperCase();
+  }
+
+  // ── Timezone-based detection ──────────────────────────────
+
+  /// Whether `tz_data.initializeTimeZones()` has been called.
+  /// Lazy-initialized so the detector works whether or not the
+  /// caller (typically `AppProvider.init`) has already brought
+  /// up the notification service's timezone database. The init
+  /// itself is ~50 ms (one-shot load of the IANA tz tables) so
+  /// running it from this code path is harmless if the
+  /// notification service hasn't booted yet.
+  static bool _tzInitialized = false;
+
+  static void _ensureTzInit() {
+    if (_tzInitialized) return;
+    try {
+      tz_data.initializeTimeZones();
+      _tzInitialized = true;
+    } catch (_) {
+      // If the tz DB fails to load for any reason, the
+      // [_fromTimezone] caller will simply return null and the
+      // detection ladder will fall through to the next rung.
+    }
+  }
+
+  /// Reads the OS-reported IANA timezone name (`Asia/Riyadh`,
+  /// `Africa/Casablanca`, ...) and maps it to the user's
+  /// country. Returns `null` if the timezone is generic (UTC,
+  /// Etc/GMT+3) or not in the lookup table — falls through to
+  /// the locale heuristic in that case.
+  static String? _fromTimezone() {
+    _ensureTzInit();
+    try {
+      final name = tz.local.name;
+      return _timezoneToCountry(name);
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// IANA timezone → ISO 3166-1 alpha-2 country code.
+  ///
+  /// Covers every entry in [kHijriCountries], plus the sub-timezones
+  /// each country uses internally (Indonesia spans four zones,
+  /// Malaysia two, the Levant several). Names follow the canonical
+  /// IANA tz database as shipped by the `timezone` package — the
+  /// same name format the `tz.local.name` getter returns.
+  ///
+  /// Returns `null` for timezones that don't belong to a
+  /// `kHijriCountries` entry (e.g. `America/Toronto` —
+  /// the caller falls through to the next detection rung in
+  /// that case, eventually landing on the global `XX` fallback).
+  static String? _timezoneToCountry(String tzName) {
+    return switch (tzName) {
+      // ── Maghreb ──
+      'Africa/Casablanca' => 'MA',
+      'Africa/El_Aaiun' => 'MA',
+      'Africa/Algiers' => 'DZ',
+      'Africa/Tunis' => 'TN',
+      'Africa/Tripoli' => 'LY',
+      'Africa/Nouakchott' => 'MR',
+      // ── Gulf & Arabian peninsula ──
+      'Asia/Riyadh' => 'SA',
+      'Asia/Mecca' => 'SA',
+      'Asia/Dubai' => 'AE',
+      'Asia/Qatar' => 'QA',
+      'Asia/Kuwait' => 'KW',
+      'Asia/Bahrain' => 'BH',
+      'Asia/Muscat' => 'OM',
+      'Asia/Aden' => 'YE',
+      // ── Nile & Sudan ──
+      'Africa/Cairo' => 'EG',
+      'Africa/Khartoum' => 'SD',
+      // ── Levant ──
+      'Asia/Amman' => 'JO',
+      'Asia/Hebron' => 'PS',
+      'Asia/Gaza' => 'PS',
+      'Asia/Jerusalem' => 'PS', // best-effort for Palestinian users.
+      'Asia/Beirut' => 'LB',
+      'Asia/Damascus' => 'SY',
+      // ── Mesopotamia & Iran ──
+      'Asia/Baghdad' => 'IQ',
+      'Asia/Tehran' => 'IR',
+      // ── Turkey ──
+      'Europe/Istanbul' => 'TR',
+      // ── South Asia ──
+      'Asia/Karachi' => 'PK',
+      'Asia/Dhaka' => 'BD',
+      'Asia/Kolkata' => 'IN',
+      'Asia/Calcutta' => 'IN', // historic name still emitted on some devices.
+      'Asia/Kabul' => 'AF',
+      // ── South-East Asia ──
+      'Asia/Jakarta' => 'ID',
+      'Asia/Pontianak' => 'ID',
+      'Asia/Makassar' => 'ID',
+      'Asia/Jayapura' => 'ID',
+      'Asia/Kuala_Lumpur' => 'MY',
+      'Asia/Kuching' => 'MY',
+      'Asia/Brunei' => 'BN',
+      'Asia/Singapore' => 'SG',
+      _ => null,
+    };
   }
 }

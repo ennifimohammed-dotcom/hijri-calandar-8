@@ -1,9 +1,31 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import '../data/hijri_countries.dart';
 import '../providers/app_provider.dart';
+import '../services/country_detector.dart';
 import '../theme.dart';
+import '../widgets/country_picker_sheet.dart';
 import 'home_screen.dart';
+
+/// First-launch picker mode for the Hijri calendar source.
+/// Replaces the legacy 2-option region toggle.
+enum _HijriSourceMode {
+  /// Use GPS + timezone + locale to pick the country for the
+  /// user. The actual detection runs at `_finish()` time
+  /// (which may prompt for GPS permission); before that we
+  /// show a "Suggested: 🇸🇦 Saudi Arabia" caption derived
+  /// from a permission-free timezone read.
+  auto,
+
+  /// User explicitly picks a country from the full 30-entry
+  /// list via the country picker sheet.
+  manual,
+
+  /// User skips the picker; the app defaults to the global
+  /// Umm al-Qura calendar with no online sync attempts.
+  skip,
+}
 
 /// First-launch onboarding experience.
 ///
@@ -26,9 +48,27 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final _ctrl = PageController();
   int _page = 0;
 
-  // Page-2 picks. Defaults per spec: AR + Morocco.
   String _selectedLang = 'ar';
-  String _selectedRegion = 'ma';
+
+  // ── Hybrid Hijri source picker (Phase 7 improvement 2) ──
+  //
+  // Replaces the legacy `_selectedRegion = 'ma'` single-string
+  // state with a three-mode enum + the country picked when the
+  // user goes manual. Default is `auto` so the most common path
+  // (one tap → done) becomes the natural one.
+  _HijriSourceMode _sourceMode = _HijriSourceMode.auto;
+
+  /// The country the user picked in the "Choose manually"
+  /// bottom sheet. Empty when [_sourceMode] is not [manual].
+  /// Stored as ISO 3166-1 alpha-2 uppercase.
+  String _manualCountry = '';
+
+  /// Best-effort no-permission country guess (timezone + locale,
+  /// no GPS). Computed once at `initState` and surfaced in the
+  /// "Auto-detect" card caption so the user sees what we'd
+  /// pick BEFORE granting any permission. Empty string if even
+  /// the quick guess found nothing recognised.
+  String _suggestedCountry = '';
 
   // Page-3 virtues. Mirrors the IslamicEventsData ids that the
   // provider's `toggleIslamicEvent` already understands. The set of
@@ -41,6 +81,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     'friday': true,
     'adhkar_sabah': true,
   };
+
+  @override
+  void initState() {
+    super.initState();
+    // Permission-free country guess (timezone → locale) used to
+    // pre-fill the "Auto-detect" card caption. Synchronous and
+    // cheap (~5 ms once the tz DB is initialized lazily).
+    _suggestedCountry = CountryDetector.detectQuick();
+  }
 
   void _next(AppProvider p) {
     if (_page < 2) {
@@ -55,7 +104,34 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   Future<void> _finish(AppProvider p) async {
     p.setLocale(_selectedLang);
-    await p.setRegion(_selectedRegion);
+
+    // Apply the Hijri source according to the picker mode.
+    // Each branch ends up calling `setCountry()` so the kernel,
+    // notification scheduler, and cache all see a consistent
+    // post-onboarding state.
+    switch (_sourceMode) {
+      case _HijriSourceMode.auto:
+        // Triggers the full ladder (GPS → timezone → locale).
+        // GPS step asks for permission if not granted; the user
+        // already understood why by virtue of being on the
+        // "Auto-detect" card.
+        await p.detectCountryAndApply();
+        break;
+      case _HijriSourceMode.manual:
+        if (_manualCountry.isNotEmpty) {
+          await p.setCountry(_manualCountry);
+        } else {
+          // User picked "manual" but never tapped a country in
+          // the sheet — treat as skip so they get a usable
+          // default rather than the empty/legacy state.
+          await p.setCountry('XX');
+        }
+        break;
+      case _HijriSourceMode.skip:
+        await p.setCountry('XX');
+        break;
+    }
+
     for (final entry in _virtues.entries) {
       p.toggleIslamicEvent(entry.key, entry.value);
     }
@@ -70,6 +146,25 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             FadeTransition(opacity: anim, child: child),
       ),
     );
+  }
+
+  /// Opens the shared country picker sheet and stores the
+  /// user's pick. Switches `_sourceMode` to `manual` so the
+  /// chosen country wins at `_finish` time. Closing the sheet
+  /// without picking anything leaves `_manualCountry` empty
+  /// (handled in `_finish`).
+  Future<void> _openManualPicker() async {
+    final picked = await showHijriCountryPicker(
+      context: context,
+      activeCountryCode: _manualCountry.isEmpty ? 'XX' : _manualCountry,
+      locale: _selectedLang,
+      isDark: false, // onboarding always uses the gold-on-green theme.
+    );
+    if (!mounted || picked == null) return;
+    setState(() {
+      _sourceMode = _HijriSourceMode.manual;
+      _manualCountry = picked.code;
+    });
   }
 
   @override
@@ -136,11 +231,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       _WelcomePage(locale: _selectedLang),
                       _LanguageRegionPage(
                         selectedLang: _selectedLang,
-                        selectedRegion: _selectedRegion,
+                        sourceMode: _sourceMode,
+                        manualCountry: _manualCountry,
+                        suggestedCountry: _suggestedCountry,
                         onLangSelected: (l) =>
                             setState(() => _selectedLang = l),
-                        onRegionSelected: (r) =>
-                            setState(() => _selectedRegion = r),
+                        onSourceModeSelected: (m) =>
+                            setState(() => _sourceMode = m),
+                        onManualPickRequested: _openManualPicker,
                       ),
                       _VirtuesPage(
                         locale: _selectedLang,
@@ -398,14 +496,20 @@ class _CrescentPainter extends CustomPainter {
 
 class _LanguageRegionPage extends StatelessWidget {
   final String selectedLang;
-  final String selectedRegion;
+  final _HijriSourceMode sourceMode;
+  final String manualCountry;
+  final String suggestedCountry;
   final ValueChanged<String> onLangSelected;
-  final ValueChanged<String> onRegionSelected;
+  final ValueChanged<_HijriSourceMode> onSourceModeSelected;
+  final VoidCallback onManualPickRequested;
   const _LanguageRegionPage({
     required this.selectedLang,
-    required this.selectedRegion,
+    required this.sourceMode,
+    required this.manualCountry,
+    required this.suggestedCountry,
     required this.onLangSelected,
-    required this.onRegionSelected,
+    required this.onSourceModeSelected,
+    required this.onManualPickRequested,
   });
 
   @override
@@ -418,23 +522,19 @@ class _LanguageRegionPage extends StatelessWidget {
             : loc == 'es'
                 ? 'Elige tu idioma'
                 : 'Choose your language';
-    final regionTitle = loc == 'ar'
-        ? 'اختر منطقتك'
+    final sourceTitle = loc == 'ar'
+        ? 'مصدر التقويم الهجري'
         : loc == 'fr'
-            ? 'Choisissez votre région'
+            ? 'Source du calendrier Hijri'
             : loc == 'es'
-                ? 'Elige tu región'
-                : 'Choose your region';
+                ? 'Fuente del calendario Hijri'
+                : 'Hijri calendar source';
 
     final langs = const [
       ('ar', '🇲🇦', 'العربية'),
       ('fr', '🇫🇷', 'Français'),
       ('en', '🇬🇧', 'English'),
       ('es', '🇪🇸', 'Español'),
-    ];
-    final regions = [
-      ('ma', '🇲🇦', loc == 'ar' ? 'المغرب' : loc == 'es' ? 'Marruecos' : loc == 'en' ? 'Morocco' : 'Maroc'),
-      ('global', '🌍', loc == 'ar' ? 'أم القرى' : loc == 'es' ? 'Umm al-Qura' : loc == 'en' ? 'Umm al-Qura' : 'Umm al-Qura'),
     ];
 
     return SingleChildScrollView(
@@ -477,53 +577,181 @@ class _LanguageRegionPage extends StatelessWidget {
             }).toList(),
           ),
           const SizedBox(height: 26),
-          _SectionHeading(text: regionTitle),
+          _SectionHeading(text: sourceTitle),
           const SizedBox(height: 14),
-          Column(
-            children: regions.map((r) {
-              final active = selectedRegion == r.$1;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 10),
-                child: _GlassCard(
-                  onTap: () => onRegionSelected(r.$1),
-                  active: active,
-                  fullWidth: true,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 14),
-                    child: Row(
-                      children: [
-                        Text(r.$2, style: const TextStyle(fontSize: 24)),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: Text(
-                            r.$3,
-                            style: appFont(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w800,
-                              color: active
-                                  ? const Color(0xFF0A2519)
-                                  : Colors.white.withValues(alpha: 0.92),
-                            ),
-                          ),
-                        ),
-                        Icon(
-                          active
-                              ? Icons.check_circle_rounded
-                              : Icons.radio_button_unchecked_rounded,
-                          color: active
-                              ? const Color(0xFF0A2519)
-                              : Colors.white.withValues(alpha: 0.55),
-                          size: 22,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              );
-            }).toList(),
+          // ── Three source-mode cards ─────────────────────
+          _SourceModeCard(
+            mode: _HijriSourceMode.auto,
+            active: sourceMode == _HijriSourceMode.auto,
+            icon: '📍',
+            title: _autoTitle(loc),
+            subtitle: _autoSubtitle(loc, suggestedCountry),
+            onTap: () => onSourceModeSelected(_HijriSourceMode.auto),
+          ),
+          const SizedBox(height: 10),
+          _SourceModeCard(
+            mode: _HijriSourceMode.manual,
+            active: sourceMode == _HijriSourceMode.manual,
+            icon: '🌍',
+            title: _manualTitle(loc),
+            subtitle: _manualSubtitle(loc, manualCountry),
+            // Tap → open the picker. Picking a country flips
+            // the parent state to `manual` automatically; we
+            // don't also call `onSourceModeSelected` here to
+            // avoid a flash of "manual selected with no
+            // country" when the user dismisses the sheet.
+            onTap: onManualPickRequested,
+          ),
+          const SizedBox(height: 10),
+          _SourceModeCard(
+            mode: _HijriSourceMode.skip,
+            active: sourceMode == _HijriSourceMode.skip,
+            icon: '⚙️',
+            title: _skipTitle(loc),
+            subtitle: _skipSubtitle(loc),
+            onTap: () => onSourceModeSelected(_HijriSourceMode.skip),
           ),
         ],
+      ),
+    );
+  }
+
+  // ── Localized strings for the three source-mode cards ──
+
+  String _autoTitle(String loc) => switch (loc) {
+        'ar' => 'اكتشاف بلدي تلقائياً',
+        'fr' => 'Détecter mon pays automatiquement',
+        'es' => 'Detectar mi país automáticamente',
+        _ => 'Auto-detect my country',
+      };
+
+  String _autoSubtitle(String loc, String suggested) {
+    if (suggested.isEmpty || suggested == 'XX') {
+      return switch (loc) {
+        'ar' => 'مُستحسَن — يستعمل المنطقة الزمنية والـ GPS',
+        'fr' => 'Recommandé — utilise le fuseau horaire et le GPS',
+        'es' => 'Recomendado — usa la zona horaria y el GPS',
+        _ => 'Recommended — uses timezone and GPS',
+      };
+    }
+    final c = hijriCountryByCode(suggested);
+    final name = c.localizedName(loc);
+    return switch (loc) {
+      'ar' => 'مُقترَح: ${c.flag} $name',
+      'fr' => 'Suggéré : ${c.flag} $name',
+      'es' => 'Sugerido: ${c.flag} $name',
+      _ => 'Suggested: ${c.flag} $name',
+    };
+  }
+
+  String _manualTitle(String loc) => switch (loc) {
+        'ar' => 'اختيار يدوي من القائمة',
+        'fr' => 'Choisir manuellement dans la liste',
+        'es' => 'Elegir manualmente de la lista',
+        _ => 'Choose manually from list',
+      };
+
+  String _manualSubtitle(String loc, String picked) {
+    if (picked.isEmpty) {
+      return switch (loc) {
+        'ar' => 'أكثر من 30 دولة مع المرجع الرسمي لكل واحدة',
+        'fr' => 'Plus de 30 pays avec leur autorité officielle',
+        'es' => 'Más de 30 países con su autoridad oficial',
+        _ => '30+ countries with their official authority',
+      };
+    }
+    final c = hijriCountryByCode(picked);
+    return '${c.flag} ${c.localizedName(loc)}';
+  }
+
+  String _skipTitle(String loc) => switch (loc) {
+        'ar' => 'تخطي (استعمال أم القرى)',
+        'fr' => 'Passer (utiliser Umm al-Qura)',
+        'es' => 'Omitir (usar Umm al-Qura)',
+        _ => 'Skip (use Umm al-Qura)',
+      };
+
+  String _skipSubtitle(String loc) => switch (loc) {
+        'ar' => 'تقويم افتراضي بدون اتصال بالإنترنت',
+        'fr' => 'Calendrier par défaut sans connexion',
+        'es' => 'Calendario predeterminado sin conexión',
+        _ => 'Default calendar with no internet sync',
+      };
+}
+
+/// One of the three source-mode picker cards (auto / manual /
+/// skip). Re-uses [_GlassCard]'s styling so the visual identity
+/// matches the rest of the onboarding flow.
+class _SourceModeCard extends StatelessWidget {
+  final _HijriSourceMode mode;
+  final bool active;
+  final String icon;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+  const _SourceModeCard({
+    required this.mode,
+    required this.active,
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return _GlassCard(
+      onTap: onTap,
+      active: active,
+      fullWidth: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+        child: Row(
+          children: [
+            Text(icon, style: const TextStyle(fontSize: 24)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: appFont(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w800,
+                      color: active
+                          ? const Color(0xFF0A2519)
+                          : Colors.white.withValues(alpha: 0.92),
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    subtitle,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: appFont(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w400,
+                      color: active
+                          ? const Color(0xFF0A2519).withValues(alpha: 0.75)
+                          : Colors.white.withValues(alpha: 0.65),
+                      height: 1.35,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(
+              active
+                  ? Icons.check_circle_rounded
+                  : Icons.radio_button_unchecked_rounded,
+              color: active
+                  ? const Color(0xFF0A2519)
+                  : Colors.white.withValues(alpha: 0.55),
+              size: 22,
+            ),
+          ],
+        ),
       ),
     );
   }
