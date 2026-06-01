@@ -872,7 +872,7 @@ class _SelectedDayHeader extends StatelessWidget {
 class _WeeklyView extends StatefulWidget {
   final AppProvider p;
   final bool isDark;
-  const _WeeklyView({required this.p, required this.isDark});
+  const _WeeklyView({super.key, required this.p, required this.isDark});
   @override
   State<_WeeklyView> createState() => _WeeklyViewState();
 }

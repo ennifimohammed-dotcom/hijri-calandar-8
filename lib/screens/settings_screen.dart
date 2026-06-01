@@ -1200,7 +1200,7 @@ class _AdvancedToggleHeader extends StatelessWidget {
             AnimatedRotation(
               duration: const Duration(milliseconds: 200),
               turns: open ? 0.5 : 0,
-              child: Icon(
+              child: const Icon(
                 Icons.keyboard_arrow_down_rounded,
                 size: 18,
                 color: AppColors.text3,

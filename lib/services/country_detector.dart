@@ -191,7 +191,7 @@ class CountryDetector {
       gpsResult = await _detectInternal(requestPermission: requestPermission)
           .timeout(
         _totalTimeout,
-        onTimeout: () => CountryDetectionResult(
+        onTimeout: () => const CountryDetectionResult(
           code: '',
           status: CountryDetectionStatus.timeout,
         ),
@@ -307,7 +307,7 @@ class CountryDetector {
     // so the UI can route the user to the system settings.
     final servicesOn = await Geolocator.isLocationServiceEnabled();
     if (!servicesOn) {
-      return CountryDetectionResult(
+      return const CountryDetectionResult(
         code: '',
         status: CountryDetectionStatus.serviceDisabled,
       );
@@ -318,7 +318,7 @@ class CountryDetector {
     var perm = await Geolocator.checkPermission();
     if (perm == LocationPermission.denied) {
       if (!requestPermission) {
-        return CountryDetectionResult(
+        return const CountryDetectionResult(
           code: '',
           status: CountryDetectionStatus.permissionDenied,
         );
@@ -326,13 +326,13 @@ class CountryDetector {
       perm = await Geolocator.requestPermission();
     }
     if (perm == LocationPermission.denied) {
-      return CountryDetectionResult(
+      return const CountryDetectionResult(
         code: '',
         status: CountryDetectionStatus.permissionDenied,
       );
     }
     if (perm == LocationPermission.deniedForever) {
-      return CountryDetectionResult(
+      return const CountryDetectionResult(
         code: '',
         status: CountryDetectionStatus.permissionDeniedForever,
       );
@@ -382,17 +382,17 @@ class CountryDetector {
           status: CountryDetectionStatus.gpsOk,
         );
       }
-      return CountryDetectionResult(
+      return const CountryDetectionResult(
         code: '',
         status: CountryDetectionStatus.noSignal,
       );
     } on TimeoutException {
-      return CountryDetectionResult(
+      return const CountryDetectionResult(
         code: '',
         status: CountryDetectionStatus.timeout,
       );
     } catch (_) {
-      return CountryDetectionResult(
+      return const CountryDetectionResult(
         code: '',
         status: CountryDetectionStatus.noSignal,
       );
