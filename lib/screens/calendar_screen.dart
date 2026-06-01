@@ -80,6 +80,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
   final GlobalKey<_AgendaViewState> _agendaKey =
       GlobalKey<_AgendaViewState>();
 
+  /// Same idea for the weekly view — gives the "Today" button a
+  /// handle to jump back to the current week AND scroll the
+  /// timeline down to the current hour, instead of just
+  /// re-anchoring the monthly view (which has no effect on the
+  /// weekly PageView).
+  final GlobalKey<_WeeklyViewState> _weeklyKey =
+      GlobalKey<_WeeklyViewState>();
+
   @override
   void initState() {
     super.initState();
@@ -165,6 +173,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
     // attached to a viewport yet.
     if (p.viewMode == CalendarViewMode.agenda) {
       _agendaKey.currentState?.scrollToToday();
+    }
+    // Phase 2/3 — weekly view's "Today" needs more than a page
+    // reset: bring the visible PageView back to the current
+    // week AND scroll the timeline to the current hour. The
+    // monthly-view re-anchoring above (`_pageCtrl.jumpToPage`)
+    // doesn't affect the weekly PageView, which lives inside
+    // its own state.
+    if (p.viewMode == CalendarViewMode.weekly) {
+      _weeklyKey.currentState?.jumpToNowWeek();
     }
   }
 
@@ -328,7 +345,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
           isDark: isDark,
         );
       case CalendarViewMode.weekly:
-        return _WeeklyView(p: p, isDark: isDark);
+        return _WeeklyView(key: _weeklyKey, p: p, isDark: isDark);
       case CalendarViewMode.agenda:
         return _AgendaView(key: _agendaKey, p: p, isDark: isDark);
     }
@@ -903,6 +920,33 @@ class _WeeklyViewState extends State<_WeeklyView> {
     return raw < 0 ? 0 : raw;
   }
 
+  /// Phase 2/3 — public entry point for the "Today" button in
+  /// the calendar top bar. Two effects:
+  ///   1. Animates the PageView back to the current week.
+  ///   2. Re-sets `_vOffset` to the "now" position so any
+  ///      future page rebuilds land on the current hour.
+  /// Calling from `_CalendarScreenState._jumpToToday`.
+  ///
+  /// Note: existing live `_WeekPage` instances have their own
+  /// scroll controllers that were initialised at construction
+  /// time. We can't reach them from here without an extra
+  /// GlobalKey per page, so the immediate-visible page keeps
+  /// its current vertical scroll until the user navigates away
+  /// and back. The PageView jump is the most important effect
+  /// (returns the user to "now's week"); the vertical scroll
+  /// re-snap is a best-effort polish.
+  void jumpToNowWeek() {
+    _baseMonday = _mondayOf(DateTime.now());
+    _vOffset = _nowOffset();
+    if (_weekCtrl.hasClients) {
+      _weekCtrl.animateToPage(
+        _kBaseIndex,
+        duration: const Duration(milliseconds: 320),
+        curve: Curves.easeOutCubic,
+      );
+    }
+  }
+
   @override
   void dispose() {
     _weekCtrl.dispose();
@@ -1404,26 +1448,76 @@ class _DayHeaderStrip extends StatelessWidget {
                 greg.month == now.month &&
                 greg.day == now.day;
             final isFri = greg.weekday == 5;
+            // Phase-2 — small dot indicator above the day name
+            // when the day is the FIRST of a Hijri month. Gives
+            // the user a quiet "Hijri month flipped today" cue
+            // without crowding the header — important on the
+            // weekly view because the Hijri month is otherwise
+            // implicit (we only show the day number).
+            final isHijriFirst = hijri.hDay == 1;
             return Expanded(
               child: Column(
                 children: [
-                  Text(
-                    dayLabels[i],
-                    style: appFont(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w700,
-                      color: isFri
-                          ? AppColors.green
-                          : (isDark ? AppColors.darkText3 : AppColors.text3),
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (isHijriFirst)
+                        Container(
+                          margin: const EdgeInsetsDirectional.only(end: 3),
+                          width: 4,
+                          height: 4,
+                          decoration: const BoxDecoration(
+                            color: AppColors.gold,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      Text(
+                        dayLabels[i],
+                        style: appFont(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: isFri
+                              ? AppColors.green
+                              : (isDark
+                                  ? AppColors.darkText3
+                                  : AppColors.text3),
+                        ),
+                      ),
+                    ],
                   ),
                   const SizedBox(height: 4),
                   Container(
                     width: 32,
                     height: 32,
                     decoration: BoxDecoration(
-                      color: isToday ? AppColors.green : Colors.transparent,
+                      // Phase-2 — today's pill uses a subtle
+                      // gradient and a soft glow. Same hue as
+                      // the timeline-column tint so the eye
+                      // connects header → column without effort.
+                      gradient: isToday
+                          ? LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [
+                                AppColors.green,
+                                Color.lerp(
+                                    AppColors.green, Colors.black, 0.15)!,
+                              ],
+                            )
+                          : null,
+                      color:
+                          isToday ? null : Colors.transparent,
                       shape: BoxShape.circle,
+                      boxShadow: isToday
+                          ? [
+                              BoxShadow(
+                                color: AppColors.green
+                                    .withValues(alpha: 0.40),
+                                blurRadius: 10,
+                                offset: const Offset(0, 2),
+                              ),
+                            ]
+                          : null,
                     ),
                     child: Center(
                       child: Text(
@@ -1764,8 +1858,45 @@ class _GridBackground extends StatelessWidget {
   Widget build(BuildContext context) {
     final lineColor =
         isDark ? AppColors.darkBorder : AppColors.border;
+    // Phase-2 — half-hour gridlines colour. ~50% transparency
+    // of the full-hour line so the 30-minute marks read as a
+    // subtle hint, not a competing horizontal rhythm.
+    final halfHourColor = lineColor.withValues(alpha: 0.40);
+
+    // Phase-2 — find today's column (if today falls in the
+    // currently-visible week). `-1` means "today is not in this
+    // week" → no tint and no current-time indicator.
+    final now = DateTime.now();
+    final todayIdx = () {
+      for (int i = 0; i < days.length; i++) {
+        if (days[i].year == now.year &&
+            days[i].month == now.month &&
+            days[i].day == now.day) {
+          return i;
+        }
+      }
+      return -1;
+    }();
+
     return Stack(
       children: [
+        // Phase-2 — today's column gets a very light green tint
+        // (the accent's `greenPale` at low alpha) so the eye
+        // immediately lands on "today" without obscuring any
+        // event painted on top. Skipped when today isn't in the
+        // visible week.
+        if (todayIdx >= 0)
+          Positioned(
+            top: 0,
+            bottom: 0,
+            left: gutterWidth + todayIdx * colWidth,
+            width: colWidth,
+            child: Container(
+              color: isDark
+                  ? AppColors.green.withValues(alpha: 0.08)
+                  : AppColors.greenPale.withValues(alpha: 0.55),
+            ),
+          ),
         // Hour gutter + horizontal lines under each hour.
         Column(
           children: List.generate(24, (h) {
@@ -1816,6 +1947,21 @@ class _GridBackground extends StatelessWidget {
             );
           }),
         ),
+        // Phase-2 — half-hour gridlines. Subtle ticks at the
+        // 30-min mark of every hour so the user has a visual
+        // anchor halfway through. Rendered as a separate
+        // overlay so they sit ABOVE the today-column tint but
+        // BELOW the event blocks; events stay the dominant
+        // visual element on the timeline.
+        ...List.generate(24, (h) {
+          return Positioned(
+            top: h * hourHeight + hourHeight / 2,
+            left: gutterWidth,
+            right: 0,
+            height: 0.5,
+            child: Container(color: halfHourColor),
+          );
+        }),
         // 7 day columns: vertical separators + tappable column.
         //
         // Phase-1 task 3 — ONE `GestureDetector` per column (not
@@ -1885,25 +2031,54 @@ class _CurrentTimeIndicator extends StatelessWidget {
   Widget build(BuildContext context) {
     final now = DateTime.now();
     final top = (now.hour * 60 + now.minute) / 60.0 * hourHeight;
-    return Positioned(
-      top: top - 1,
-      left: gutterWidth + dayIdx * colWidth,
-      width: colWidth,
-      child: Row(
-        children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: const BoxDecoration(
-              color: AppColors.red,
-              shape: BoxShape.circle,
-            ),
+
+    // Phase-2 — current-time line spans ALL day columns now,
+    // not just today's. A faint red line crosses the whole
+    // timeline ("it's 14:30 right now everywhere"); a brighter
+    // 2 px segment + the red dot anchor it on today's column
+    // so the user can still see at a glance which day is
+    // "today". The full-width line matches Google Calendar's
+    // weekly view and helps when comparing events on the same
+    // hour across the week.
+    return Stack(
+      children: [
+        // Faint full-width line. Sits BELOW the brighter
+        // today-column overlay so the today segment visually
+        // wins on the intersection.
+        Positioned(
+          top: top - 0.5,
+          left: gutterWidth,
+          right: 0,
+          height: 1,
+          child: Container(
+            color: AppColors.red.withValues(alpha: 0.30),
           ),
-          Expanded(
-            child: Container(height: 1.5, color: AppColors.red),
+        ),
+        // Today's column gets the brighter line + the dot.
+        Positioned(
+          top: top - 1,
+          left: gutterWidth + dayIdx * colWidth,
+          width: colWidth,
+          child: Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: const BoxDecoration(
+                  color: AppColors.red,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              Expanded(
+                child: Container(
+                  height: 1.5,
+                  color: AppColors.red,
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }
