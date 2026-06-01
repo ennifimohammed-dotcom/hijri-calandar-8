@@ -862,21 +862,45 @@ class _WeeklyView extends StatefulWidget {
 
 class _WeeklyViewState extends State<_WeeklyView> {
   static const int _kBaseIndex = 100000;
-  static const double _kHourHeight = 56.0;
+  // Phase-1 task 5 — hour cell bumped from 56 → 64 dp. The
+  // extra 8 dp per row gives events with a 30-40 min span room
+  // to render their title + time on two lines without
+  // truncation, and matches the density users expect from
+  // Google Calendar's weekly view.
+  static const double _kHourHeight = 64.0;
   static const double _kGutterWidth = 50.0;
 
   late final PageController _weekCtrl;
   late DateTime _baseMonday;
 
   /// Last vertical scroll offset, kept across week swipes so the
-  /// user doesn't lose their position when navigating.
-  double _vOffset = 8 * _kHourHeight;
+  /// user doesn't lose their position when navigating. Defaults
+  /// to the "now" position computed in [initState] (Phase-1
+  /// task 2) — `_nowOffset` puts the current hour 80 dp below
+  /// the top of the timeline so the user lands on the timeline
+  /// already showing what's happening right now instead of
+  /// always at 8 AM.
+  late double _vOffset;
 
   @override
   void initState() {
     super.initState();
     _baseMonday = _mondayOf(DateTime.now());
     _weekCtrl = PageController(initialPage: _kBaseIndex);
+    _vOffset = _nowOffset();
+  }
+
+  /// Returns the initial scroll offset that lands the timeline
+  /// on the current hour, with ~80 dp of context above it (so
+  /// the user can see what JUST happened, not only what's next).
+  /// Clamped to non-negative so very-early-morning launches
+  /// (00:00-01:15) don't try to scroll above the top of the
+  /// timeline.
+  double _nowOffset() {
+    final now = DateTime.now();
+    final minutes = now.hour * 60 + now.minute;
+    final raw = minutes / 60.0 * _kHourHeight - 80;
+    return raw < 0 ? 0 : raw;
   }
 
   @override
@@ -1020,8 +1044,15 @@ class _WeekPageState extends State<_WeekPage> {
                         colWidth: colWidth,
                         days: days,
                         isDark: isDark,
-                        onCellTap: (dayIdx, hour) async {
+                        onCellTap: (dayIdx, minutesFromMidnight) async {
+                          // Phase-1 task 3 — the tap reports
+                          // a 15-minute-snapped minutes value
+                          // (e.g. 14:35 → 14:30). Split it back
+                          // into hour + minute for the
+                          // `AddEventScreen` initialStart.
                           final greg = days[dayIdx];
+                          final h = minutesFromMidnight ~/ 60;
+                          final m = minutesFromMidnight % 60;
                           await Navigator.push(
                             context,
                             MaterialPageRoute(
@@ -1030,8 +1061,8 @@ class _WeekPageState extends State<_WeekPage> {
                                   greg.year,
                                   greg.month,
                                   greg.day,
-                                  hour,
-                                  0,
+                                  h,
+                                  m,
                                 ),
                               ),
                             ),
@@ -1081,27 +1112,58 @@ class _WeekPageState extends State<_WeekPage> {
     required List<AppEvent> events,
     required double colWidth,
   }) {
-    final blocks = <Widget>[];
-    for (final ev in events) {
-      // Confine to the visible day: clip start / end to [00:00, 24:00).
-      final dayStart = DateTime(dayGreg.year, dayGreg.month, dayGreg.day);
-      final dayEnd = dayStart.add(const Duration(days: 1));
-      final s = ev.startDate.isBefore(dayStart) ? dayStart : ev.startDate;
-      final e = ev.endDate.isAfter(dayEnd) ? dayEnd : ev.endDate;
-      if (!e.isAfter(s)) continue;
+    // Phase-1 task 1 — proper overlap handling.
+    //
+    // Old behaviour: every event got the full column width and
+    // was positioned by start-time alone. Two events at the
+    // same hour painted on top of each other — the upper one
+    // ate the lower one's tap target and visually masked it
+    // entirely. This was the most-reported pain point on the
+    // weekly view.
+    //
+    // New behaviour: events that overlap in time get
+    // side-by-side lanes within the day column, à la Google
+    // Calendar / Outlook. The helper `_layoutEventLanes` runs a
+    // greedy lane-assignment pass followed by a cluster
+    // grouping pass; each event gets `(lane, totalLanes)` and
+    // we render at `x = laneIdx * (colW / totalLanes)` with
+    // width `colW / totalLanes`.
+    final dayStart = DateTime(dayGreg.year, dayGreg.month, dayGreg.day);
+    final dayEnd = dayStart.add(const Duration(days: 1));
+    final positioned = _layoutEventLanes(events, dayStart, dayEnd);
 
-      final startMinutes =
-          (s.hour * 60 + s.minute).toDouble();
-      final endMinutes = (e.hour * 60 + e.minute).toDouble();
+    final blocks = <Widget>[];
+    for (final p in positioned) {
+      final ev = p.event;
+      final s = p.start;
+      final e = p.end;
+
+      final startMinutes = (s.hour * 60 + s.minute).toDouble();
+      // If the clipped end landed exactly on `dayEnd` (i.e. the
+      // event runs to-or-past midnight), express that as 24*60
+      // minutes so the height calculation reaches the bottom of
+      // the timeline instead of collapsing to 0.
+      final endMinutes = e.isAtSameMomentAs(dayEnd)
+          ? 24.0 * 60
+          : (e.hour * 60 + e.minute).toDouble();
       final spanMinutes =
           endMinutes - startMinutes <= 0 ? 60.0 : endMinutes - startMinutes;
       final top = startMinutes / 60.0 * widget.hourHeight;
-      final height = (spanMinutes / 60.0 * widget.hourHeight).clamp(22.0, 24 * widget.hourHeight);
+      final height = (spanMinutes / 60.0 * widget.hourHeight)
+          .clamp(22.0, 24 * widget.hourHeight);
+
+      // Lane-aware horizontal positioning. When `totalLanes ==
+      // 1` (the common case — no overlap), the math reduces to
+      // the previous `left = colStart + 2 / width = colW - 4`.
+      final laneW = colWidth / p.totalLanes;
+      final colStart = widget.gutterWidth + dayIdx * colWidth;
+      final left = colStart + p.lane * laneW + 1;
+      final width = laneW - 2;
 
       blocks.add(Positioned(
         top: top,
-        left: widget.gutterWidth + dayIdx * colWidth + 2,
-        width: colWidth - 4,
+        left: left,
+        width: width,
         height: height,
         child: GestureDetector(
           onTap: () => showEventDetails(
@@ -1116,7 +1178,10 @@ class _WeekPageState extends State<_WeekPage> {
               color: ev.color.withValues(alpha: 0.92),
               borderRadius: BorderRadius.circular(6),
               border: Border(
-                left: BorderSide(color: ev.color.withValues(alpha: 1.0), width: 3),
+                left: BorderSide(
+                  color: ev.color.withValues(alpha: 1.0),
+                  width: 3,
+                ),
               ),
             ),
             padding: const EdgeInsets.fromLTRB(6, 4, 4, 4),
@@ -1153,6 +1218,153 @@ class _WeekPageState extends State<_WeekPage> {
     }
     return blocks;
   }
+}
+
+/// One event positioned in the day column with its assigned
+/// horizontal lane. Produced by [_layoutEventLanes] and
+/// consumed by `_eventBlocks` in [_WeekPageState].
+class _PositionedEvent {
+  /// The original event (unmodified).
+  final AppEvent event;
+
+  /// Start instant clipped to the visible day.
+  final DateTime start;
+
+  /// End instant clipped to the visible day. Note this may be
+  /// EQUAL to `dayEnd` (the next day's 00:00) for events that
+  /// span the full day — callers should compare with
+  /// `isAtSameMomentAs(dayEnd)` to render the height correctly
+  /// instead of treating it as `00:00 -> hour 0`.
+  final DateTime end;
+
+  /// 0-based horizontal lane within the event's overlap
+  /// cluster. `0` is the leftmost (or rightmost in RTL) lane.
+  final int lane;
+
+  /// Number of lanes the event's cluster uses. Same value for
+  /// every event in the cluster, so dividing `colWidth` by it
+  /// gives a width that lines up cleanly.
+  ///
+  /// For an event with no overlap at all, `totalLanes == 1`
+  /// and the layout reduces to the pre-Phase-1 single-column
+  /// behaviour.
+  final int totalLanes;
+
+  const _PositionedEvent(
+    this.event,
+    this.start,
+    this.end,
+    this.lane,
+    this.totalLanes,
+  );
+}
+
+/// Pure helper — given a day's events and the day's [00:00,
+/// 24:00) window, returns each event positioned into a
+/// horizontal lane so overlapping events render side-by-side
+/// instead of stacked.
+///
+/// Algorithm (mirrors Google Calendar / Outlook):
+///   1. CLIP each event to the visible day window; drop those
+///      that don't intersect.
+///   2. SORT by start (ties broken by end) so the greedy lane
+///      assignment is deterministic.
+///   3. LANE ASSIGNMENT: walk events in order; each one drops
+///      into the first lane whose previous occupant ended
+///      before this event starts. A new lane is allocated when
+///      every existing lane is still busy.
+///   4. CLUSTERING: BFS-group events whose time intervals
+///      transitively overlap. Within a cluster, every event
+///      gets `totalLanes = (max assigned lane + 1)` so each
+///      member renders at the same width.
+///
+/// Complexity: O(n²) worst case for the clustering pass — n is
+/// the number of events ON A SINGLE DAY, almost always < 20.
+List<_PositionedEvent> _layoutEventLanes(
+  List<AppEvent> events,
+  DateTime dayStart,
+  DateTime dayEnd,
+) {
+  // 1. Clip + filter.
+  final clipped = <({AppEvent ev, DateTime s, DateTime e})>[];
+  for (final ev in events) {
+    final s = ev.startDate.isBefore(dayStart) ? dayStart : ev.startDate;
+    final e = ev.endDate.isAfter(dayEnd) ? dayEnd : ev.endDate;
+    if (!e.isAfter(s)) continue;
+    clipped.add((ev: ev, s: s, e: e));
+  }
+  if (clipped.isEmpty) return const <_PositionedEvent>[];
+
+  // 2. Sort.
+  clipped.sort((a, b) {
+    final cmp = a.s.compareTo(b.s);
+    if (cmp != 0) return cmp;
+    return a.e.compareTo(b.e);
+  });
+
+  // 3. Greedy lane assignment.
+  final laneEnds = <DateTime>[]; // when each lane becomes free
+  final lanes = List<int>.filled(clipped.length, -1);
+  for (int i = 0; i < clipped.length; i++) {
+    final c = clipped[i];
+    int chosen = -1;
+    for (int k = 0; k < laneEnds.length; k++) {
+      if (!c.s.isBefore(laneEnds[k])) {
+        // c starts at or after lane k's last end → lane is free.
+        laneEnds[k] = c.e;
+        chosen = k;
+        break;
+      }
+    }
+    if (chosen < 0) {
+      chosen = laneEnds.length;
+      laneEnds.add(c.e);
+    }
+    lanes[i] = chosen;
+  }
+
+  // 4. Cluster grouping via simple BFS over the overlap graph.
+  final n = clipped.length;
+  final cluster = List<int>.filled(n, -1);
+  var nextCluster = 0;
+  for (int i = 0; i < n; i++) {
+    if (cluster[i] >= 0) continue;
+    cluster[i] = nextCluster;
+    final queue = <int>[i];
+    while (queue.isNotEmpty) {
+      final k = queue.removeLast();
+      for (int j = 0; j < n; j++) {
+        if (cluster[j] >= 0) continue;
+        // Two events overlap iff a.s < b.e AND b.s < a.e.
+        if (clipped[k].s.isBefore(clipped[j].e) &&
+            clipped[j].s.isBefore(clipped[k].e)) {
+          cluster[j] = nextCluster;
+          queue.add(j);
+        }
+      }
+    }
+    nextCluster++;
+  }
+
+  // Max lane (and therefore lane count) per cluster.
+  final clusterMaxLane = List<int>.filled(nextCluster, 0);
+  for (int i = 0; i < n; i++) {
+    if (lanes[i] > clusterMaxLane[cluster[i]]) {
+      clusterMaxLane[cluster[i]] = lanes[i];
+    }
+  }
+
+  // Build the result list.
+  return [
+    for (int i = 0; i < n; i++)
+      _PositionedEvent(
+        clipped[i].ev,
+        clipped[i].s,
+        clipped[i].e,
+        lanes[i],
+        clusterMaxLane[cluster[i]] + 1,
+      ),
+  ];
 }
 
 class _DayHeaderStrip extends StatelessWidget {
@@ -1274,7 +1486,14 @@ class _AllDayStrip extends StatelessWidget {
           SizedBox(
             width: gutterWidth,
             child: Padding(
-              padding: const EdgeInsets.only(right: 6),
+              // Phase-1 task 6 — directional padding + textAlign
+              // so the "All day" label hugs the inner edge of
+              // the gutter in BOTH LTR and RTL. The previous
+              // `right: 6` + `TextAlign.right` looked correct
+              // in LTR but in Arabic (RTL) the gutter is on the
+              // right side and the label was pushed AWAY from
+              // the day columns. `end` swaps automatically.
+              padding: const EdgeInsetsDirectional.only(end: 6),
               child: Text(
                 p.locale == 'ar'
                     ? 'كل اليوم'
@@ -1283,7 +1502,7 @@ class _AllDayStrip extends StatelessWidget {
                         : p.locale == 'en'
                             ? 'All day'
                             : 'Toute la j.',
-                textAlign: TextAlign.right,
+                textAlign: TextAlign.end,
                 style: appFont(
                     fontSize: 9, color: AppColors.text3),
               ),
@@ -1291,40 +1510,89 @@ class _AllDayStrip extends StatelessWidget {
           ),
           ...List.generate(7, (i) {
             final evs = allDayPerDay[i];
+            // Phase-1 task 4 — surface a "+N" affordance when
+            // the day has more all-day events than fit. We
+            // show the first TWO inline; if there's a third+,
+            // we collapse them into one tappable pill so the
+            // user can see (a) that they exist and (b) opens a
+            // bottom sheet with the full list. Before this,
+            // events 4+ on a single day were silently dropped
+            // by the old `evs.take(3)` slice.
+            const inlineCap = 2;
+            final extraCount =
+                evs.length > inlineCap ? evs.length - inlineCap : 0;
             return Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: evs.take(3).map((ev) {
-                  return GestureDetector(
-                    onTap: () => showEventDetails(
-                      context: context,
-                      event: ev,
-                      hijri: hijriFor(days[i]),
-                      gregorian: days[i],
-                      p: p,
-                    ),
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(
-                          horizontal: 2, vertical: 1),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 4, vertical: 2),
-                      decoration: BoxDecoration(
-                        color: ev.color.withValues(alpha: 0.92),
-                        borderRadius: BorderRadius.circular(4),
+                children: [
+                  ...evs.take(inlineCap).map((ev) {
+                    return GestureDetector(
+                      onTap: () => showEventDetails(
+                        context: context,
+                        event: ev,
+                        hijri: hijriFor(days[i]),
+                        gregorian: days[i],
+                        p: p,
                       ),
-                      child: Text(
-                        ev.title(p.locale),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: appFont(
-                          fontSize: 9,
-                          fontWeight: FontWeight.w700,
-                          color: Colors.white,
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(
+                            horizontal: 2, vertical: 1),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: ev.color.withValues(alpha: 0.92),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          ev.title(p.locale),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: appFont(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    );
+                  }),
+                  if (extraCount > 0)
+                    GestureDetector(
+                      onTap: () => _showAllDayMore(
+                        context: context,
+                        events: evs,
+                        day: days[i],
+                        hijri: hijriFor(days[i]),
+                        p: p,
+                        isDark: isDark,
+                      ),
+                      child: Container(
+                        margin: const EdgeInsets.symmetric(
+                            horizontal: 2, vertical: 1),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 4, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: isDark
+                              ? AppColors.darkBorder
+                              : AppColors.border,
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          TextFormat.toWesternDigits('+$extraCount'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          textAlign: TextAlign.center,
+                          style: appFont(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w800,
+                            color: isDark
+                                ? AppColors.darkText
+                                : AppColors.text2,
+                          ),
                         ),
                       ),
                     ),
-                  );
-                }).toList(),
+                ],
               ),
             );
           }),
@@ -1334,13 +1602,155 @@ class _AllDayStrip extends StatelessWidget {
   }
 }
 
+/// Bottom sheet that surfaces the full list of all-day events
+/// on a single day, triggered by the "+N" pill rendered when
+/// more all-day events fit than the inline cap allows. Each
+/// row is tappable and routes through `showEventDetails` — the
+/// same handler the inline pills already use, so editing /
+/// deleting works the same way.
+Future<void> _showAllDayMore({
+  required BuildContext context,
+  required List<AppEvent> events,
+  required DateTime day,
+  required HijriDate hijri,
+  required AppProvider p,
+  required bool isDark,
+}) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    backgroundColor: Colors.transparent,
+    useRootNavigator: true,
+    builder: (sheetCtx) {
+      final loc = p.locale;
+      final title = switch (loc) {
+        'ar' => 'أحداث طوال اليوم',
+        'fr' => 'Événements de toute la journée',
+        'es' => 'Eventos de todo el día',
+        _ => 'All-day events',
+      };
+      return DraggableScrollableSheet(
+        initialChildSize: 0.55,
+        minChildSize: 0.30,
+        maxChildSize: 0.85,
+        expand: false,
+        builder: (_, scrollCtrl) => Container(
+          decoration: BoxDecoration(
+            color: isDark ? AppColors.darkSurface : AppColors.white,
+            borderRadius: const BorderRadius.vertical(
+              top: Radius.circular(22),
+            ),
+          ),
+          child: Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 10, bottom: 10),
+                width: 42,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.text3.withValues(alpha: 0.4),
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 4, 8, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: appFont(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w800,
+                          color: isDark
+                              ? AppColors.darkText
+                              : AppColors.text,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      onPressed: () => Navigator.pop(sheetCtx),
+                      icon: Icon(
+                        Icons.close_rounded,
+                        size: 22,
+                        color: isDark
+                            ? AppColors.darkText3
+                            : AppColors.text3,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: ListView.separated(
+                  controller: scrollCtrl,
+                  padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+                  itemCount: events.length,
+                  separatorBuilder: (_, __) =>
+                      const SizedBox(height: 6),
+                  itemBuilder: (_, i) {
+                    final ev = events[i];
+                    return Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(10),
+                        onTap: () {
+                          // Pop the sheet first, then surface
+                          // the per-event details modal so the
+                          // navigation stack doesn't pile up.
+                          Navigator.pop(sheetCtx);
+                          showEventDetails(
+                            context: context,
+                            event: ev,
+                            hijri: hijri,
+                            gregorian: day,
+                            p: p,
+                          );
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                          decoration: BoxDecoration(
+                            color: ev.color.withValues(alpha: 0.92),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Text(
+                            ev.title(loc),
+                            style: appFont(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.white,
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+}
+
 class _GridBackground extends StatelessWidget {
   final double hourHeight;
   final double gutterWidth;
   final double colWidth;
   final List<DateTime> days;
   final bool isDark;
-  final void Function(int dayIdx, int hour) onCellTap;
+
+  /// Phase-1 task 3 — callback now reports the precise minutes
+  /// from midnight (snapped to a 15-minute grid by the caller's
+  /// dispatcher) instead of just the hour bucket. Lets a tap at
+  /// 14:35 produce a new-event start at 14:30, matching the
+  /// Google Calendar behaviour.
+  final void Function(int dayIdx, int minutesFromMidnight) onCellTap;
   const _GridBackground({
     required this.hourHeight,
     required this.gutterWidth,
@@ -1367,12 +1777,24 @@ class _GridBackground extends StatelessWidget {
                   SizedBox(
                     width: gutterWidth,
                     child: Padding(
-                      padding: const EdgeInsets.only(right: 6, top: 0),
+                      // Phase-1 task 6 — directional padding +
+                      // textAlign so the hour label hugs the
+                      // inner edge of the gutter in BOTH LTR
+                      // and RTL. In Arabic the gutter is on the
+                      // right side of the screen; the label has
+                      // to nestle against the day-column
+                      // divider, which is now on the LEFT of
+                      // the gutter — `end` resolves to that
+                      // automatically.
+                      padding: const EdgeInsetsDirectional.only(
+                        end: 6,
+                        top: 0,
+                      ),
                       child: Text(
                         TextFormat.toWesternDigits(
                           '${h.toString().padLeft(2, '0')}:00',
                         ),
-                        textAlign: TextAlign.right,
+                        textAlign: TextAlign.end,
                         style: appFont(
                           fontSize: 9,
                           color: AppColors.text3,
@@ -1394,7 +1816,16 @@ class _GridBackground extends StatelessWidget {
             );
           }),
         ),
-        // 7 day columns: vertical separators + tappable cells.
+        // 7 day columns: vertical separators + tappable column.
+        //
+        // Phase-1 task 3 — ONE `GestureDetector` per column (not
+        // per hour-cell) with `onTapDown` reading the local Y
+        // position. We then convert Y → minutes-from-midnight
+        // and snap to the nearest 15-minute boundary. The old
+        // 24-cells-per-column layout could only ever report the
+        // hour bucket, so a tap at 14:55 created a 14:00 event
+        // — confusing and a steady source of "wrong time" bugs
+        // in user feedback.
         Positioned.fill(
           left: gutterWidth,
           child: Row(
@@ -1407,16 +1838,26 @@ class _GridBackground extends StatelessWidget {
                       left: BorderSide(color: lineColor, width: 0.5),
                     ),
                   ),
-                  child: Column(
-                    children: List.generate(24, (h) {
-                      return SizedBox(
-                        height: hourHeight,
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.translucent,
-                          onTap: () => onCellTap(dayIdx, h),
-                        ),
-                      );
-                    }),
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.translucent,
+                    onTapDown: (details) {
+                      // Y position inside the column maps to
+                      // minutes-from-midnight: every `hourHeight`
+                      // dp = 60 minutes.
+                      final rawMinutes =
+                          (details.localPosition.dy / hourHeight) * 60.0;
+                      // Snap to nearest 15-minute boundary. Cap
+                      // at 23:45 so a tap on the very last pixel
+                      // doesn't produce a "24:00" timestamp that
+                      // would roll into the next day.
+                      var snapped =
+                          (rawMinutes / 15.0).round() * 15;
+                      if (snapped < 0) snapped = 0;
+                      if (snapped > 23 * 60 + 45) {
+                        snapped = 23 * 60 + 45;
+                      }
+                      onCellTap(dayIdx, snapped);
+                    },
                   ),
                 ),
               );
