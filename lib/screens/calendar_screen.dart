@@ -1045,6 +1045,18 @@ class _WeekPageState extends State<_WeekPage> {
         dayEvents.map((evs) => evs.where((e) => e.isAllDay).toList()).toList();
     final timedPerDay =
         dayEvents.map((evs) => evs.where((e) => !e.isAllDay).toList()).toList();
+    // Phase-4 (Hijri-specific) — cache the Hijri value per day
+    // here once and pass it down to BOTH the header strip and
+    // the grid background. Beats re-running `_hijriFor` inside
+    // both children (the kernel call is cached but the
+    // closures still allocate).
+    final hijriPerDay = days.map(_hijriFor).toList();
+    // Phase-4 — flag per day for "this day has any Islamic
+    // observance" (Ramadan/Eid/Ashura/Friday/etc). Drives the
+    // small marker icon in the day header.
+    final hasIslamicEventPerDay = dayEvents
+        .map((evs) => evs.any((e) => e.isIslamic))
+        .toList();
 
     return Column(
       children: [
@@ -1052,10 +1064,11 @@ class _WeekPageState extends State<_WeekPage> {
           color: surf,
           child: _DayHeaderStrip(
             days: days,
+            hijriPerDay: hijriPerDay,
+            hasIslamicEventPerDay: hasIslamicEventPerDay,
             p: p,
             isDark: isDark,
             gutterWidth: widget.gutterWidth,
-            hijriFor: _hijriFor,
           ),
         ),
         if (allDayPerDay.any((l) => l.isNotEmpty))
@@ -1087,6 +1100,7 @@ class _WeekPageState extends State<_WeekPage> {
                         gutterWidth: widget.gutterWidth,
                         colWidth: colWidth,
                         days: days,
+                        hijriPerDay: hijriPerDay,
                         isDark: isDark,
                         onCellTap: (dayIdx, minutesFromMidnight) async {
                           // Phase-1 task 3 — the tap reports
@@ -1413,16 +1427,29 @@ List<_PositionedEvent> _layoutEventLanes(
 
 class _DayHeaderStrip extends StatelessWidget {
   final List<DateTime> days;
+
+  /// Phase-4 — precomputed Hijri value per day. Replaces the
+  /// old `hijriFor` closure that the caller had to pass; we
+  /// now compute it once in `_WeekPage` and share with both
+  /// the header strip and the grid background.
+  final List<HijriDate> hijriPerDay;
+
+  /// Phase-4 — flag per day for "this day has any Islamic
+  /// observance". Drives the small crescent marker next to
+  /// the Greg day number. Computed in `_WeekPage` from the
+  /// per-day event list.
+  final List<bool> hasIslamicEventPerDay;
+
   final AppProvider p;
   final bool isDark;
   final double gutterWidth;
-  final HijriDate Function(DateTime) hijriFor;
   const _DayHeaderStrip({
     required this.days,
+    required this.hijriPerDay,
+    required this.hasIslamicEventPerDay,
     required this.p,
     required this.isDark,
     required this.gutterWidth,
-    required this.hijriFor,
   });
 
   @override
@@ -1443,7 +1470,7 @@ class _DayHeaderStrip extends StatelessWidget {
           SizedBox(width: gutterWidth),
           ...List.generate(7, (i) {
             final greg = days[i];
-            final hijri = hijriFor(greg);
+            final hijri = hijriPerDay[i];
             final isToday = greg.year == now.year &&
                 greg.month == now.month &&
                 greg.day == now.day;
@@ -1455,6 +1482,17 @@ class _DayHeaderStrip extends StatelessWidget {
             // weekly view because the Hijri month is otherwise
             // implicit (we only show the day number).
             final isHijriFirst = hijri.hDay == 1;
+            // Phase-4 — Hijri-specific markers:
+            //   * Ayyam al-Bid (13/14/15) get a gold ring
+            //     around the day pill — fasted by sunnah, a
+            //     visual flag helps observers keep track.
+            //   * Days with any Islamic event (Eid, Ashura,
+            //     Mawlid, weekly Friday, ...) get a small
+            //     crescent marker next to the Greg day number
+            //     so the user knows "tap this row to see what's
+            //     happening here".
+            final isAyyamAlBid = p.isAyyamAlBid(hijri.hDay);
+            final hasIslamicEvent = hasIslamicEventPerDay[i];
             return Expanded(
               child: Column(
                 children: [
@@ -1508,6 +1546,17 @@ class _DayHeaderStrip extends StatelessWidget {
                       color:
                           isToday ? null : Colors.transparent,
                       shape: BoxShape.circle,
+                      // Phase-4 — Ayyam al-Bid gold ring. Sits
+                      // on TOP of the today gradient when both
+                      // apply (Ayyam al-Bid days that happen to
+                      // BE today get the green fill AND the
+                      // gold rim — both signals visible).
+                      border: isAyyamAlBid
+                          ? Border.all(
+                              color: AppColors.gold,
+                              width: 1.6,
+                            )
+                          : null,
                       boxShadow: isToday
                           ? [
                               BoxShadow(
@@ -1532,12 +1581,35 @@ class _DayHeaderStrip extends StatelessWidget {
                       ),
                     ),
                   ),
-                  Text(
-                    TextFormat.toWesternDigits('${greg.day}'),
-                    style: appFont(
-                      fontSize: 9,
-                      color: AppColors.text3,
-                    ),
+                  // Phase-4 — Greg day number + (optional)
+                  // crescent marker for days that carry any
+                  // Islamic observance. The marker is a small
+                  // gold circle rather than the 🌙 emoji so it
+                  // renders consistently across font families
+                  // and locales (emoji rendering is patchy
+                  // depending on the system font).
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        TextFormat.toWesternDigits('${greg.day}'),
+                        style: appFont(
+                          fontSize: 9,
+                          color: AppColors.text3,
+                        ),
+                      ),
+                      if (hasIslamicEvent)
+                        Container(
+                          margin:
+                              const EdgeInsetsDirectional.only(start: 3),
+                          width: 4,
+                          height: 4,
+                          decoration: const BoxDecoration(
+                            color: AppColors.gold,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                    ],
                   ),
                 ],
               ),
@@ -1837,6 +1909,14 @@ class _GridBackground extends StatelessWidget {
   final double gutterWidth;
   final double colWidth;
   final List<DateTime> days;
+
+  /// Phase-4 — Hijri value for each visible day. Used to tint
+  /// columns whose Hijri month is Ramadan with a soft gold
+  /// wash, giving the user an at-a-glance "this is a Ramadan
+  /// day" cue without needing to dive into the day header.
+  /// `length == days.length` (always 7).
+  final List<HijriDate> hijriPerDay;
+
   final bool isDark;
 
   /// Phase-1 task 3 — callback now reports the precise minutes
@@ -1850,6 +1930,7 @@ class _GridBackground extends StatelessWidget {
     required this.gutterWidth,
     required this.colWidth,
     required this.days,
+    required this.hijriPerDay,
     required this.isDark,
     required this.onCellTap,
   });
@@ -1880,6 +1961,26 @@ class _GridBackground extends StatelessWidget {
 
     return Stack(
       children: [
+        // Phase-4 (Hijri-specific) — columns whose Hijri date
+        // falls in RAMADAN (month 9) get a soft gold wash. Sits
+        // BELOW the today-column tint so a Ramadan-today
+        // column shows BOTH (the green wins on the
+        // intersection because it's painted later). Rendered
+        // BEFORE the hour rows so events painted on top keep
+        // their full punch.
+        for (int i = 0; i < 7; i++)
+          if (hijriPerDay[i].hMonth == 9)
+            Positioned(
+              top: 0,
+              bottom: 0,
+              left: gutterWidth + i * colWidth,
+              width: colWidth,
+              child: Container(
+                color: isDark
+                    ? AppColors.gold.withValues(alpha: 0.10)
+                    : AppColors.goldPale.withValues(alpha: 0.60),
+              ),
+            ),
         // Phase-2 — today's column gets a very light green tint
         // (the accent's `greenPale` at low alpha) so the eye
         // immediately lands on "today" without obscuring any
