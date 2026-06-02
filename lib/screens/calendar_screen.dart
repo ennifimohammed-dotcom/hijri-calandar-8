@@ -1261,12 +1261,43 @@ class _WeekPageState extends State<_WeekPage> {
       final start = colStart + p.lane * laneW + 1;
       final width = laneW - 2;
 
+      // Phase X — graceful narrow-width rendering. With heavy
+      // overlap (4+ events on the same hour), the per-lane
+      // width can drop below 30 dp; the previous fixed padding
+      // + 3-dp left border ate so much of that budget that the
+      // title got clipped to a single character or disappeared
+      // entirely. Three tiers based on the rendered tile width:
+      //
+      //   * Wide (≥ 50 dp): full original styling.
+      //   * Narrow (24-50 dp): smaller font, tighter padding,
+      //     thinner left border, time line hidden.
+      //   * Ultra-narrow (< 24 dp): no text at all, just a
+      //     colored stripe with the LEFT border highlighted so
+      //     the event is still visible AND tappable. The user
+      //     reads the title by tapping it.
+      final isNarrow = width < 50;
+      final isUltraNarrow = width < 24;
+      final showTitle = !isUltraNarrow;
+      final showTime = !isNarrow && height >= 38;
+      final borderWidth = isNarrow ? 2.0 : 3.0;
+      final tilePadding = isUltraNarrow
+          ? const EdgeInsets.symmetric(horizontal: 2, vertical: 2)
+          : isNarrow
+              ? const EdgeInsets.fromLTRB(4, 3, 2, 2)
+              : const EdgeInsets.fromLTRB(6, 4, 4, 4);
+      final titleFontSize = isNarrow ? 10.0 : 11.0;
+
       blocks.add(PositionedDirectional(
         top: top,
         start: start,
         width: width,
         height: height,
         child: GestureDetector(
+          // `behavior: opaque` so the entire tile area is a
+          // tap target even when the child Container is
+          // narrow — guarantees taps on overlapping events
+          // still register.
+          behavior: HitTestBehavior.opaque,
           onTap: () => showEventDetails(
             context: context,
             event: ev,
@@ -1277,42 +1308,54 @@ class _WeekPageState extends State<_WeekPage> {
           child: Container(
             decoration: BoxDecoration(
               color: ev.color.withValues(alpha: 0.92),
-              borderRadius: BorderRadius.circular(6),
-              border: Border(
-                left: BorderSide(
+              borderRadius:
+                  BorderRadius.circular(isNarrow ? 4 : 6),
+              // `BorderDirectional.start` so the accent bar
+              // sits on the LEADING edge in both LTR (left)
+              // and RTL (right) — matches the same logical
+              // "where the event begins" semantics.
+              border: BorderDirectional(
+                start: BorderSide(
                   color: ev.color.withValues(alpha: 1.0),
-                  width: 3,
+                  width: borderWidth,
                 ),
               ),
             ),
-            padding: const EdgeInsets.fromLTRB(6, 4, 4, 4),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  ev.title(widget.p.locale),
-                  maxLines: height < 36 ? 1 : 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: appFont(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w800,
-                    color: Colors.white,
-                    height: 1.1,
-                  ),
-                ),
-                if (height >= 38)
-                  Text(
-                    TextFormat.toWesternDigits(
-                      '${s.hour.toString().padLeft(2, '0')}:${s.minute.toString().padLeft(2, '0')}',
-                    ),
-                    style: appFont(
-                      fontSize: 9,
-                      color: Colors.white.withValues(alpha: 0.85),
-                    ),
-                  ),
-              ],
-            ),
+            padding: tilePadding,
+            child: showTitle
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        ev.title(widget.p.locale),
+                        maxLines: height < 36 ? 1 : 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: appFont(
+                          fontSize: titleFontSize,
+                          fontWeight: FontWeight.w800,
+                          color: Colors.white,
+                          height: 1.1,
+                        ),
+                      ),
+                      if (showTime)
+                        Text(
+                          TextFormat.toWesternDigits(
+                            '${s.hour.toString().padLeft(2, '0')}:${s.minute.toString().padLeft(2, '0')}',
+                          ),
+                          style: appFont(
+                            fontSize: 9,
+                            color: Colors.white
+                                .withValues(alpha: 0.85),
+                          ),
+                        ),
+                    ],
+                  )
+                // Ultra-narrow: render only the colored stripe.
+                // The user still sees the event (the colored
+                // band is unmistakable) and can tap to see the
+                // title in the details sheet.
+                : const SizedBox.shrink(),
           ),
         ),
       ));
@@ -2852,6 +2895,105 @@ class _EventDetailsSheet extends StatelessWidget {
     );
   }
 
+  String _deleteLabel(String loc) {
+    return loc == 'ar' ? 'حذف'
+        : loc == 'es' ? 'Eliminar'
+        : loc == 'en' ? 'Delete'
+        : 'Supprimer';
+  }
+
+  /// Confirms the delete and, if confirmed, calls
+  /// `provider.deleteEvent(id)` and pops the details sheet.
+  /// Wired to the new Delete button on user-created events
+  /// (Islamic events skip this affordance — they're
+  /// enabled/disabled from Settings rather than deleted).
+  ///
+  /// Defensive: uses `context.mounted` after the awaited
+  /// dialog so the analyzer's
+  /// `use_build_context_synchronously` rule stays happy.
+  Future<void> _confirmDelete(BuildContext context, String loc) async {
+    final title = switch (loc) {
+      'ar' => 'حذف الحدث؟',
+      'fr' => 'Supprimer l\'événement ?',
+      'es' => '¿Eliminar el evento?',
+      _ => 'Delete event?',
+    };
+    final body = switch (loc) {
+      'ar' => 'سيُحذف هذا الحدث نهائياً. لا يمكن التراجع.',
+      'fr' => 'Cet événement sera supprimé définitivement. Action irréversible.',
+      'es' => 'Este evento se eliminará permanentemente. No se puede deshacer.',
+      _ => 'This event will be permanently removed. This cannot be undone.',
+    };
+    final cancel = switch (loc) {
+      'ar' => 'إلغاء',
+      'fr' => 'Annuler',
+      'es' => 'Cancelar',
+      _ => 'Cancel',
+    };
+    final confirm = _deleteLabel(loc);
+
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      useRootNavigator: true,
+      builder: (dialogCtx) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(18),
+        ),
+        title: Text(
+          title,
+          style: appFont(
+            fontSize: 16,
+            fontWeight: FontWeight.w800,
+            color: AppColors.text,
+          ),
+        ),
+        content: Text(
+          body,
+          style: appFont(
+            fontSize: 13,
+            color: AppColors.text2,
+            height: 1.4,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx, false),
+            child: Text(
+              cancel,
+              style: appFont(
+                fontWeight: FontWeight.w700,
+                color: AppColors.text3,
+              ),
+            ),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppColors.red,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(dialogCtx, true),
+            child: Text(
+              confirm,
+              style: appFont(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (ok != true) return;
+    if (!context.mounted) return;
+
+    await p.deleteEvent(event.id);
+    if (!context.mounted) return;
+    // Close the details sheet — the underlying screen will
+    // already rebuild on its own (the provider's
+    // `notifyListeners()` after `deleteEvent` triggers
+    // `context.watch<AppProvider>` listeners up the tree).
+    Navigator.pop(context);
+  }
+
   @override
   Widget build(BuildContext context) {
     final loc = p.locale;
@@ -2912,6 +3054,19 @@ class _EventDetailsSheet extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 18),
+            // Phase X — user-event row gets THREE actions
+            // (Close · Delete · Edit). Before this, the only
+            // exit path for an event the user wanted gone was
+            // "Edit → scroll to the very bottom of
+            // AddEventScreen → tap Delete there", which is
+            // both invisible and a multi-tap detour. Surfacing
+            // Delete on the details sheet matches what users
+            // expect from any calendar app.
+            //
+            // Islamic events stay with just the Close button —
+            // they're enable/disable from Settings → Islamic
+            // Events, not deleted, so a Delete affordance
+            // would be misleading.
             Row(
               children: [
                 Expanded(
@@ -2934,7 +3089,35 @@ class _EventDetailsSheet extends StatelessWidget {
                   ),
                 ),
                 if (!event.isIslamic) ...[
-                  const SizedBox(width: 10),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      style: OutlinedButton.styleFrom(
+                        side: const BorderSide(
+                          color: AppColors.red,
+                          width: 1.2,
+                        ),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12)),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 12),
+                        foregroundColor: AppColors.red,
+                      ),
+                      onPressed: () => _confirmDelete(context, loc),
+                      icon: const Icon(
+                        Icons.delete_outline_rounded,
+                        size: 16,
+                      ),
+                      label: Text(
+                        _deleteLabel(loc),
+                        style: appFont(
+                          color: AppColors.red,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
                   Expanded(
                     child: ElevatedButton.icon(
                       style: ElevatedButton.styleFrom(
