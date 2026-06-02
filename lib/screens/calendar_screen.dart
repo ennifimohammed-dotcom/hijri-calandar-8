@@ -953,13 +953,34 @@ class _WeeklyViewState extends State<_WeeklyView> {
     super.dispose();
   }
 
+  // Calendar-day arithmetic — must NEVER go through
+  // `Duration(days: N)`. `Duration` is wall-clock-agnostic: it
+  // adds N×86 400 seconds. When the window straddles a DST
+  // transition the LOCAL clock representation lands an hour
+  // off, which means a "midnight Monday" + 7 days could come
+  // back as "23:00 Sunday" instead of "00:00 Monday".
+  // Constructing a new `DateTime(year, month, day + N)` lets
+  // Dart's calendar engine normalise month/year overflow
+  // correctly while anchoring the result at midnight LOCAL,
+  // regardless of any DST transition crossed along the way.
+  //
+  // This was the root cause of Issue 1: a tap on the
+  // Wednesday column was occasionally writing the event with
+  // Tuesday's `day` field because `days[2]` had landed at
+  // "23:00 Tuesday" instead of "00:00 Wednesday".
   static DateTime _mondayOf(DateTime d) {
     final diff = d.weekday - 1;
-    return DateTime(d.year, d.month, d.day).subtract(Duration(days: diff));
+    return DateTime(d.year, d.month, d.day - diff);
   }
 
-  DateTime _mondayForIndex(int idx) =>
-      _baseMonday.add(Duration(days: 7 * (idx - _kBaseIndex)));
+  DateTime _mondayForIndex(int idx) {
+    final daysFromBase = 7 * (idx - _kBaseIndex);
+    return DateTime(
+      _baseMonday.year,
+      _baseMonday.month,
+      _baseMonday.day + daysFromBase,
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -1038,8 +1059,21 @@ class _WeekPageState extends State<_WeekPage> {
     final surf = isDark ? AppColors.darkSurface : AppColors.white;
 
     // Pre-compute per-day data once (used by header strip + grid).
+    //
+    // Same DST-safe pattern as `_mondayOf` / `_mondayForIndex`:
+    // use the `DateTime(year, month, day + N)` constructor
+    // instead of `add(Duration(days: N))` so each `days[i]`
+    // lands at LOCAL midnight on the correct calendar day,
+    // even when the week crosses a DST transition. Was the
+    // source of "tap Wednesday → event created on Tuesday".
     final days = List.generate(
-        7, (i) => widget.monday.add(Duration(days: i)));
+      7,
+      (i) => DateTime(
+        widget.monday.year,
+        widget.monday.month,
+        widget.monday.day + i,
+      ),
+    );
     final dayEvents = days.map(_eventsFor).toList();
     final allDayPerDay =
         dayEvents.map((evs) => evs.where((e) => e.isAllDay).toList()).toList();
@@ -1212,15 +1246,24 @@ class _WeekPageState extends State<_WeekPage> {
 
       // Lane-aware horizontal positioning. When `totalLanes ==
       // 1` (the common case — no overlap), the math reduces to
-      // the previous `left = colStart + 2 / width = colW - 4`.
+      // the previous `start = colStart + 2 / width = colW - 4`.
+      //
+      // RTL-correctness — uses `PositionedDirectional(start:)`
+      // instead of `Positioned(left:)` so the same dayIdx maps
+      // to the same VISUAL column as the surrounding Row
+      // widgets (the gutter Row and the tappable-column Row
+      // both reverse in RTL). Was the root cause of Issue 2:
+      // events were rendered using LTR-anchored `left:` and
+      // ended up over the gutter in Arabic because the
+      // ambient Row reversal moved the gutter to the right.
       final laneW = colWidth / p.totalLanes;
       final colStart = widget.gutterWidth + dayIdx * colWidth;
-      final left = colStart + p.lane * laneW + 1;
+      final start = colStart + p.lane * laneW + 1;
       final width = laneW - 2;
 
-      blocks.add(Positioned(
+      blocks.add(PositionedDirectional(
         top: top,
-        left: left,
+        start: start,
         width: width,
         height: height,
         child: GestureDetector(
@@ -1970,10 +2013,10 @@ class _GridBackground extends StatelessWidget {
         // their full punch.
         for (int i = 0; i < 7; i++)
           if (hijriPerDay[i].hMonth == 9)
-            Positioned(
+            PositionedDirectional(
               top: 0,
               bottom: 0,
-              left: gutterWidth + i * colWidth,
+              start: gutterWidth + i * colWidth,
               width: colWidth,
               child: Container(
                 color: isDark
@@ -1986,11 +2029,17 @@ class _GridBackground extends StatelessWidget {
         // immediately lands on "today" without obscuring any
         // event painted on top. Skipped when today isn't in the
         // visible week.
+        //
+        // Uses `PositionedDirectional(start:)` so the tint
+        // lands on the SAME column as the tappable Row (which
+        // reverses in RTL). Pre-fix the tint could land on the
+        // wrong column in Arabic because `Positioned(left:)`
+        // doesn't reverse.
         if (todayIdx >= 0)
-          Positioned(
+          PositionedDirectional(
             top: 0,
             bottom: 0,
-            left: gutterWidth + todayIdx * colWidth,
+            start: gutterWidth + todayIdx * colWidth,
             width: colWidth,
             child: Container(
               color: isDark
@@ -2054,11 +2103,15 @@ class _GridBackground extends StatelessWidget {
         // overlay so they sit ABOVE the today-column tint but
         // BELOW the event blocks; events stay the dominant
         // visual element on the timeline.
+        //
+        // `start: gutterWidth, end: 0` spans from just-past-the
+        // -gutter to the opposite edge — works in both LTR and
+        // RTL because the gutter Row reverses too.
         ...List.generate(24, (h) {
-          return Positioned(
+          return PositionedDirectional(
             top: h * hourHeight + hourHeight / 2,
-            left: gutterWidth,
-            right: 0,
+            start: gutterWidth,
+            end: 0,
             height: 0.5,
             child: Container(color: halfHourColor),
           );
@@ -2073,8 +2126,17 @@ class _GridBackground extends StatelessWidget {
         // hour bucket, so a tap at 14:55 created a 14:00 event
         // — confusing and a steady source of "wrong time" bugs
         // in user feedback.
-        Positioned.fill(
-          left: gutterWidth,
+        //
+        // `PositionedDirectional(start: gutterWidth, end: 0)`
+        // replaces the old `Positioned.fill(left: gutterWidth)`
+        // so the tappable column area mirrors the gutter Row's
+        // RTL reversal. The Row inside still reverses its
+        // children — that part is unchanged.
+        PositionedDirectional(
+          top: 0,
+          bottom: 0,
+          start: gutterWidth,
+          end: 0,
           child: Row(
             children: List.generate(7, (dayIdx) {
               return SizedBox(
@@ -2146,19 +2208,26 @@ class _CurrentTimeIndicator extends StatelessWidget {
         // Faint full-width line. Sits BELOW the brighter
         // today-column overlay so the today segment visually
         // wins on the intersection.
-        Positioned(
+        //
+        // `PositionedDirectional(start: gutterWidth, end: 0)`
+        // so the line spans the column area correctly in both
+        // LTR and RTL — pre-fix it could bleed over the
+        // gutter in Arabic.
+        PositionedDirectional(
           top: top - 0.5,
-          left: gutterWidth,
-          right: 0,
+          start: gutterWidth,
+          end: 0,
           height: 1,
           child: Container(
             color: AppColors.red.withValues(alpha: 0.30),
           ),
         ),
         // Today's column gets the brighter line + the dot.
-        Positioned(
+        // `start:` instead of `left:` so the dot lands on the
+        // same VISUAL column as the day's tappable cell.
+        PositionedDirectional(
           top: top - 1,
-          left: gutterWidth + dayIdx * colWidth,
+          start: gutterWidth + dayIdx * colWidth,
           width: colWidth,
           child: Row(
             children: [
