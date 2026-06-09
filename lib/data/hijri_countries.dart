@@ -184,6 +184,23 @@ const List<HijriCountry> kHijriCountries = <HijriCountry>[
     },
     adjustment: 0,
   ),
+  HijriCountry(
+    code: 'SN',
+    flag: '🇸🇳',
+    name: {
+      'ar': 'السنغال',
+      'fr': 'Sénégal',
+      'en': 'Senegal',
+      'es': 'Senegal',
+    },
+    authority: {
+      'ar': 'اللجنة الوطنية للتنسيق حول الهلال (CONACOC)',
+      'fr': 'Commission Nationale de Concertation sur le Croissant Lunaire',
+      'en': 'National Moon-Sighting Coordination Commission (CONACOC)',
+      'es': 'Comisión Nacional de Coordinación del Creciente Lunar',
+    },
+    adjustment: 0,
+  ),
   // ── Mashreq / Gulf ───────────────────────────────────────
   HijriCountry(
     code: 'SA',
@@ -557,23 +574,6 @@ const List<HijriCountry> kHijriCountries = <HijriCountry>[
       'fr': 'Comité Indien d\'Observation du Croissant',
       'en': 'Indian Moon Sighting Committee',
       'es': 'Comité Indio de Observación de la Luna',
-    },
-    adjustment: 0,
-  ),
-  HijriCountry(
-    code: 'IR',
-    flag: '🇮🇷',
-    name: {
-      'ar': 'إيران',
-      'fr': 'Iran',
-      'en': 'Iran',
-      'es': 'Irán',
-    },
-    authority: {
-      'ar': 'مكتب القائد',
-      'fr': 'Bureau du Guide Suprême',
-      'en': 'Office of the Supreme Leader',
-      'es': 'Oficina del Líder Supremo',
     },
     adjustment: 0,
   ),

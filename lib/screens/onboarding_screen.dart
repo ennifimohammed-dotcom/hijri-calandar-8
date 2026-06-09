@@ -108,7 +108,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   void _next(AppProvider p) {
-    if (_page < 2) {
+    // First-launch onboarding shrunk from 3 to 2 pages — the
+    // "Welcome to Badr" page was removed per user request, so
+    // the index of the final page dropped from 2 → 1.
+    if (_page < 1) {
       _ctrl.nextPage(
         duration: const Duration(milliseconds: 350),
         curve: Curves.easeInOut,
@@ -412,7 +415,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   String _ctaLabel(int page) {
-    if (page < 2) {
+    // Final-page index dropped from 2 → 1 with the Welcome
+    // page removed; "Next" is shown on page 0, "Get Started"
+    // on page 1.
+    if (page < 1) {
       switch (_selectedLang) {
         case 'ar': return 'متابعة';
         case 'fr': return 'Suivant';
@@ -420,7 +426,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         default:   return 'Next';
       }
     }
-    // Page 3 — final CTA
+    // Final CTA on the last page.
     switch (_selectedLang) {
       case 'ar': return 'لِنَبدأ';
       case 'fr': return 'Commencer';
@@ -442,12 +448,13 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           SafeArea(
             child: Column(
               children: [
-                // Progress dots
+                // Progress dots — two pages now that the
+                // Welcome page has been removed.
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 12, 24, 4),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(3, (i) => AnimatedContainer(
+                    children: List.generate(2, (i) => AnimatedContainer(
                       duration: const Duration(milliseconds: 300),
                       width: _page == i ? 28 : 8,
                       height: 6,
@@ -466,7 +473,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     controller: _ctrl,
                     onPageChanged: (i) => setState(() => _page = i),
                     children: [
-                      _WelcomePage(locale: _selectedLang),
+                      // Welcome page intentionally removed per
+                      // user request — onboarding starts
+                      // directly at language + Hijri source.
                       _LanguageRegionPage(
                         selectedLang: _selectedLang,
                         sourceMode: _sourceMode,
@@ -587,153 +596,11 @@ class _AmbientBackdrop extends StatelessWidget {
   }
 }
 
-// ─── Page 1 — Welcome ────────────────────────────────────────────────
-
-class _WelcomePage extends StatelessWidget {
-  final String locale;
-  const _WelcomePage({required this.locale});
-
-  @override
-  Widget build(BuildContext context) {
-    final title = locale == 'ar'
-        ? 'مرحباً بك في بدر'
-        : locale == 'fr'
-            ? 'Bienvenue dans Badr'
-            : locale == 'es'
-                ? 'Bienvenido a Badr'
-                : 'Welcome to Badr';
-    final body = locale == 'ar'
-        ? 'رفيقك في تذكّر مواسم الخير وأعمال العبادة'
-        : locale == 'fr'
-            ? 'Votre compagnon pour les saisons du bien et les actes d\'adoration'
-            : locale == 'es'
-                ? 'Tu compañero en las estaciones del bien y los actos de adoración'
-                : 'Your companion in the seasons of khayr and acts of worship';
-
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(28, 12, 28, 12),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          // Hero — crescent + Hijri + golden stars on a glass tile.
-          SizedBox(
-            width: 240,
-            height: 240,
-            child: Stack(
-              alignment: Alignment.center,
-              children: [
-                // Soft halo
-                Container(
-                  width: 240,
-                  height: 240,
-                  decoration: BoxDecoration(
-                    shape: BoxShape.circle,
-                    gradient: RadialGradient(
-                      colors: [
-                        const Color(0xFFE9C46A).withValues(alpha: 0.22),
-                        Colors.transparent,
-                      ],
-                    ),
-                  ),
-                ),
-                // Stars
-                CustomPaint(
-                  size: const Size(240, 240),
-                  painter: _StarsPainter(),
-                ),
-                // Crescent
-                CustomPaint(
-                  size: const Size(150, 150),
-                  painter: _CrescentPainter(
-                    fill: const Color(0xFFF6E5B5),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 36),
-          Text(
-            title,
-            textAlign: TextAlign.center,
-            style: appFont(
-              fontSize: 32,
-              fontWeight: FontWeight.bold,
-              color: const Color(0xFFF6E5B5),
-              shadows: [
-                Shadow(
-                  color: const Color(0xFFE9C46A).withValues(alpha: 0.4),
-                  blurRadius: 14,
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
-          Text(
-            body,
-            textAlign: TextAlign.center,
-            style: appFont(
-              fontSize: 14,
-              color: Colors.white.withValues(alpha: 0.78),
-              height: 1.55,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StarsPainter extends CustomPainter {
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = const Color(0xFFF6E5B5).withValues(alpha: 0.85)
-      ..style = PaintingStyle.fill;
-    final positions = [
-      const Offset(0.18, 0.20),
-      const Offset(0.82, 0.30),
-      const Offset(0.10, 0.75),
-      const Offset(0.78, 0.78),
-      const Offset(0.50, 0.14),
-      const Offset(0.92, 0.55),
-    ];
-    final radii = [3.0, 2.2, 2.6, 1.8, 2.0, 2.4];
-    for (var i = 0; i < positions.length; i++) {
-      final p = Offset(
-          positions[i].dx * size.width, positions[i].dy * size.height);
-      canvas.drawCircle(p, radii[i], paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-class _CrescentPainter extends CustomPainter {
-  final Color fill;
-  _CrescentPainter({required this.fill});
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = fill;
-    canvas.saveLayer(Offset.zero & size, Paint());
-    canvas.drawCircle(
-      Offset(size.width * 0.5, size.height * 0.5),
-      size.width * 0.42,
-      paint,
-    );
-    canvas.drawCircle(
-      Offset(size.width * 0.66, size.height * 0.42),
-      size.width * 0.36,
-      Paint()..blendMode = BlendMode.dstOut,
-    );
-    canvas.restore();
-  }
-
-  @override
-  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-// ─── Page 2 — Language + Region (glassmorphism) ─────────────────────
+// ─── Page 1 — Language + Region (glassmorphism) ─────────────────────
+//
+// The original Welcome page (`_WelcomePage` + its `_StarsPainter`
+// and `_CrescentPainter`) was removed at user request — onboarding
+// now starts directly on the language + Hijri-source picker.
 
 class _LanguageRegionPage extends StatelessWidget {
   final String selectedLang;

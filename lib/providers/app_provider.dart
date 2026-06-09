@@ -81,6 +81,20 @@ class AppProvider extends ChangeNotifier {
   late HijriDate _today;
   HijriDate? _selectedDay;
   CalendarViewMode _viewMode = CalendarViewMode.monthly;
+
+  /// User's preferred DEFAULT view — the one the app opens on
+  /// at launch. Only updated when the user explicitly picks a
+  /// view in Settings → "Default view" (or via the legacy code
+  /// path that calls `setDefaultViewMode`). Crucially, this is
+  /// NOT touched when the user taps a view-toggle chip at the
+  /// top of the calendar screen (that's `setViewMode`, which
+  /// is transient — see the doc comment on that method). This
+  /// matches the user expectation that the default-view
+  /// setting "stays fixed until the user changes it himself".
+  ///
+  /// Persisted under the same `view_mode` key the active view
+  /// used to share — see `_savePrefs` / `_loadPrefs`.
+  CalendarViewMode _defaultViewMode = CalendarViewMode.monthly;
   bool _isLoading = true;
 
   // ── Settings state ────────────────────────────────────────
@@ -113,9 +127,11 @@ class AppProvider extends ChangeNotifier {
   /// Font-family identifier — picked from one of the lists below.
   ///   Arabic: 'amiri', 'cairo', 'tajawal'   (3 choices)
   ///   Other:  'roboto', 'merriweather'      (2 choices)
-  /// Defaults align with the existing visual identity (Amiri for AR
-  /// headings, Roboto otherwise).
-  String _fontFamily = 'amiri';
+  /// Default flipped from Amiri to Cairo per user request —
+  /// Cairo has tighter line height and slightly thicker
+  /// glyphs, which read cleaner at the small font sizes the
+  /// weekly view's event tiles use.
+  String _fontFamily = 'cairo';
 
   /// Legacy region code (`'ma'`, `'sa'`, `'global'`, ...). Kept
   /// for backwards compatibility with the home-screen widgets
@@ -160,6 +176,7 @@ class AppProvider extends ChangeNotifier {
   HijriDate get today => _today;
   HijriDate? get selectedDay => _selectedDay;
   CalendarViewMode get viewMode => _viewMode;
+  CalendarViewMode get defaultViewMode => _defaultViewMode;
   bool get isLoading => _isLoading;
   ThemeMode get themeMode => _themeMode;
   String get locale => _locale;
@@ -620,9 +637,31 @@ class AppProvider extends ChangeNotifier {
   HijriDate _todayForRegion() =>
       kernel.hijriFromGreg(DateTime.now(), hijriDayOffset);
 
+  /// Sets the CURRENT active view mode for THIS session only.
+  /// Does NOT touch the persisted default — tapping a view
+  /// chip at the top of the calendar (weekly / agenda) or
+  /// landing here from a home-screen widget URI is a
+  /// transient navigation, not a default-change.
+  ///
+  /// To change what view the app opens on NEXT launch, use
+  /// [setDefaultViewMode] (wired to the picker in
+  /// Settings → "Default view").
   void setViewMode(CalendarViewMode mode) {
+    if (_viewMode == mode) return;
     _viewMode = mode;
-    _savePrefs();
+    notifyListeners();
+  }
+
+  /// Sets the user's preferred DEFAULT view (the one shown on
+  /// app start) AND updates the current view to match. Persists
+  /// under the `view_mode` SharedPreferences key. This is the
+  /// only path that should mutate the saved default — taps on
+  /// the calendar view-toggle chips stay transient.
+  Future<void> setDefaultViewMode(CalendarViewMode mode) async {
+    if (_defaultViewMode == mode && _viewMode == mode) return;
+    _defaultViewMode = mode;
+    _viewMode = mode;
+    await _savePrefs();
     notifyListeners();
   }
 
@@ -1163,7 +1202,10 @@ class AppProvider extends ChangeNotifier {
       // key (older installs) keeps the new hybrid path armed.
       await prefs.setBool('use_hybrid_hijri', _useHybridHijri);
       await prefs.setInt('hijri_manual_adjust', _hijriManualAdjust);
-      await prefs.setString('view_mode', _viewMode.name);
+      // Persists the DEFAULT view, not the transient current
+      // view — tapping a chip in the calendar top bar no
+      // longer mutates `view_mode` in storage.
+      await prefs.setString('view_mode', _defaultViewMode.name);
       await prefs.setInt('accent_index', _accentIndex);
       await prefs.setDouble('font_scale', _fontScale);
       await prefs.setString('calendar_density', _calendarDensity.name);
@@ -1220,10 +1262,16 @@ class AppProvider extends ChangeNotifier {
       if (adj != null) _hijriManualAdjust = adj.clamp(-3, 3);
       final vm = prefs.getString('view_mode');
       if (vm != null) {
-        _viewMode = CalendarViewMode.values.firstWhere(
+        final resolved = CalendarViewMode.values.firstWhere(
           (e) => e.name == vm,
           orElse: () => CalendarViewMode.monthly,
         );
+        // Both fields start at the persisted default — the
+        // active view stays equal to the default until the
+        // user navigates inside the calendar (which only
+        // mutates `_viewMode`, not `_defaultViewMode`).
+        _defaultViewMode = resolved;
+        _viewMode = resolved;
       }
       final acc = prefs.getInt('accent_index');
       if (acc != null && acc >= 0 && acc < kAccentPalette.length) {

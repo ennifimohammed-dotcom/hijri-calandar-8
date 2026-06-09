@@ -488,6 +488,7 @@ class CountryDetector {
       ('AF', 29.4, 38.5, 60.5, 74.9),     // Afghanistan
       ('BD', 20.6, 26.7, 88.0, 92.7),     // Bangladesh
       ('MY', 0.8, 7.5, 99.6, 119.3),      // Malaysia
+      ('SN', 12.3, 16.7, -17.6, -11.3),   // Senegal
       ('MR', 14.7, 27.3, -17.1, -4.8),    // Mauritania
       ('MA', 21.3, 36.0, -17.1, -1.0),    // Morocco (incl. Western Sahara)
       ('LY', 19.5, 33.2, 9.4, 25.2),      // Libya
@@ -496,7 +497,6 @@ class CountryDetector {
       ('SD', 8.6, 23.1, 21.8, 38.6),      // Sudan
       ('TR', 35.8, 42.1, 25.7, 44.8),     // Türkiye
       ('PK', 23.6, 37.1, 60.9, 77.0),     // Pakistan
-      ('IR', 25.0, 39.8, 44.0, 63.4),     // Iran
       ('SA', 16.4, 32.2, 34.5, 55.7),     // Saudi Arabia
       ('IN', 6.7, 35.5, 68.1, 97.5),      // India
       ('ID', -11.1, 6.1, 95.0, 141.1),    // Indonesia
@@ -623,6 +623,7 @@ class CountryDetector {
       'Africa/Tunis' => 'TN',
       'Africa/Tripoli' => 'LY',
       'Africa/Nouakchott' => 'MR',
+      'Africa/Dakar' => 'SN',
       // ── Gulf & Arabian peninsula ──
       'Asia/Riyadh' => 'SA',
       'Asia/Mecca' => 'SA',
@@ -642,9 +643,8 @@ class CountryDetector {
       'Asia/Jerusalem' => 'PS', // best-effort for Palestinian users.
       'Asia/Beirut' => 'LB',
       'Asia/Damascus' => 'SY',
-      // ── Mesopotamia & Iran ──
+      // ── Mesopotamia ──
       'Asia/Baghdad' => 'IQ',
-      'Asia/Tehran' => 'IR',
       // ── Turkey ──
       'Europe/Istanbul' => 'TR',
       // ── South Asia ──

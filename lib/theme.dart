@@ -292,8 +292,12 @@ class AppColors {
 
 class AppTheme {
   /// Active font family — pushed by [HijriCalendarApp] every time
-  /// MaterialApp rebuilds (provider notifies). Defaults to `amiri`.
-  static String _activeFontFamily = 'amiri';
+  /// MaterialApp rebuilds (provider notifies). Defaults to
+  /// `cairo` (was `amiri` until a user-requested change — Cairo
+  /// has tighter line height and slightly thicker glyphs that
+  /// read cleaner at the small font sizes in the weekly view's
+  /// event tiles).
+  static String _activeFontFamily = 'cairo';
 
   /// Public accessor used by the top-level [appFont] resolver.
   static String get activeFontFamily => _activeFontFamily;

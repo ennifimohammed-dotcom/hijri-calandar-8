@@ -1779,7 +1779,11 @@ class _HijriAdjustRow extends StatelessWidget {
 }
 
 // ═══════════════════════════════════════════════════════════
-// Default-view picker (wired to provider.setViewMode)
+// Default-view picker (wired to provider.setDefaultViewMode).
+// This is the ONE place that persists the user's default view
+// — tapping a chip at the top of the calendar screen is now
+// transient (per the user's "default view stays until I change
+// it from settings" requirement).
 // ═══════════════════════════════════════════════════════════
 class _ViewModePicker extends StatelessWidget {
   final AppProvider p;
@@ -1796,9 +1800,13 @@ class _ViewModePicker extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: modes.map((m) {
-        final active = p.viewMode == m.$1;
+        // Show the selection state of the DEFAULT view, not
+        // the current transient view — this picker is about
+        // "what opens on next launch", not "what's visible
+        // right now".
+        final active = p.defaultViewMode == m.$1;
         return GestureDetector(
-          onTap: () => p.setViewMode(m.$1),
+          onTap: () => p.setDefaultViewMode(m.$1),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 150),
             margin: const EdgeInsets.only(right: 6),
